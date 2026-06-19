@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { WORLD, DUSK } from "../config";
+import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
+import { WORLD, DUSK, CAVES } from "../config";
 import { mulberry32, makeValueNoise } from "../util/rng";
 
 type Collider = { x: number; z: number; r: number };
@@ -17,24 +18,25 @@ type SkyStop = {
   sunCol: THREE.Color;
 };
 
-const c = (hex: string) => new THREE.Color(hex);
+const col = (hex: string) => new THREE.Color(hex);
 
 /** dusk(0) -> nightfall -> deep night -> witching -> dawn(1) */
 const SKY_STOPS: SkyStop[] = [
-  { t: 0.0, top: c("#2a2740"), bottom: c("#c87b53"), fog: c("#5a4a55"), fogD: 0.012, hemi: 0.6, sun: 1.6, sunCol: c("#ff9d5c") },
-  { t: 0.16, top: c("#171a30"), bottom: c("#3a3550"), fog: c("#2a2b3d"), fogD: 0.018, hemi: 0.32, sun: 0.5, sunCol: c("#6a6cff") },
-  { t: 0.5, top: c("#070912"), bottom: c("#0d1430"), fog: c("#0a0f1c"), fogD: 0.03, hemi: 0.16, sun: 0.18, sunCol: c("#5566cc") },
-  { t: 0.85, top: c("#0a0a16"), bottom: c("#10182e"), fog: c("#0a0e1a"), fogD: 0.032, hemi: 0.14, sun: 0.16, sunCol: c("#5566cc") },
-  { t: 1.0, top: c("#243a52"), bottom: c("#9fd0c9"), fog: c("#7fa6a0"), fogD: 0.014, hemi: 0.55, sun: 1.2, sunCol: c("#bfe0d0") },
+  { t: 0.0, top: col("#2a2740"), bottom: col("#c87b53"), fog: col("#5a4a55"), fogD: 0.012, hemi: 0.6, sun: 1.6, sunCol: col("#ff9d5c") },
+  { t: 0.16, top: col("#171a30"), bottom: col("#3a3550"), fog: col("#2a2b3d"), fogD: 0.018, hemi: 0.32, sun: 0.5, sunCol: col("#6a6cff") },
+  { t: 0.5, top: col("#070912"), bottom: col("#0d1430"), fog: col("#0a0f1c"), fogD: 0.03, hemi: 0.16, sun: 0.18, sunCol: col("#5566cc") },
+  { t: 0.85, top: col("#0a0a16"), bottom: col("#10182e"), fog: col("#0a0e1a"), fogD: 0.032, hemi: 0.14, sun: 0.16, sunCol: col("#5566cc") },
+  { t: 1.0, top: col("#243a52"), bottom: col("#9fd0c9"), fog: col("#7fa6a0"), fogD: 0.014, hemi: 0.55, sun: 1.2, sunCol: col("#bfe0d0") },
 ];
 
 /**
  * Builds the stylized low-poly forest: smooth-shaded terrain, instanced conifers,
- * a gradient sky that runs from dusk to dawn, fog, and a base-camp campfire.
+ * a base camp (campfire + RV), the cave system, a dusk->dawn sky, and fog.
  */
 export class Environment {
   readonly scene: THREE.Scene;
-  readonly treeColliders: Collider[] = [];
+  /** Static circle colliders (trees, the RV, cave boulders) used for movement + line-of-sight. */
+  readonly colliders: Collider[] = [];
 
   private noise = makeValueNoise(WORLD.seed);
   private campfire?: THREE.PointLight;
@@ -50,6 +52,8 @@ export class Environment {
     this.buildTerrain();
     this.buildForest();
     this.buildBaseCamp();
+    this.buildRV(9, -4, -0.5);
+    this.buildCaves();
   }
 
   /** Terrain height at world (x,z). Players/props sample this to sit on the ground. */
@@ -72,11 +76,11 @@ export class Environment {
     return h * flat;
   }
 
-  /** Push an (x,z) point out of any tree trunk it overlaps. Returns the resolved point. */
+  /** Push an (x,z) point out of any solid collider it overlaps. Returns the resolved point. */
   resolveCollision(x: number, z: number, radius: number): { x: number; z: number } {
     let nx = x;
     let nz = z;
-    for (const t of this.treeColliders) {
+    for (const t of this.colliders) {
       const min = t.r + radius;
       const dx = nx - t.x;
       const dz = nz - t.z;
@@ -91,12 +95,12 @@ export class Environment {
     return { x: nx, z: nz };
   }
 
-  /** True if a tree trunk blocks the straight (XZ) line between two points. */
-  lineBlockedByTrees(a: THREE.Vector3, b: THREE.Vector3): boolean {
+  /** True if a solid collider blocks the straight (XZ) line between two points. */
+  lineBlocked(a: THREE.Vector3, b: THREE.Vector3): boolean {
     const dx = b.x - a.x;
     const dz = b.z - a.z;
     const len2 = dx * dx + dz * dz || 1e-6;
-    for (const t of this.treeColliders) {
+    for (const t of this.colliders) {
       let s = ((t.x - a.x) * dx + (t.z - a.z) * dz) / len2;
       s = Math.max(0, Math.min(1, s));
       const cx = a.x + dx * s;
@@ -208,12 +212,13 @@ export class Environment {
       const x = (rand() * 2 - 1) * half;
       const z = (rand() * 2 - 1) * half;
       if (Math.sqrt(x * x + z * z) < WORLD.baseCampRadius + 4) continue; // keep clearing open
+      if (this.nearCave(x, z, 7)) continue; // keep cave mouths clear
       const s = 0.7 + rand() * 0.9;
       q.setFromAxisAngle(up, rand() * Math.PI * 2);
       m.compose(new THREE.Vector3(x, this.getHeight(x, z), z), q, new THREE.Vector3(s, s, s));
       trunks.setMatrixAt(placed, m);
       crowns.setMatrixAt(placed, m);
-      this.treeColliders.push({ x, z, r: 0.45 * s });
+      this.colliders.push({ x, z, r: 0.45 * s });
       placed++;
     }
     trunks.count = placed;
@@ -221,6 +226,10 @@ export class Environment {
     trunks.instanceMatrix.needsUpdate = true;
     crowns.instanceMatrix.needsUpdate = true;
     this.scene.add(trunks, crowns);
+  }
+
+  private nearCave(x: number, z: number, r: number): boolean {
+    return CAVES.some((c) => (c.x - x) ** 2 + (c.z - z) ** 2 < r * r);
   }
 
   private buildBaseCamp() {
@@ -240,6 +249,98 @@ export class Environment {
     this.campfire = new THREE.PointLight(0xff7a3a, 60, 45, 2);
     this.campfire.position.set(0, y + 1.5, 0);
     this.scene.add(ring, flames, this.campfire);
+  }
+
+  /** Low-poly research RV parked beside the campfire (rounded forms, lit windows). */
+  private buildRV(x: number, z: number, ry: number) {
+    const g = new THREE.Group();
+    const cream = new THREE.MeshStandardMaterial({ color: 0xd9d3c2, roughness: 0.8 });
+    const trim = new THREE.MeshStandardMaterial({ color: 0x7a8a6a, roughness: 0.9 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x222428, roughness: 0.9 });
+    const win = new THREE.MeshStandardMaterial({ color: 0xffd98a, emissive: 0xffb24d, emissiveIntensity: 1.4, roughness: 0.6 });
+
+    const body = new THREE.Mesh(new RoundedBoxGeometry(6.4, 2.6, 2.6, 4, 0.45), cream);
+    body.position.y = 2.0;
+    const cab = new THREE.Mesh(new RoundedBoxGeometry(1.8, 1.9, 2.4, 3, 0.4), cream);
+    cab.position.set(3.7, 1.5, 0);
+    const windshield = new THREE.Mesh(new RoundedBoxGeometry(0.3, 1.0, 2.0, 2, 0.12), win);
+    windshield.position.set(4.55, 1.7, 0);
+    const stripe = new THREE.Mesh(new RoundedBoxGeometry(6.5, 0.45, 2.66, 2, 0.12), trim);
+    stripe.position.y = 1.45;
+    g.add(body, cab, windshield, stripe);
+
+    for (const sz of [1.33, -1.33]) {
+      const sw = new THREE.Mesh(new RoundedBoxGeometry(2.6, 0.9, 0.18, 2, 0.09), win);
+      sw.position.set(-0.4, 2.2, sz);
+      g.add(sw);
+    }
+
+    const wheelGeo = new THREE.CylinderGeometry(0.55, 0.55, 0.4, 16);
+    for (const [wx, wz] of [[2.4, 1.4], [2.4, -1.4], [-2.4, 1.4], [-2.4, -1.4]] as const) {
+      const w = new THREE.Mesh(wheelGeo, dark);
+      w.rotation.x = Math.PI / 2;
+      w.position.set(wx, 0.55, wz);
+      g.add(w);
+    }
+
+    const lamp = new THREE.PointLight(0xffb866, 14, 16, 2); // warm interior glow
+    lamp.position.set(0, 2.2, 0);
+    g.add(lamp);
+
+    g.position.set(x, this.getHeight(x, z), z);
+    g.rotation.y = ry;
+    this.scene.add(g);
+
+    // Collision: a few circles along the body so players can't walk through it.
+    const axis = new THREE.Vector3(0, 1, 0);
+    for (const lx of [-2.2, 0, 2.2]) {
+      const local = new THREE.Vector3(lx, 0, 0).applyAxisAngle(axis, ry);
+      this.colliders.push({ x: x + local.x, z: z + local.z, r: 1.6 });
+    }
+  }
+
+  /** Rocky cave entrances — Bigfoot's lairs and the nodes of its fast-travel network. */
+  private buildCaves() {
+    const rock = new THREE.MeshStandardMaterial({ color: 0x6a6a73, roughness: 1 });
+    const mouthMat = new THREE.MeshStandardMaterial({ color: 0x07080b, roughness: 1 });
+
+    const boulder = (bx: number, by: number, bz: number, r: number, sy: number) => {
+      const m = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 1), rock);
+      m.position.set(bx, by + r * 0.35, bz);
+      m.scale.set(1, sy, 1);
+      m.rotation.y = Math.random() * Math.PI;
+      return m;
+    };
+
+    for (const cave of CAVES) {
+      const y = this.getHeight(cave.x, cave.z);
+      const dl = Math.hypot(cave.x, cave.z) || 1;
+      const dx = -cave.x / dl; // toward map centre (the open side)
+      const dz = -cave.z / dl;
+      const px = -dz; // perpendicular (sides of the mouth)
+      const pz = dx;
+
+      const g = new THREE.Group();
+      // Horseshoe of boulders with the opening facing the map centre.
+      g.add(boulder(cave.x - dx * 3, y, cave.z - dz * 3, 3.4, 1.1));
+      g.add(boulder(cave.x + px * 3.4, y, cave.z + pz * 3.4, 2.7, 1.2));
+      g.add(boulder(cave.x - px * 3.4, y, cave.z - pz * 3.4, 2.7, 1.2));
+
+      const mouth = new THREE.Mesh(new THREE.SphereGeometry(2.2, 16, 12), mouthMat);
+      mouth.scale.set(1.1, 1.4, 1.1);
+      mouth.position.set(cave.x - dx * 0.5, y + 1.5, cave.z - dz * 0.5);
+      g.add(mouth);
+
+      const glow = new THREE.PointLight(0x4a6ab0, 4, 12, 2); // faint depth inside the dark
+      glow.position.set(cave.x - dx * 1.5, y + 1.4, cave.z - dz * 1.5);
+      g.add(glow);
+      this.scene.add(g);
+
+      // Side + back colliders; the mouth (toward centre) stays walkable.
+      this.colliders.push({ x: cave.x - dx * 3, z: cave.z - dz * 3, r: 2.6 });
+      this.colliders.push({ x: cave.x + px * 3.4, z: cave.z + pz * 3.4, r: 2.1 });
+      this.colliders.push({ x: cave.x - px * 3.4, z: cave.z - pz * 3.4, r: 2.1 });
+    }
   }
 
   /** Per-frame ambience (campfire flicker). */

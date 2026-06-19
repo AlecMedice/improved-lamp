@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { NET, FILM, MATCH_SECONDS } from "../config";
+import { NET, FILM, MATCH_SECONDS, CAVES, CAVE } from "../config";
 import { Environment } from "../world/Environment";
 import { ClueField } from "../world/ClueField";
 import { LocalPlayer } from "../entities/LocalPlayer";
@@ -27,6 +27,7 @@ export class Game {
   private serverPhase: string | null = null;
   private self: SelfInfo = { status: "active", filmProgress: 0, role: "searcher" };
   private ended = false;
+  private caveCooldown = 0;
 
   // reused scratch vectors (avoid per-frame allocation)
   private fwd = new THREE.Vector3();
@@ -47,7 +48,9 @@ export class Game {
 
     this.env = new Environment(this.scene);
     this.clues = new ClueField(this.scene, this.env);
-    this.player = new LocalPlayer(this.camera, this.env, role);
+    // Bigfoot starts at a random cave; searchers start scattered around the campfire.
+    const spawn = this.isBigfoot ? caveMouthSpawn() : campfireSpawn();
+    this.player = new LocalPlayer(this.camera, this.env, role, spawn);
 
     if (this.isBigfoot) {
       // A constant dim floor so Bigfoot can navigate once the night turns black.
@@ -56,7 +59,8 @@ export class Game {
 
     this.input = new Input(canvas);
     this.input.setLookHandler((dx, dy) => this.player.look(dx, dy));
-    if (!this.isBigfoot) this.input.onPress("KeyF", () => this.player.toggleFlashlight());
+    if (this.isBigfoot) this.input.onPress("KeyE", () => this.tryCaveTravel());
+    else this.input.onPress("KeyF", () => this.player.toggleFlashlight());
 
     this.net = new Network(this.scene, role, name);
     this.net.onStatus = (s) => this.hud.setStatus(s);
@@ -96,6 +100,13 @@ export class Game {
     this.env.update(t);
     this.clues.update(t);
     this.net.update(dt);
+
+    // Cave fast-travel prompt (Bigfoot only).
+    if (this.isBigfoot && !this.ended) {
+      this.caveCooldown = Math.max(0, this.caveCooldown - dt);
+      const ready = this.caveCooldown === 0 && this.nearestCaveIndex() >= 0;
+      this.hud.setPrompt(ready ? "Press E — travel through the cave system" : null);
+    }
 
     // Filming (hunters only): hold right mouse to record; Bigfoot in frame builds footage.
     let recording = false;
@@ -144,12 +155,37 @@ export class Game {
     this.toBf.divideScalar(dist); // normalize
     this.camera.getWorldDirection(this.fwd);
     if (this.fwd.dot(this.toBf) < Math.cos(THREE.MathUtils.degToRad(FILM.halfFovDeg))) return false;
-    return !this.env.lineBlockedByTrees(this.player.position, bf);
+    return !this.env.lineBlocked(this.player.position, bf);
+  }
+
+  /** Index of a cave whose mouth Bigfoot is standing in, or -1. */
+  private nearestCaveIndex(): number {
+    const p = this.player.position;
+    const r2 = CAVE.triggerRadius * CAVE.triggerRadius;
+    for (let i = 0; i < CAVES.length; i++) {
+      const dx = CAVES[i].x - p.x;
+      const dz = CAVES[i].z - p.z;
+      if (dx * dx + dz * dz <= r2) return i;
+    }
+    return -1;
+  }
+
+  /** Bigfoot steps into a cave mouth and emerges from the next cave in the network. */
+  private tryCaveTravel() {
+    if (!this.isBigfoot || this.ended || this.caveCooldown > 0) return;
+    const i = this.nearestCaveIndex();
+    if (i < 0) return;
+    const dest = CAVES[(i + 1) % CAVES.length];
+    const dl = Math.hypot(dest.x, dest.z) || 1;
+    this.player.teleportTo(dest.x - (dest.x / dl) * 1.5, dest.z - (dest.z / dl) * 1.5); // at the mouth
+    this.caveCooldown = CAVE.travelCooldown;
+    this.hud.setPrompt(null);
   }
 
   private endMatch(winner: string) {
     if (this.ended) return;
     this.ended = true;
+    this.hud.setPrompt(null);
     document.exitPointerLock();
     const youWon = winner === (this.isBigfoot ? "bigfoot" : "hunters");
     const title = winner === "hunters" ? "The footage is secured" : "The forest goes quiet";
@@ -165,6 +201,20 @@ export class Game {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
   }
+}
+
+/** A scatter point around the campfire for searcher spawns. */
+function campfireSpawn(): { x: number; z: number } {
+  const a = Math.random() * Math.PI * 2;
+  const r = 4 + Math.random() * 3;
+  return { x: Math.cos(a) * r, z: Math.sin(a) * r };
+}
+
+/** A random cave mouth (offset toward map centre) for the Bigfoot spawn. */
+function caveMouthSpawn(): { x: number; z: number } {
+  const cave = CAVES[Math.floor(Math.random() * CAVES.length)];
+  const dl = Math.hypot(cave.x, cave.z) || 1;
+  return { x: cave.x - (cave.x / dl) * 1.5, z: cave.z - (cave.z / dl) * 1.5 };
 }
 
 /** Client-side phase lookup (used when running offline without the server). */

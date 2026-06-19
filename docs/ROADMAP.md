@@ -27,7 +27,7 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 - ✅ Collision (terrain height sampling + tree trunk colliders)
 - 🟡 Jump / vault, stamina + sprint *(stamina + sprint done; jump/vault pending)*
 - ✅ Day‑night cycle driving sky/fog/ambient over the match (`timeOfDay`)
-- ⬜ Creek, base camp props, trailhead landmark
+- 🟡 Landmarks: base camp (campfire + **RV**) ✅ and **cave entrances** ✅; creek/trailhead pending
 - ⬜ Audio bed (wind, creek, footsteps, flashlight click)
 
 **Goal:** the forest *feels* like a place you don't want to be alone in.
@@ -49,6 +49,7 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 - 🟡 Two playable roles with distinct cameras/speed/models *(distinct speed, height, night‑vision, avatars + Bigfoot eye‑shine done; rigged models pending)*
 - ⬜ Bigfoot: charge, leap/climb, roar (AoE scare), full senses overlay
 - ✅ Bigfoot leaves a trackable trail (footprints + broken branches) — *the clue framework*
+- ✅ Bigfoot **cave fast-travel** network (spawn at a cave; `E` to hop to the next)
 - ✅ Catch (proximity, after dusk grace) → caught/out, synced
 - ⬜ Searcher: jump/vault, ping, flashlight stun meter; downs + teammate revives (replace instant‑out)
 

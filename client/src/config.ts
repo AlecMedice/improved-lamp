@@ -36,6 +36,23 @@ export const FILM = {
 
 export const NET = { sendHz: 15 };
 
+/**
+ * Cave entrances — Bigfoot's lairs and the nodes of its fast-travel network.
+ * Kept in sync with the server's copy in ForestRoom.ts (used for the spawn point).
+ */
+export const CAVES: ReadonlyArray<{ x: number; z: number }> = [
+  { x: 120, z: 45 },
+  { x: -115, z: 95 },
+  { x: 70, z: -135 },
+  { x: -95, z: -80 },
+  { x: 10, z: 150 },
+];
+
+export const CAVE = {
+  triggerRadius: 6, // how close Bigfoot must be to a mouth to use it
+  travelCooldown: 2.0, // seconds between cave jumps
+};
+
 /** Initial dusk palette. Environment.setTimeOfDay() lerps toward night and dawn. */
 export const DUSK = {
   skyTop: new Color("#2a2740"),

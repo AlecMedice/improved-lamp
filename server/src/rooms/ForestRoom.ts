@@ -5,6 +5,15 @@ import { GameState, Player, Clue } from "./schema/GameState";
 const MATCH_SECONDS = 600;
 const WORLD_HALF = 200;
 
+/** Cave entrances — Bigfoot spawns at one. Kept in sync with the client's config.ts. */
+const CAVES = [
+  { x: 120, z: 45 },
+  { x: -115, z: 95 },
+  { x: 70, z: -135 },
+  { x: -95, z: -80 },
+  { x: 10, z: 150 },
+];
+
 // --- Clue (hint) framework tuning ---
 const STRIDE = 2.4; // metres Bigfoot travels between dropped footprints
 const BRANCH_CHANCE = 0.18; // chance a footstep also snaps a nearby branch
@@ -70,11 +79,11 @@ export class ForestRoom extends Room<GameState> {
     p.role = options?.role === "bigfoot" && !hasBigfoot ? "bigfoot" : "searcher";
     p.name = (options?.name as string) || (p.role === "bigfoot" ? "Bigfoot" : "Searcher");
 
-    // Searchers start at the base-camp clearing; Bigfoot starts out in the trees.
+    // Searchers start at the base-camp clearing; Bigfoot starts at a cave.
     if (p.role === "bigfoot") {
-      const a = Math.random() * Math.PI * 2;
-      p.x = Math.cos(a) * 90;
-      p.z = Math.sin(a) * 90;
+      const cave = CAVES[Math.floor(Math.random() * CAVES.length)];
+      p.x = cave.x;
+      p.z = cave.z;
     } else {
       p.x = (Math.random() - 0.5) * 8;
       p.z = 18 + (Math.random() - 0.5) * 4;

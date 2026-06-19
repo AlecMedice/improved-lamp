@@ -7,7 +7,7 @@ import { Environment } from "../world/Environment";
 export class LocalPlayer {
   readonly camera: THREE.PerspectiveCamera;
   readonly flashlight: THREE.SpotLight;
-  readonly position = new THREE.Vector3(0, 0, 18); // eye position
+  readonly position = new THREE.Vector3(); // eye position (set from spawn)
   readonly isBigfoot: boolean;
   battery = 100;
   stamina = 100;
@@ -20,14 +20,15 @@ export class LocalPlayer {
   private pitch = 0;
   private flashlightOn = false;
 
-  constructor(camera: THREE.PerspectiveCamera, env: Environment, role: string) {
+  constructor(camera: THREE.PerspectiveCamera, env: Environment, role: string, spawn: { x: number; z: number }) {
     this.camera = camera;
     this.env = env;
     this.isBigfoot = role === "bigfoot";
     this.eyeHeight = this.isBigfoot ? 2.3 : PLAYER.eyeHeight;
     this.speedMul = this.isBigfoot ? PLAYER.bigfootSpeedMul : 1;
 
-    this.groundY = env.getHeight(this.position.x, this.position.z);
+    this.position.set(spawn.x, 0, spawn.z);
+    this.groundY = env.getHeight(spawn.x, spawn.z);
     this.position.y = this.groundY + this.eyeHeight;
 
     // The flashlight rides the camera and points where you look (hunters use it).
@@ -56,6 +57,15 @@ export class LocalPlayer {
     this.pitch -= dy * PLAYER.mouseSensitivity;
     const lim = Math.PI / 2 - 0.05;
     this.pitch = Math.max(-lim, Math.min(lim, this.pitch));
+  }
+
+  /** Instantly move to a new (x,z) — used by Bigfoot's cave fast-travel. */
+  teleportTo(x: number, z: number) {
+    this.position.x = x;
+    this.position.z = z;
+    this.groundY = this.env.getHeight(x, z);
+    this.position.y = this.groundY + this.eyeHeight;
+    this.camera.position.copy(this.position);
   }
 
   update(dt: number, input: Input) {

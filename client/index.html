@@ -31,6 +31,9 @@
       #phase { color: var(--amber); font-weight: 700; }
       #objective { position: fixed; left: 0; right: 0; bottom: 16px; text-align: center;
         font-size: 12px; opacity: .65; letter-spacing: .04em; }
+      #prompt { position: fixed; left: 50%; transform: translateX(-50%); bottom: 84px; display: none;
+        background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.2); border-radius: 10px;
+        padding: 9px 15px; font-size: 13px; letter-spacing: .03em; }
 
       /* Filming viewfinder */
       #viewfinder { position: fixed; inset: 0; display: none; pointer-events: none; z-index: 5; }
@@ -90,6 +93,7 @@
         <div class="pill" id="film-pill"><span class="label">Clip</span><div class="bar"><i id="film-fill"></i></div></div>
       </div>
       <div id="objective"></div>
+      <div id="prompt"></div>
     </div>
 
     <div id="viewfinder">

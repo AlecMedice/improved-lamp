@@ -27,7 +27,9 @@
 
 ### 2.2 Bigfoot (1) — *the resident*
 - **Goal:** Stop the expedition before they get 3 videos — catch the searchers before the tape gets out.
+- **Start:** Bigfoot begins at one of several **cave** lairs out in the forest — never at the searchers' camp.
 - **Strengths:** ~1.2× searcher speed and better night vision. (Future: **charge**, **leap**, **climb**, and **roar** — ROADMAP Phase 3.)
+- **Cave network (fast travel):** The caves form a tunnel network. Standing in a cave mouth, Bigfoot presses `E` to **emerge from the next cave** — crossing the map in an instant to flank the team or escape a stakeout. (~2s cooldown.)
 - **The trail problem:** Bigfoot **leaves a trail** — footprints and broken branches — that hunters follow to find it. Moving more = a longer, fresher trail. Standing still hides you but lets the team regroup.
 - **Senses:** Sees who is currently **filming** (their recording light) and active flashlight cones. (Future: full "instincts" overlay + smell, per ROADMAP.)
 - **Counterplay:** Loud (footfalls audible), briefly **stunned by the photographer's flash** and by sustained focused flashlight, and must commit/cool‑down on big abilities.
@@ -140,6 +142,7 @@ A single match is a compressed night. `timeOfDay` runs 0→1 over the match leng
 - **Atmosphere:** `FogExp2` distance fog tuned per phase; `ACESFilmicToneMapping`; post‑processing pass for **bloom** (flashlights), **vignette**, and light **film grain**.
 - **Sky:** gradient skydome / hemisphere light driven by `timeOfDay` from dusk → night → dawn.
 - **Performance:** instanced trees/ferns, LODs, baked where possible, shadow only from key lights + the local flashlight.
+- **Landmarks (navigation):** the base‑camp clearing (campfire + lit **RV**) anchors the searchers; **cave entrances** (rounded boulder horseshoes with a dark mouth and a faint inner glow) mark Bigfoot's lairs and fast‑travel nodes. Distinct silhouettes help players orient in the dark.
 
 ---
 

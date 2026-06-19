@@ -48,6 +48,17 @@ export class HUD {
     this.el("caught-banner").style.display = caught ? "block" : "none";
   }
 
+  /** Contextual action hint (e.g. cave fast-travel). Pass null to hide. */
+  setPrompt(text: string | null) {
+    const el = this.el("prompt");
+    if (text) {
+      el.textContent = text;
+      el.style.display = "block";
+    } else {
+      el.style.display = "none";
+    }
+  }
+
   showEnd(title: string, message: string) {
     this.el("viewfinder").style.display = "none";
     this.el("caught-banner").style.display = "none";
