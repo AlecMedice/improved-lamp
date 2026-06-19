@@ -51,6 +51,8 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 - ✅ Bigfoot leaves a trackable trail (footprints + broken branches) — *the clue framework*
 - ✅ Bigfoot **cave fast-travel** network (spawn at a cave; pick the destination from the map)
 - ✅ **Map** (`M`) for both roles — position/heading, camp, caves; hunters also see teammates + clue trail
+- ✅ **Stakeout pings** (`Q`/map-click) — shared hunter markers on the map + world beacons
+- ✅ Fade-to-black transition on Bigfoot cave fast-travel
 - ✅ Catch (proximity, after dusk grace) → caught/out, synced
 - ⬜ Searcher: jump/vault, ping, flashlight stun meter; downs + teammate revives (replace instant‑out)
 

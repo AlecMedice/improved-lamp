@@ -59,6 +59,16 @@ export class HUD {
     }
   }
 
+  /** Quick fade-to-black; runs `midAction` at full black, then fades back in. */
+  fade(midAction: () => void) {
+    const el = this.el("fade");
+    el.style.opacity = "1";
+    window.setTimeout(() => {
+      midAction();
+      el.style.opacity = "0";
+    }, 170); // matches the CSS transition on #fade
+  }
+
   showEnd(title: string, message: string) {
     this.el("viewfinder").style.display = "none";
     this.el("caught-banner").style.display = "none";

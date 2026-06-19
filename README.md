@@ -35,9 +35,9 @@ cd client
 npm install
 npm run dev        # open the printed http://localhost:5173
 ```
-Click the canvas to lock the mouse. `WASD` move, mouse look, `F` flashlight, **hold right‑mouse to film Bigfoot**, `M` map.
+Click the canvas to lock the mouse. `WASD` move, mouse look, `F` flashlight, **hold right‑mouse to film Bigfoot**, `M` map, `Q` ping.
 
-**The hunt:** Searchers start at a campfire-and-RV base camp; **Bigfoot starts in a cave** out in the forest. Bigfoot leaves a trail of **footprints and broken branches** that fades over time — follow it. Searchers win by capturing **3 solid videos** of Bigfoot (light it up, hold it in frame for ~3s); Bigfoot wins by **catching** the whole team first. Press **`M`** for a top-down **map** (your position, base camp, caves; hunters also see teammates and the clue trail). Bigfoot stands in a **cave mouth, opens the map, and clicks a destination cave** to fast-travel there and flank the team. Open one tab as Bigfoot and another as a searcher to see it in action.
+**The hunt:** Searchers start at a campfire-and-RV base camp; **Bigfoot starts in a cave** out in the forest. Bigfoot leaves a trail of **footprints and broken branches** that fades over time — follow it. Searchers win by capturing **3 solid videos** of Bigfoot (light it up, hold it in frame for ~3s); Bigfoot wins by **catching** the whole team first. Press **`M`** for a top-down **map** (your position, base camp, caves; hunters also see teammates, the clue trail, and stakeout pings). Hunters press **`Q`** (or click the map) to drop a shared **stakeout ping** — visible to the whole team on the map and as an in-world beacon — to coordinate. Bigfoot stands in a **cave mouth, opens the map, and clicks a destination cave** to fast-travel there (with a fade transition) and flank the team. Open one tab as Bigfoot and another as a searcher to see it in action.
 
 **2. Server (optional, for multiplayer)**
 ```bash

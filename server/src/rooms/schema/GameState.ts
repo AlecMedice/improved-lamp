@@ -33,10 +33,18 @@ export class Clue extends Schema {
   @type("number") ry = 0; // heading the track points along
 }
 
+/** A map marker a hunter drops to coordinate a stakeout. One active ping per hunter. */
+export class Ping extends Schema {
+  @type("string") id = "";
+  @type("number") x = 0;
+  @type("number") z = 0;
+}
+
 /** Authoritative match state, replicated to all clients. */
 export class GameState extends Schema {
   @type({ map: Player }) players = new MapSchema<Player>();
   @type([Clue]) clues = new ArraySchema<Clue>();
+  @type([Ping]) pings = new ArraySchema<Ping>();
 
   @type("string") phase = "dusk"; // dusk|nightfall|midnight|witching|dawn
   @type("number") timeOfDay = 0; // 0 (dusk) .. 1 (dawn)

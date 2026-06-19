@@ -92,7 +92,7 @@ A single match is a compressed night. `timeOfDay` runs 0→1 over the match leng
 | Right Mouse (hold) | Raise camera & **film** Bigfoot (build a video clip) |
 | `M` | Toggle the **map** (your position, base camp, caves, teammates, the clue trail) |
 | `E` | Interact — revive teammate *(planned, Phase 3)* |
-| `Q` | Ping / shout (places a marker, alerts team) *(planned)* |
+| `Q` | Drop a **stakeout ping** for the team (or click the map to place one) |
 | `Tab` | Objectives & footage count |
 | `Esc` | Release mouse / menu |
 
@@ -163,7 +163,8 @@ A single match is a compressed night. `timeOfDay` runs 0→1 over the match leng
 ## 10. UI / HUD
 
 - **Minimal in‑world HUD:** flashlight battery, stamina, footage captured/required, current phase clock, contextual prompt, filming viewfinder + clip bar.
-- **Map (`M`) — *implemented*:** top‑down overlay for both roles showing the player's position + heading, base camp, and caves. Hunters also see teammates and the clue trail (a live tracking map). For Bigfoot in a cave mouth, caves become **clickable fast‑travel destinations**. Opening the map frees the cursor and pauses local movement.
+- **Map (`M`) — *implemented*:** top‑down overlay for both roles showing the player's position + heading, base camp, and caves. Hunters also see teammates, the clue trail, and **stakeout pings** (a live tracking map). For Bigfoot in a cave mouth, caves become **clickable fast‑travel destinations** (with a fade‑to‑black transition). Opening the map frees the cursor and pauses local movement.
+- **Stakeout pings (`Q` / map click) — *implemented*:** hunters drop a shared marker (one active per hunter; ~35s lifetime) to coordinate. Pings show on every hunter's map and as an in‑world beacon; they're hidden from Bigfoot.
 - **Bigfoot HUD:** *(planned)* ability cooldowns, senses toggle, searchers‑caught counter.
 - **Diegetic where possible** (battery on the flashlight model, footage in a field journal).
 

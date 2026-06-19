@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { NET, FILM, MATCH_SECONDS, CAVES, CAVE } from "../config";
 import { Environment } from "../world/Environment";
 import { ClueField } from "../world/ClueField";
+import { PingField } from "../world/PingField";
 import { LocalPlayer } from "../entities/LocalPlayer";
 import { Input } from "./Input";
 import { Network, SelfInfo } from "./Network";
@@ -16,6 +17,7 @@ export class Game {
   private clock = new THREE.Clock();
   private env: Environment;
   private clues: ClueField;
+  private pings?: PingField; // hunters only
   private player: LocalPlayer;
   private input: Input;
   private net: Network;
@@ -78,6 +80,15 @@ export class Game {
     this.net.onClueAdd = (c) => this.clues.add(c);
     this.net.onClueRemove = (id) => this.clues.remove(id);
     this.net.onEnd = (winner) => this.endMatch(winner);
+
+    // Hunters: stakeout pings (Q to mark where you stand, or click the map).
+    if (!this.isBigfoot) {
+      this.pings = new PingField(this.scene, this.env);
+      this.net.onPingAdd = (id, x, z) => this.pings!.add(id, x, z);
+      this.net.onPingRemove = (id) => this.pings!.remove(id);
+      this.input.onPress("KeyQ", () => this.dropPing());
+      this.map.onMapClick = (x, z) => this.dropPing(x, z);
+    }
     void this.net.connect();
 
     this.hud.setFootage(0, 3);
@@ -125,6 +136,7 @@ export class Game {
         currentCave: this.nearestCaveIndex(),
         others: hunter ? this.net.getRemoteSearchers() : [],
         clues: hunter ? this.clues.getDots() : [],
+        pings: hunter ? this.net.getPings() : [],
       });
     }
 
@@ -197,9 +209,16 @@ export class Game {
     if (here < 0 || i === here || i < 0 || i >= CAVES.length) return;
     const dest = CAVES[i];
     const dl = Math.hypot(dest.x, dest.z) || 1;
-    this.player.teleportTo(dest.x - (dest.x / dl) * 1.5, dest.z - (dest.z / dl) * 1.5); // at the mouth
     this.caveCooldown = CAVE.travelCooldown;
-    this.closeMap();
+    this.closeMap(); // synchronous (keeps the pointer-lock user gesture)
+    // Fade to black, hop at the darkest point, fade back in at the new cave.
+    this.hud.fade(() => this.player.teleportTo(dest.x - (dest.x / dl) * 1.5, dest.z - (dest.z / dl) * 1.5));
+  }
+
+  /** Drop a stakeout ping at (x,z), or at the player's feet if not given. */
+  private dropPing(x?: number, z?: number) {
+    if (this.isBigfoot || this.ended || this.self.status !== "active") return;
+    this.net.sendPing(x ?? this.player.position.x, z ?? this.player.position.z);
   }
 
   private toggleMap() {

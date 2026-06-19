@@ -1,5 +1,5 @@
 import { Room, Client } from "@colyseus/core";
-import { GameState, Player, Clue } from "./schema/GameState";
+import { GameState, Player, Clue, Ping } from "./schema/GameState";
 
 /** Length of one match (a compressed night), in seconds. */
 const MATCH_SECONDS = 600;
@@ -19,6 +19,10 @@ const STRIDE = 2.4; // metres Bigfoot travels between dropped footprints
 const BRANCH_CHANCE = 0.18; // chance a footstep also snaps a nearby branch
 const CLUE_LIFETIME = 50; // seconds before a track goes cold and disappears
 const MAX_CLUES = 80; // hard cap on live clues
+
+// --- Hunter ping (stakeout markers) tuning ---
+const PING_LIFETIME = 35; // seconds a ping stays before fading off the map
+const MAX_PINGS = 12; // hard cap (one per hunter, but stay safe)
 
 // --- Filming / catching tuning ---
 const FILM_RANGE = 38; // server sanity range a hunter can film Bigfoot from
@@ -46,6 +50,10 @@ export class ForestRoom extends Room<GameState> {
   private lastTrack = new Map<string, { x: number; z: number }>(); // bigfoot sid -> last footprint
   private filmFlags = new Map<string, FilmFlag>(); // hunter sid -> live recording flags
 
+  private pingSeq = 0;
+  private pingAge = new Map<string, number>(); // ping id -> elapsed time when created
+  private pingOwner = new Map<string, string>(); // hunter sid -> their current ping id
+
   onCreate() {
     this.setState(new GameState());
 
@@ -67,6 +75,15 @@ export class ForestRoom extends Room<GameState> {
       flag.inView = !!data.inView;
       this.filmFlags.set(client.sessionId, flag);
       p.filming = flag.recording && p.role !== "bigfoot";
+    });
+
+    // Hunters drop a stakeout ping (from the map or where they stand). One per hunter.
+    this.onMessage("ping", (client, data: any) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p || p.role === "bigfoot" || p.status !== "active" || !data) return;
+      const x = clamp(num(data.x, 0), -WORLD_HALF, WORLD_HALF);
+      const z = clamp(num(data.z, 0), -WORLD_HALF, WORLD_HALF);
+      this.addPing(client.sessionId, x, z);
     });
 
     this.setSimulationInterval((dt) => this.update(dt), 1000 / 20);
@@ -99,6 +116,7 @@ export class ForestRoom extends Room<GameState> {
     this.state.players.delete(client.sessionId);
     this.filmFlags.delete(client.sessionId);
     this.lastTrack.delete(client.sessionId);
+    this.removePing(client.sessionId);
   }
 
   // ---------------------------------------------------------------------------
@@ -119,6 +137,7 @@ export class ForestRoom extends Room<GameState> {
 
     this.dropClues(bigfoots);
     this.expireClues();
+    this.expirePings();
     this.updateFilming(dt, hunters, bigfoots);
     this.updateCatching(hunters, bigfoots);
     this.evaluateWin(hunters, bigfoots);
@@ -167,6 +186,63 @@ export class ForestRoom extends Room<GameState> {
       if (this.elapsed - born > CLUE_LIFETIME) {
         this.state.clues.splice(i, 1);
         this.clueAge.delete(c.id);
+      }
+    }
+  }
+
+  private addPing(owner: string, x: number, z: number) {
+    this.removePing(owner); // one active ping per hunter — re-pinging moves it
+    if (this.state.pings.length >= MAX_PINGS) {
+      const old = this.state.pings.shift();
+      if (old) {
+        this.pingAge.delete(old.id);
+        this.clearOwnerByPing(old.id);
+      }
+    }
+    const ping = new Ping();
+    ping.id = "p" + this.pingSeq++;
+    ping.x = x;
+    ping.z = z;
+    this.state.pings.push(ping);
+    this.pingAge.set(ping.id, this.elapsed);
+    this.pingOwner.set(owner, ping.id);
+  }
+
+  private removePing(owner: string) {
+    const id = this.pingOwner.get(owner);
+    if (!id) return;
+    this.removePingById(id);
+    this.pingOwner.delete(owner);
+  }
+
+  private removePingById(id: string) {
+    for (let i = 0; i < this.state.pings.length; i++) {
+      if (this.state.pings[i]?.id === id) {
+        this.state.pings.splice(i, 1);
+        break;
+      }
+    }
+    this.pingAge.delete(id);
+  }
+
+  private clearOwnerByPing(id: string) {
+    for (const [owner, pid] of this.pingOwner) {
+      if (pid === id) {
+        this.pingOwner.delete(owner);
+        break;
+      }
+    }
+  }
+
+  private expirePings() {
+    for (let i = this.state.pings.length - 1; i >= 0; i--) {
+      const ping = this.state.pings[i];
+      if (!ping) continue;
+      const born = this.pingAge.get(ping.id) ?? this.elapsed;
+      if (this.elapsed - born > PING_LIFETIME) {
+        this.state.pings.splice(i, 1);
+        this.pingAge.delete(ping.id);
+        this.clearOwnerByPing(ping.id);
       }
     }
   }

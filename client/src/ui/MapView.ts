@@ -13,6 +13,7 @@ export type MapData = {
   currentCave: number; // index of the cave the player is standing in, or -1
   others: Dot[]; // teammates to show (already filtered by role)
   clues: Dot[]; // clue trail to show (already filtered by role)
+  pings: Dot[]; // stakeout pings to show (already filtered by role)
 };
 
 /**
@@ -22,6 +23,7 @@ export type MapData = {
  */
 export class MapView {
   onSelectCave: (index: number) => void = () => {};
+  onMapClick: (x: number, z: number) => void = () => {};
 
   private overlay: HTMLElement;
   private frame: HTMLElement;
@@ -34,11 +36,20 @@ export class MapView {
     this.overlay = byId("map-overlay");
     this.frame = byId("map-frame");
     this.hint = byId("map-hint");
-    this.ctx = (byId("map-canvas") as HTMLCanvasElement).getContext("2d")!;
+    const canvas = byId("map-canvas") as HTMLCanvasElement;
+    this.ctx = canvas.getContext("2d")!;
 
     // Click the dark backdrop (outside the frame) to close.
     this.overlay.addEventListener("click", (e) => {
       if (e.target === this.overlay) this.close();
+    });
+
+    // Click inside the map → world (x,z). Used by hunters to drop a ping.
+    canvas.addEventListener("click", (e) => {
+      const r = this.frame.getBoundingClientRect();
+      const x = ((e.clientX - r.left) / r.width) * (HALF * 2) - HALF;
+      const z = ((e.clientY - r.top) / r.height) * (HALF * 2) - HALF;
+      this.onMapClick(x, z);
     });
 
     // One marker-button per cave, positioned in % so it scales with the frame.
@@ -99,6 +110,17 @@ export class MapView {
       ctx.beginPath();
       ctx.arc(p.x, p.y, 2.2, 0, Math.PI * 2);
       ctx.fill();
+    }
+
+    // stakeout pings (hunters)
+    for (const pg of d.pings) {
+      const p = toMap(pg.x, pg.z);
+      ctx.strokeStyle = "#ffe24a";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 6, 0, Math.PI * 2);
+      ctx.stroke();
+      disc(ctx, p.x, p.y, 2.5, "#ffe24a");
     }
 
     // teammates (hunters)

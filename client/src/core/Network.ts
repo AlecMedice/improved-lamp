@@ -33,6 +33,8 @@ export class Network {
   onEnd: (winner: string) => void = () => {};
   onClueAdd: (clue: ClueData) => void = () => {};
   onClueRemove: (id: string) => void = () => {};
+  onPingAdd: (id: string, x: number, z: number) => void = () => {};
+  onPingRemove: (id: string) => void = () => {};
 
   constructor(private scene: THREE.Scene, private role: string, private name: string) {
     this.client = new Client(SERVER_URL);
@@ -84,6 +86,9 @@ export class Network {
     state.clues.onAdd((c: any) => this.onClueAdd({ id: c.id, ctype: c.ctype, x: c.x, z: c.z, ry: c.ry }));
     state.clues.onRemove((c: any) => this.onClueRemove(c.id));
 
+    state.pings.onAdd((p: any) => this.onPingAdd(p.id, p.x, p.z));
+    state.pings.onRemove((p: any) => this.onPingRemove(p.id));
+
     room.onStateChange((s: any) => {
       this.onPhase(s.phase, s.timeOfDay);
       this.onFootage(s.videosCaptured, s.videosRequired);
@@ -103,6 +108,19 @@ export class Network {
       if (!rp.isBigfoot) out.push({ x: rp.group.position.x, z: rp.group.position.z });
     }
     return out;
+  }
+
+  /** Live stakeout ping positions from shared state — shown on the hunters' map. */
+  getPings(): Array<{ x: number; z: number }> {
+    const out: Array<{ x: number; z: number }> = [];
+    const pings = (this.room?.state as any)?.pings;
+    if (pings) for (const p of pings) out.push({ x: p.x, z: p.z });
+    return out;
+  }
+
+  /** Hunter drops a stakeout ping at a world (x,z). */
+  sendPing(x: number, z: number) {
+    this.room?.send("ping", { x, z });
   }
 
   sendMove(p: MovePayload) {
