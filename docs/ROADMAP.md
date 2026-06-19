@@ -24,9 +24,9 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 
 ## Phase 1 — Feel & environment 🟡
 - 🟡 Tune movement (accel, friction, head‑bob, footsteps)
-- ⬜ Collision (terrain height sampling + tree/rock colliders)
-- ⬜ Jump / vault, stamina + sprint
-- 🟡 Day‑night cycle driving sky/fog/ambient over the match (`timeOfDay`)
+- ✅ Collision (terrain height sampling + tree trunk colliders)
+- 🟡 Jump / vault, stamina + sprint *(stamina + sprint done; jump/vault pending)*
+- ✅ Day‑night cycle driving sky/fog/ambient over the match (`timeOfDay`)
 - ⬜ Creek, base camp props, trailhead landmark
 - ⬜ Audio bed (wind, creek, footsteps, flashlight click)
 
@@ -45,24 +45,26 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 
 ---
 
-## Phase 3 — Asymmetry & abilities ⬜
-- ⬜ Two playable roles with distinct cameras/speed/models
-- ⬜ Bigfoot: charge, leap/climb, grab (down), roar (AoE scare), senses overlay
-- ⬜ Searcher: sprint, jump/vault, ping, flashlight stun meter
-- ⬜ Downed/revive/incapacitated states synced
+## Phase 3 — Asymmetry & abilities 🟡
+- 🟡 Two playable roles with distinct cameras/speed/models *(distinct speed, height, night‑vision, avatars + Bigfoot eye‑shine done; rigged models pending)*
+- ⬜ Bigfoot: charge, leap/climb, roar (AoE scare), full senses overlay
+- ✅ Bigfoot leaves a trackable trail (footprints + broken branches) — *the clue framework*
+- ✅ Catch (proximity, after dusk grace) → caught/out, synced
+- ⬜ Searcher: jump/vault, ping, flashlight stun meter; downs + teammate revives (replace instant‑out)
 
 **Goal:** "be the monster vs. survive the monster" is real and fun.
 
 ---
 
-## Phase 4 — Game loop & objectives ⬜
-- ⬜ Evidence nodes (spawn, collect channel, tool bonuses)
-- ⬜ Base‑camp radio transmission (timed, noisy, climactic)
-- ⬜ Night phases & escalation buffs
-- ⬜ Win/loss resolution + results screen
-- ⬜ HUD: battery, stamina, evidence, phase clock, objectives (`Tab`)
+## Phase 4 — Game loop & objectives 🟡
+- ✅ **Filming win condition** — capture 3 solid videos of Bigfoot (client detects in‑frame, server tallies)
+- ✅ Clue trail spawn/expire/fade ("the trail goes cold")
+- ✅ Night phases & `timeOfDay` progression
+- ✅ Win/loss resolution + results screen (3 videos → hunters; team caught → Bigfoot; dawn → escape)
+- ✅ HUD: battery, stamina, footage, phase clock, recording viewfinder + clip progress
+- ⬜ Escalation buffs per phase (faster Bigfoot, faster drain); evidence side‑objectives; tutorial
 
-**Goal:** a full match has a beginning, middle, and a winner. **← vertical slice complete.**
+**Goal:** a full match has a beginning, middle, and a winner. **← core of the vertical slice is in.**
 
 ---
 
@@ -95,5 +97,5 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 | Scope creep | Lock the vertical slice (P0–P4) before any P5+ work |
 
 ## Definition of "vertical slice" (the first real milestone)
-One map · 6 players online · both roles playable · flashlight + 2 abilities/side ·
-evidence + transmit + survive‑to‑dawn · dusk→dawn lighting · win/loss + results.
+One map · 6 players online · both roles playable · flashlight + clue trail ·
+film 3 videos to win / catch the team to win · dusk→dawn lighting · win/loss + results.

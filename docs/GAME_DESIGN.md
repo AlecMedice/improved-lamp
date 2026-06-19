@@ -19,15 +19,17 @@
 ## 2. Roles
 
 ### 2.1 Searchers (5) — *the expedition*
-- **Goal:** Collect evidence → transmit it from base camp's radio, **or** survive until dawn.
-- **Fragile:** A direct Bigfoot grab **downs** them (not kills). Downed players crawl slowly and bleed a "found" beacon; a teammate can **revive** them with `E`. Two downs = incapacitated (out for the match, can still spectate/ping).
+- **Goal:** Capture **3 solid videos of Bigfoot** (team total) — without getting caught. Surviving to dawn is a secondary escape win.
+- **Filming:** Hold the camera on Bigfoot, in frame and in range, to build a clip; ~3s in frame = one solid video. You must actually *see* Bigfoot — usually by lighting it with your flashlight or catching its eye-shine.
+- **Fragile:** If Bigfoot gets close enough it **catches** you — you're out for the match (spectate). When the whole team is caught, Bigfoot wins. (Future: downs + teammate revives, per ROADMAP Phase 3.)
 - **Cooperative tools:** Each searcher has one specialty (see `STORY.md`), but all share the same base verbs: move, sprint, jump, flashlight, interact, ping.
 - **Resources:** Stamina (sprint), flashlight battery (depletes; spares exist in the world / from the medic).
 
 ### 2.2 Bigfoot (1) — *the resident*
-- **Goal:** Stop the expedition before dawn — incapacitate the team and/or destroy evidence so it can't be transmitted.
-- **Strengths:** ~1.3× searcher speed, can **charge**, **leap**, and **climb** trees/rocks; **roar** (area‑of‑effect scare that blurs vision + drains stamina + can extinguish a flashlight briefly).
-- **Senses:** Sees active flashlight cones and recent footprints/sound pings at range (the "instincts" overlay). Can **smell** a trail to the nearest searcher on cooldown.
+- **Goal:** Stop the expedition before they get 3 videos — catch the searchers before the tape gets out.
+- **Strengths:** ~1.2× searcher speed and better night vision. (Future: **charge**, **leap**, **climb**, and **roar** — ROADMAP Phase 3.)
+- **The trail problem:** Bigfoot **leaves a trail** — footprints and broken branches — that hunters follow to find it. Moving more = a longer, fresher trail. Standing still hides you but lets the team regroup.
+- **Senses:** Sees who is currently **filming** (their recording light) and active flashlight cones. (Future: full "instincts" overlay + smell, per ROADMAP.)
 - **Counterplay:** Loud (footfalls audible), briefly **stunned by the photographer's flash** and by sustained focused flashlight, and must commit/cool‑down on big abilities.
 
 ---
@@ -35,14 +37,14 @@
 ## 3. Core loop (one match)
 
 ```
-DUSK (briefing)  →  SEARCH  →  ESCALATION (night phases)  →  TRANSMIT / SURVIVE  →  RESOLUTION
+DUSK (briefing)  →  TRACK  →  FILM  →  ESCALATION (night phases)  →  RESOLUTION
 ```
 
-1. **Dusk briefing (~30s):** Searchers spawn at base camp, choose a flashlight + tool. Bigfoot picks a den. Tutorial hints surface.
-2. **Search:** 5–7 **evidence nodes** spawn across the map (footprint cast, fur tuft, photo target, audio cue, nest/bones, claw‑marked tree, scat). Searchers need **any N** (default 3) to win by transmission.
-3. **Escalation:** The match clock drives **night phases** (below). Each phase darkens the world and buffs Bigfoot.
-4. **Transmit / survive:** Bring collected evidence to the **base‑camp radio** and hold `E` to transmit (takes time, makes noise — a climactic risk moment). Alternatively, survive with ≥1 searcher standing until **dawn**.
-5. **Resolution:** See win conditions (§5).
+1. **Dusk briefing:** Searchers spawn at base camp; Bigfoot starts out in the trees. During dusk Bigfoot **cannot catch** anyone (grace period).
+2. **Track:** Bigfoot leaves **footprints and broken branches** as it moves. Searchers read this fading trail to close in on it.
+3. **Film:** Get Bigfoot in frame (hold right‑mouse), in range, lit up — ~3s of clean footage = one solid video. The team needs **3** (`videosRequired`).
+4. **Escalation:** The match clock drives **night phases** (below); it gets darker and Bigfoot faster. Get too close and Bigfoot catches you.
+5. **Resolution:** 3 videos → searchers win; whole team caught → Bigfoot wins. See §5.
 
 ---
 
@@ -63,14 +65,13 @@ A single match is a compressed night. `timeOfDay` runs 0→1 over the match leng
 ## 5. Win / loss conditions
 
 **Searchers win if:**
-- They **transmit ≥ N evidence** (default 3) from base camp, **or**
-- **≥ 1 searcher** is still standing at **dawn**.
+- The team captures **≥ 3 solid videos** of Bigfoot (`videosRequired`), **or**
+- **≥ 1 searcher** survives (un‑caught) until **dawn** — the expedition escapes.
 
 **Bigfoot wins if:**
-- **All 5 searchers** are incapacitated before dawn, **or**
-- The searchers **fail to transmit** enough evidence and Bigfoot has destroyed/blocked the rest.
+- **Every searcher** has been **caught** before the team reaches 3 videos.
 
-**Tunable knobs:** N evidence required, number of nodes, match length, revive count, Bigfoot speed/cooldowns, battery drain rate.
+**Tunable knobs** (server `ForestRoom`): `videosRequired`, `FILM_SECONDS` (footage per video), `FILM_RANGE`, `CATCH_RADIUS`, `CLUE_LIFETIME`/`STRIDE`/`BRANCH_CHANCE` (the trail), match length, Bigfoot speed.
 
 ---
 
@@ -86,9 +87,10 @@ A single match is a compressed night. `timeOfDay` runs 0→1 over the match leng
 | `Shift` | Sprint (drains stamina) |
 | `Space` | Jump / vault low obstacles |
 | `F` | Toggle flashlight |
-| `E` | Interact — collect evidence / revive teammate / transmit |
-| `Q` | Ping / shout (places a marker, alerts team) |
-| `Tab` | Objectives & evidence count |
+| Right Mouse (hold) | Raise camera & **film** Bigfoot (build a video clip) |
+| `E` | Interact — revive teammate *(planned, Phase 3)* |
+| `Q` | Ping / shout (places a marker, alerts team) *(planned)* |
+| `Tab` | Objectives & footage count |
 | `Esc` | Release mouse / menu |
 
 ### Bigfoot
@@ -112,16 +114,19 @@ A single match is a compressed night. `timeOfDay` runs 0→1 over the match leng
 - **Tells Bigfoot where you are:** an active cone is visible to Bigfoot's senses overlay at range. Light discipline is a real decision.
 - **Defensive use:** sustained focus on Bigfoot's face builds a small stun meter (the photographer's flash fills it instantly).
 
-### 7.2 Evidence
-- Nodes are interactable objects (`E` to collect/cast, takes a short channel). Some require a specific tool to be *full value* (e.g. audio for Theo, photo for Eli) but anyone can grab partials.
-- Carried evidence must be **transmitted at base camp**. Bigfoot can **destroy uncollected nodes** and **scatter** dropped evidence from a downed searcher.
+### 7.2 Filming Bigfoot (how hunters win) — *implemented*
+- Hold **right‑mouse** to raise the camcorder. A clip builds only while Bigfoot is **in frame** (centred within `FILM.halfFovDeg`), **in range** (`FILM_RANGE`), and **not hidden behind a trunk**. ~`FILM_SECONDS` of clean footage = **one solid video**; lose the shot and the clip drains.
+- **Authoritative:** the client reports "Bigfoot in frame", the server confirms range and tallies `videosCaptured`; the team needs `videosRequired` (3).
+- You usually must **light Bigfoot** (flashlight) or catch its **eye‑shine** to film it — which gives your own position away. Bigfoot sees a red **recording light** on anyone filming it.
 
-### 7.3 Stamina, downs & revives
-- Sprinting drains stamina; walking/idle regenerates it. Roars drain it.
-- Grab → **downed** (crawl, beacon). Teammate `E` revive (channel). Second down → **incapacitated**.
+### 7.3 Clue trail — the hint framework — *implemented*
+- As Bigfoot walks, the **server** drops `Clue` entities every `STRIDE` metres: mostly **footprints** (oriented along its heading), occasionally **broken branches**. They're shared state, so the whole team follows the same trail.
+- Each clue **fades and expires** after `CLUE_LIFETIME`. A dense, bright trail = Bigfoot is near and recent; a sparse/faint one = it has moved on ("the trail goes cold").
+- Extensible: add `fur`, `claw‑marked tree`, `scat`, or `nest` as new `ctype`s; a Tracker specialty could highlight them.
 
-### 7.4 Bigfoot senses
-- Toggleable/auto "instincts" overlay highlighting recent footprints, active flashlights, and ping/shout sources within radius. Stronger in later phases.
+### 7.4 Catching, stamina & (future) revives
+- Sprinting drains **stamina**; walking/idle regenerates it.
+- **Caught:** if Bigfoot gets within `CATCH_RADIUS` of an active hunter (after the dusk grace), that hunter is **out** (spectates). Whole team caught → Bigfoot wins. *(Planned: downs + teammate revives instead of instant‑out, Phase 3.)*
 
 ### 7.5 Audio (design intent)
 - Directional footsteps, distant roars, the creek, wind, flashlight click, heartbeat that rises with proximity. Audio is a primary information channel for both sides.
@@ -141,10 +146,10 @@ A single match is a compressed night. `timeOfDay` runs 0→1 over the match leng
 ## 9. Networking architecture (Colyseus)
 
 - **Room:** `ForestRoom` (capacity 6). Holds `GameState` (see `server/src/rooms/schema/`):
-  - `players: Map<sessionId, Player>` — `{ role, x, y, z, ry, flashlightOn, battery, stamina, status }`
-  - `evidence: ArrayLike<EvidenceNode>` — `{ id, type, x, z, collectedBy, transmitted }`
-  - `phase`, `timeOfDay`, `evidenceTransmitted`, `winner`
-- **Authority:** Server owns match phase, time, evidence, and validates actions. v1 movement is client‑sent + server‑relayed (lightweight, with sanity clamps); the **upgrade path** is server‑authoritative movement with reconciliation.
+  - `players: Map<sessionId, Player>` — `{ role, name, x, y, z, ry, flashlightOn, battery, stamina, status, filming, filmProgress }` (`y` is feet height)
+  - `clues: Clue[]` — `{ id, ctype, x, z, ry }` — the footprint/branch trail Bigfoot leaves
+  - `phase`, `timeOfDay`, `videosRequired`, `videosCaptured`, `winner`
+- **Authority:** Server owns match phase/time, the clue trail, filming tallies, catching, and win/loss. v1 movement is client‑sent + server‑clamped; clients send `recording`/`inView` intent and the server confirms range before crediting footage. **Upgrade path:** server‑authoritative movement with reconciliation.
 - **Tick:** server simulation/broadcast at ~15–20 Hz; clients **interpolate** remote players between snapshots.
 - **Role assignment:** first joiner can volunteer for Bigfoot; otherwise random among connected players at match start.
 - **Lobby → match → results** room states.

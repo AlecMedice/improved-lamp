@@ -3,14 +3,45 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import { WORLD, DUSK } from "../config";
 import { mulberry32, makeValueNoise } from "../util/rng";
 
+type Collider = { x: number; z: number; r: number };
+
+/** A keyframe in the dusk -> night -> dawn cycle. */
+type SkyStop = {
+  t: number;
+  top: THREE.Color;
+  bottom: THREE.Color;
+  fog: THREE.Color;
+  fogD: number;
+  hemi: number;
+  sun: number;
+  sunCol: THREE.Color;
+};
+
+const c = (hex: string) => new THREE.Color(hex);
+
+/** dusk(0) -> nightfall -> deep night -> witching -> dawn(1) */
+const SKY_STOPS: SkyStop[] = [
+  { t: 0.0, top: c("#2a2740"), bottom: c("#c87b53"), fog: c("#5a4a55"), fogD: 0.012, hemi: 0.6, sun: 1.6, sunCol: c("#ff9d5c") },
+  { t: 0.16, top: c("#171a30"), bottom: c("#3a3550"), fog: c("#2a2b3d"), fogD: 0.018, hemi: 0.32, sun: 0.5, sunCol: c("#6a6cff") },
+  { t: 0.5, top: c("#070912"), bottom: c("#0d1430"), fog: c("#0a0f1c"), fogD: 0.03, hemi: 0.16, sun: 0.18, sunCol: c("#5566cc") },
+  { t: 0.85, top: c("#0a0a16"), bottom: c("#10182e"), fog: c("#0a0e1a"), fogD: 0.032, hemi: 0.14, sun: 0.16, sunCol: c("#5566cc") },
+  { t: 1.0, top: c("#243a52"), bottom: c("#9fd0c9"), fog: c("#7fa6a0"), fogD: 0.014, hemi: 0.55, sun: 1.2, sunCol: c("#bfe0d0") },
+];
+
 /**
  * Builds the stylized low-poly forest: smooth-shaded terrain, instanced conifers,
- * a gradient dusk sky, fog, and a warm base-camp campfire.
+ * a gradient sky that runs from dusk to dawn, fog, and a base-camp campfire.
  */
 export class Environment {
   readonly scene: THREE.Scene;
+  readonly treeColliders: Collider[] = [];
+
   private noise = makeValueNoise(WORLD.seed);
   private campfire?: THREE.PointLight;
+  private skyMat!: THREE.ShaderMaterial;
+  private hemi!: THREE.HemisphereLight;
+  private sun!: THREE.DirectionalLight;
+  private fog!: THREE.FogExp2;
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -36,18 +67,75 @@ export class Environment {
       freq *= 2;
     }
     h = (h / norm) * WORLD.hillHeight;
-    // Flatten the base-camp clearing around the origin.
     const d = Math.sqrt(x * x + z * z);
     const flat = THREE.MathUtils.smoothstep(d, WORLD.baseCampRadius, WORLD.baseCampRadius + 12);
     return h * flat;
   }
 
+  /** Push an (x,z) point out of any tree trunk it overlaps. Returns the resolved point. */
+  resolveCollision(x: number, z: number, radius: number): { x: number; z: number } {
+    let nx = x;
+    let nz = z;
+    for (const t of this.treeColliders) {
+      const min = t.r + radius;
+      const dx = nx - t.x;
+      const dz = nz - t.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < min * min && d2 > 1e-6) {
+        const d = Math.sqrt(d2);
+        const push = min - d;
+        nx += (dx / d) * push;
+        nz += (dz / d) * push;
+      }
+    }
+    return { x: nx, z: nz };
+  }
+
+  /** True if a tree trunk blocks the straight (XZ) line between two points. */
+  lineBlockedByTrees(a: THREE.Vector3, b: THREE.Vector3): boolean {
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const len2 = dx * dx + dz * dz || 1e-6;
+    for (const t of this.treeColliders) {
+      let s = ((t.x - a.x) * dx + (t.z - a.z) * dz) / len2;
+      s = Math.max(0, Math.min(1, s));
+      const cx = a.x + dx * s;
+      const cz = a.z + dz * s;
+      const ddx = t.x - cx;
+      const ddz = t.z - cz;
+      if (ddx * ddx + ddz * ddz < t.r * t.r) return true;
+    }
+    return false;
+  }
+
+  /** Drive the sky/fog/lights from match time (0 = dusk .. 1 = dawn). */
+  setTimeOfDay(t: number) {
+    t = THREE.MathUtils.clamp(t, 0, 1);
+    let a = SKY_STOPS[0];
+    let b = SKY_STOPS[SKY_STOPS.length - 1];
+    for (let i = 0; i < SKY_STOPS.length - 1; i++) {
+      if (t >= SKY_STOPS[i].t && t <= SKY_STOPS[i + 1].t) {
+        a = SKY_STOPS[i];
+        b = SKY_STOPS[i + 1];
+        break;
+      }
+    }
+    const k = a === b ? 0 : (t - a.t) / (b.t - a.t);
+    (this.skyMat.uniforms.top.value as THREE.Color).lerpColors(a.top, b.top, k);
+    (this.skyMat.uniforms.bottom.value as THREE.Color).lerpColors(a.bottom, b.bottom, k);
+    this.fog.color.lerpColors(a.fog, b.fog, k);
+    this.fog.density = THREE.MathUtils.lerp(a.fogD, b.fogD, k);
+    this.hemi.intensity = THREE.MathUtils.lerp(a.hemi, b.hemi, k);
+    this.sun.intensity = THREE.MathUtils.lerp(a.sun, b.sun, k);
+    this.sun.color.lerpColors(a.sunCol, b.sunCol, k);
+  }
+
   private buildSky() {
     const geo = new THREE.SphereGeometry(WORLD.size, 32, 16);
-    const mat = new THREE.ShaderMaterial({
+    this.skyMat = new THREE.ShaderMaterial({
       side: THREE.BackSide,
       depthWrite: false,
-      uniforms: { top: { value: DUSK.skyTop }, bottom: { value: DUSK.skyBottom } },
+      uniforms: { top: { value: DUSK.skyTop.clone() }, bottom: { value: DUSK.skyBottom.clone() } },
       vertexShader: `
         varying vec3 vPos;
         void main() { vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
@@ -61,16 +149,17 @@ export class Environment {
         }
       `,
     });
-    this.scene.add(new THREE.Mesh(geo, mat));
-    this.scene.fog = new THREE.FogExp2(DUSK.fog.getHex(), 0.012);
+    this.scene.add(new THREE.Mesh(geo, this.skyMat));
+    this.fog = new THREE.FogExp2(DUSK.fog.getHex(), 0.012);
+    this.scene.fog = this.fog;
   }
 
   private buildLights() {
-    const hemi = new THREE.HemisphereLight(DUSK.ambientSky.getHex(), DUSK.ambientGround.getHex(), 0.6);
-    this.scene.add(hemi);
-    const sun = new THREE.DirectionalLight(DUSK.sun.getHex(), 1.6);
-    sun.position.set(-80, 28, -60); // low, setting sun
-    this.scene.add(sun);
+    this.hemi = new THREE.HemisphereLight(DUSK.ambientSky.getHex(), DUSK.ambientGround.getHex(), 0.6);
+    this.scene.add(this.hemi);
+    this.sun = new THREE.DirectionalLight(DUSK.sun.getHex(), 1.6);
+    this.sun.position.set(-80, 28, -60); // low, setting sun
+    this.scene.add(this.sun);
   }
 
   private buildTerrain() {
@@ -124,6 +213,7 @@ export class Environment {
       m.compose(new THREE.Vector3(x, this.getHeight(x, z), z), q, new THREE.Vector3(s, s, s));
       trunks.setMatrixAt(placed, m);
       crowns.setMatrixAt(placed, m);
+      this.treeColliders.push({ x, z, r: 0.45 * s });
       placed++;
     }
     trunks.count = placed;

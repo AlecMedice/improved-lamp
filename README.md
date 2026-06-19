@@ -35,7 +35,9 @@ cd client
 npm install
 npm run dev        # open the printed http://localhost:5173
 ```
-Click the canvas to lock the mouse. `WASD` to move, mouse to look, `F` for the flashlight.
+Click the canvas to lock the mouse. `WASD` move, mouse look, `F` flashlight, **hold right‑mouse to film Bigfoot**.
+
+**The hunt:** Bigfoot leaves a trail of **footprints and broken branches** that fades over time — follow it. Searchers win by capturing **3 solid videos** of Bigfoot (light it up, hold it in frame for ~3s); Bigfoot wins by **catching** the whole team first. Open one tab as Bigfoot and another as a searcher to see the trail and filming in action.
 
 **2. Server (optional, for multiplayer)**
 ```bash
