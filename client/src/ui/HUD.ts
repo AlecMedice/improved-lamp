@@ -18,18 +18,32 @@ export class HUD {
   setFootage(have: number, need: number) {
     this.el("footage").textContent = `${have} / ${need}`;
   }
-  setPhase(phase: string, timeOfDay: number) {
-    this.el("phase").textContent = phase.toUpperCase();
-    this.el("clock").textContent = `${Math.round(timeOfDay * 100)}%`;
+
+  /** Night counter + an in-fiction clock running 8pm -> 8am. */
+  setNight(night: number, total: number, timeOfDay: number) {
+    this.el("phase").textContent = `NIGHT ${night}/${total}`;
+    this.el("clock").textContent = clockTime(timeOfDay);
   }
 
   /** Show role-appropriate objective text and hide the filming UI for Bigfoot. */
   setRole(role: string) {
     const bigfoot = role === "bigfoot";
     this.el("objective").textContent = bigfoot
-      ? "Catch the searchers before they film you 3 times"
-      : "Hold right-mouse to film Bigfoot — get 3 clips, don't get caught";
+      ? "Survive 3 nights. Right-click ROAR to freeze hunters, left-click GRAB a frozen one."
+      : "Film Bigfoot 3 times to win — track its footprints, and don't get caught.";
     if (bigfoot) this.el("film-pill").style.display = "none";
+    else this.el("ability").style.display = "none";
+  }
+
+  /** Bigfoot's ability readout (roar cooldown). Pass null to clear. */
+  setAbility(text: string | null) {
+    const el = this.el("ability");
+    if (text) {
+      el.textContent = text;
+      el.style.display = "";
+    } else {
+      el.style.display = "none";
+    }
   }
 
   /** recording = RMB held; locked = Bigfoot is in frame (footage is building). */
@@ -44,8 +58,23 @@ export class HUD {
     this.el("film-fill").style.width = w; // HUD pill bar
     this.el("film-fill-vf").style.width = w; // viewfinder bar
   }
-  setCaught(caught: boolean) {
-    this.el("caught-banner").style.display = caught ? "block" : "none";
+  /** Banner for the local hunter's fear/incapacitation state. */
+  setStatusBanner(status: string) {
+    const el = this.el("status-banner");
+    if (status === "frozen") {
+      el.textContent = "FROZEN — paralyzed by Bigfoot's roar. Can't move!";
+      el.style.display = "block";
+    } else if (status === "incapacitated") {
+      el.textContent = "INCAPACITATED — Bigfoot has you. Your footage is lost.";
+      el.style.display = "block";
+    } else {
+      el.style.display = "none";
+    }
+  }
+
+  /** Heavy fade held over the screen while incapacitated (the "fade out"). */
+  setBlackout(on: boolean) {
+    this.el("blackout").style.opacity = on ? "0.92" : "0";
   }
 
   /** Contextual action hint (e.g. cave fast-travel). Pass null to hide. */
@@ -71,9 +100,20 @@ export class HUD {
 
   showEnd(title: string, message: string) {
     this.el("viewfinder").style.display = "none";
-    this.el("caught-banner").style.display = "none";
+    this.el("status-banner").style.display = "none";
+    this.el("blackout").style.opacity = "0";
     this.el("end-title").textContent = title;
     this.el("end-msg").textContent = message;
     this.el("end-overlay").style.display = "flex";
   }
+}
+
+/** Format match time-of-night (0..1) as an in-fiction clock from 8:00 PM to 8:00 AM. */
+function clockTime(timeOfDay: number): string {
+  const totalMin = (20 * 60 + timeOfDay * 12 * 60) % (24 * 60);
+  const h24 = Math.floor(totalMin / 60);
+  const m = Math.floor(totalMin % 60);
+  const ampm = h24 >= 12 ? "PM" : "AM";
+  const h12 = ((h24 + 11) % 12) + 1;
+  return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
 }

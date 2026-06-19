@@ -10,7 +10,7 @@ type MovePayload = {
   recording: boolean; inView: boolean;
 };
 
-export type SelfInfo = { status: string; filmProgress: number; role: string };
+export type SelfInfo = { status: string; filmProgress: number; role: string; slowed: boolean };
 
 /**
  * Thin Colyseus wrapper. Degrades gracefully: if the server is unreachable the
@@ -28,6 +28,7 @@ export class Network {
 
   onStatus: (msg: string) => void = () => {};
   onPhase: (phase: string, timeOfDay: number) => void = () => {};
+  onNight: (night: number, total: number) => void = () => {};
   onFootage: (captured: number, required: number) => void = () => {};
   onSelf: (info: SelfInfo) => void = () => {};
   onEnd: (winner: string) => void = () => {};
@@ -60,7 +61,12 @@ export class Network {
     state.players.onAdd((player: any, key: string) => {
       if (key === room.sessionId) {
         const applySelf = () =>
-          this.onSelf({ status: player.status, filmProgress: player.filmProgress, role: player.role });
+          this.onSelf({
+            status: player.status,
+            filmProgress: player.filmProgress,
+            role: player.role,
+            slowed: player.slowed,
+          });
         applySelf();
         player.onChange(applySelf);
         return;
@@ -71,6 +77,7 @@ export class Network {
       const apply = () => {
         rp.setTarget(player.x, player.y, player.z, player.ry, player.flashlightOn);
         rp.setFilming(player.filming);
+        rp.setStatus(player.status);
       };
       apply();
       player.onChange(apply);
@@ -91,9 +98,16 @@ export class Network {
 
     room.onStateChange((s: any) => {
       this.onPhase(s.phase, s.timeOfDay);
+      this.onNight(s.nightNumber, s.totalNights);
       this.onFootage(s.videosCaptured, s.videosRequired);
       if (s.winner) this.onEnd(s.winner);
     });
+  }
+
+  /** This player's authoritative position (used to follow Bigfoot's drag while incapacitated). */
+  getSelfPosition(): { x: number; z: number } | null {
+    const p = (this.room?.state as any)?.players?.get(this.room?.sessionId);
+    return p ? { x: p.x, z: p.z } : null;
   }
 
   /** World position of the (remote) Bigfoot, or null if none / Bigfoot is local. */
@@ -121,6 +135,14 @@ export class Network {
   /** Hunter drops a stakeout ping at a world (x,z). */
   sendPing(x: number, z: number) {
     this.room?.send("ping", { x, z });
+  }
+
+  /** Bigfoot abilities. */
+  sendRoar() {
+    this.room?.send("roar");
+  }
+  sendGrab() {
+    this.room?.send("grab");
   }
 
   sendMove(p: MovePayload) {

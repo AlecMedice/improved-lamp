@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { NET, FILM, MATCH_SECONDS, CAVES, CAVE } from "../config";
+import { NET, FILM, NIGHT_SECONDS, CAVES, CAVE, ABILITY, MAP, PLAYER } from "../config";
 import { Environment } from "../world/Environment";
 import { ClueField } from "../world/ClueField";
 import { PingField } from "../world/PingField";
@@ -29,10 +29,12 @@ export class Game {
   private sendAccum = 0;
   private timeOfDay = 0;
   private serverTimeOfDay: number | null = null;
-  private serverPhase: string | null = null;
-  private self: SelfInfo = { status: "active", filmProgress: 0, role: "searcher" };
+  private self: SelfInfo = { status: "active", filmProgress: 0, role: "searcher", slowed: false };
   private ended = false;
   private caveCooldown = 0;
+  private roarCooldown = 0;
+  private night = 1;
+  private totalNights = 3;
 
   // reused scratch vectors (avoid per-frame allocation)
   private fwd = new THREE.Vector3();
@@ -71,15 +73,19 @@ export class Game {
 
     this.net = new Network(this.scene, role, name);
     this.net.onStatus = (s) => this.hud.setStatus(s);
-    this.net.onPhase = (phase, tod) => {
-      this.serverPhase = phase;
-      this.serverTimeOfDay = tod;
-    };
+    this.net.onPhase = (_phase, tod) => (this.serverTimeOfDay = tod);
+    this.net.onNight = (n, total) => this.onNightChange(n, total);
     this.net.onFootage = (have, need) => this.hud.setFootage(have, need);
     this.net.onSelf = (info) => (this.self = info);
     this.net.onClueAdd = (c) => this.clues.add(c);
     this.net.onClueRemove = (id) => this.clues.remove(id);
     this.net.onEnd = (winner) => this.endMatch(winner);
+
+    // Bigfoot abilities: right-click roar, left-click grab a frozen hunter.
+    if (this.isBigfoot) {
+      this.input.onMousePress(2, () => this.tryRoar());
+      this.input.onMousePress(0, () => this.tryGrab());
+    }
 
     // Hunters: stakeout pings (Q to mark where you stand, or click the map).
     if (!this.isBigfoot) {
@@ -104,25 +110,38 @@ export class Game {
     const dt = Math.min(0.05, this.clock.getDelta());
     const t = this.clock.elapsedTime;
 
-    const caught = this.self.status !== "active";
-    const frozen = this.ended || caught || this.map.isOpen;
-    if (!frozen) this.player.update(dt, this.input);
+    const incapacitated = this.self.status === "incapacitated";
+    const controlsLocked = this.self.status !== "active"; // frozen or incapacitated
+    const locked = this.ended || controlsLocked || this.map.isOpen;
 
-    // Day/night: prefer the server's clock; otherwise advance locally (offline/solo).
+    this.player.externalSpeedMul = this.self.slowed ? PLAYER.slowFactor : 1;
+    if (!locked) this.player.update(dt, this.input);
+    else if (incapacitated) {
+      // Bigfoot is dragging us — follow the server's authoritative position.
+      const sp = this.net.getSelfPosition();
+      if (sp) this.player.teleportTo(sp.x, sp.z);
+    }
+
+    // Night clock: prefer the server's; otherwise advance locally (offline/solo).
     if (this.serverTimeOfDay !== null) this.timeOfDay = this.serverTimeOfDay;
-    else if (!this.ended) this.timeOfDay = Math.min(1, this.timeOfDay + dt / MATCH_SECONDS);
+    else if (!this.ended) this.timeOfDay = Math.min(1, this.timeOfDay + dt / NIGHT_SECONDS);
     this.env.setTimeOfDay(this.timeOfDay);
-    this.hud.setPhase(this.serverPhase ?? phaseFor(this.timeOfDay), this.timeOfDay);
+    this.hud.setNight(this.night, this.totalNights, this.timeOfDay);
 
     this.env.update(t);
     this.clues.update(t);
     this.net.update(dt);
 
-    // Cave fast-travel prompt (Bigfoot only).
+    this.hud.setStatusBanner(this.ended ? "active" : this.self.status);
+    this.hud.setBlackout(incapacitated && !this.ended);
+
+    // Bigfoot: ability readout + cave-travel prompt.
     if (this.isBigfoot && !this.ended) {
+      this.roarCooldown = Math.max(0, this.roarCooldown - dt);
+      this.hud.setAbility(this.roarCooldown > 0 ? `Roar: ${Math.ceil(this.roarCooldown)}s` : "Roar ready (right-click)");
       this.caveCooldown = Math.max(0, this.caveCooldown - dt);
-      const ready = this.caveCooldown === 0 && this.nearestCaveIndex() >= 0;
-      this.hud.setPrompt(ready && !this.map.isOpen ? "Press M — choose a cave to travel to" : null);
+      const caveReady = this.caveCooldown === 0 && this.nearestCaveIndex() >= 0;
+      this.hud.setPrompt(caveReady && !this.map.isOpen ? "Press M — choose a cave to travel to" : null);
     }
 
     // Live map refresh while open.
@@ -135,7 +154,7 @@ export class Game {
         travelMode: this.isBigfoot && this.caveCooldown === 0 && this.nearestCaveIndex() >= 0,
         currentCave: this.nearestCaveIndex(),
         others: hunter ? this.net.getRemoteSearchers() : [],
-        clues: hunter ? this.clues.getDots() : [],
+        clues: hunter && this.clueVisionActive() ? this.clues.getRecentDots(MAP.clueWindow) : [],
         pings: hunter ? this.net.getPings() : [],
       });
     }
@@ -144,20 +163,19 @@ export class Game {
     let recording = false;
     let inView = false;
     if (!this.isBigfoot) {
-      if (!frozen) {
+      if (!locked) {
         recording = this.input.isMouseDown(2);
         inView = recording && this.computeBigfootInView();
       }
       this.hud.setRecording(recording, inView); // recording=false hides the viewfinder
       this.hud.setFilmProgress(this.self.filmProgress);
     }
-    this.hud.setCaught(caught && !this.ended);
 
     // Stream our transform + intent to the server at a fixed rate.
     this.sendAccum += dt;
     if (this.sendAccum >= 1 / NET.sendHz) {
       this.sendAccum = 0;
-      if (!frozen) {
+      if (!locked) {
         this.net.sendMove({
           x: this.player.position.x,
           y: this.player.groundY,
@@ -175,6 +193,37 @@ export class Game {
     this.hud.setBattery(this.player.battery);
     this.hud.setStamina(this.player.stamina);
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /** Map only shows the trail when the hunter hears Bigfoot nearby or sees recent evidence. */
+  private clueVisionActive(): boolean {
+    const p = this.player.position;
+    const bf = this.net.getBigfootPosition();
+    if (bf) {
+      const dx = bf.x - p.x;
+      const dz = bf.z - p.z;
+      if (dx * dx + dz * dz < MAP.hearRange * MAP.hearRange) return true;
+    }
+    return this.clues.hasRecentClueWithin(p.x, p.z, MAP.evidenceSight, MAP.clueWindow);
+  }
+
+  private tryRoar() {
+    if (!this.isBigfoot || this.ended || this.map.isOpen || this.roarCooldown > 0) return;
+    this.net.sendRoar();
+    this.roarCooldown = ABILITY.roarCooldown;
+  }
+
+  private tryGrab() {
+    if (!this.isBigfoot || this.ended || this.map.isOpen) return;
+    this.net.sendGrab();
+  }
+
+  private onNightChange(night: number, total: number) {
+    this.totalNights = total;
+    if (night !== this.night) {
+      this.night = night;
+      if (!this.ended) this.hud.fade(() => {}); // brief fade between nights
+    }
   }
 
   /** Is Bigfoot within range, centred in frame, and not hidden behind a trunk? */
@@ -246,11 +295,11 @@ export class Game {
     this.map.close();
     document.exitPointerLock();
     const youWon = winner === (this.isBigfoot ? "bigfoot" : "hunters");
-    const title = winner === "hunters" ? "The footage is secured" : "The forest goes quiet";
+    const title = winner === "hunters" ? "The footage is secured" : "The forest keeps its secret";
     const body =
       winner === "hunters"
-        ? "Three solid videos. The expedition makes it out with proof Bigfoot is real."
-        : "The expedition is lost to the dark. Bigfoot keeps its secret.";
+        ? "Enough solid video. The expedition makes it out with proof Bigfoot is real."
+        : "Bigfoot outlasted three nights. The expedition goes home with nothing.";
     this.hud.showEnd(youWon ? "VICTORY" : "DEFEAT", `${title}. ${body}`);
   }
 
@@ -273,13 +322,4 @@ function caveMouthSpawn(): { x: number; z: number } {
   const cave = CAVES[Math.floor(Math.random() * CAVES.length)];
   const dl = Math.hypot(cave.x, cave.z) || 1;
   return { x: cave.x - (cave.x / dl) * 1.5, z: cave.z - (cave.z / dl) * 1.5 };
-}
-
-/** Client-side phase lookup (used when running offline without the server). */
-function phaseFor(t: number): string {
-  if (t < 0.15) return "dusk";
-  if (t < 0.45) return "nightfall";
-  if (t < 0.75) return "midnight";
-  if (t < 0.95) return "witching";
-  return "dawn";
 }

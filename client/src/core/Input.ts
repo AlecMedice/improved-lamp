@@ -3,6 +3,7 @@ export class Input {
   private keys = new Set<string>();
   private buttons = new Set<number>();
   private onTap: Record<string, () => void> = {};
+  private onBtnTap: Record<number, () => void> = {};
   private onLook: (dx: number, dy: number) => void = () => {};
   locked = false;
   allowPointerLock = true; // disabled while a menu/map is open
@@ -18,7 +19,10 @@ export class Input {
       if (this.allowPointerLock) canvas.requestPointerLock();
     });
     canvas.addEventListener("contextmenu", (e) => e.preventDefault()); // RMB = record, not menu
-    window.addEventListener("mousedown", (e) => this.buttons.add(e.button));
+    window.addEventListener("mousedown", (e) => {
+      if (!this.buttons.has(e.button)) this.onBtnTap[e.button]?.(); // fire once per press
+      this.buttons.add(e.button);
+    });
     window.addEventListener("mouseup", (e) => this.buttons.delete(e.button));
 
     document.addEventListener("pointerlockchange", () => {
@@ -39,6 +43,10 @@ export class Input {
   }
   onPress(code: string, fn: () => void) {
     this.onTap[code] = fn;
+  }
+  /** Fire once when a mouse button goes down (0 = left, 2 = right). */
+  onMousePress(button: number, fn: () => void) {
+    this.onBtnTap[button] = fn;
   }
   setLookHandler(fn: (dx: number, dy: number) => void) {
     this.onLook = fn;

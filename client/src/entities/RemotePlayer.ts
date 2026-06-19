@@ -9,6 +9,8 @@ export class RemotePlayer {
   private targetYaw = 0;
   private flashlight: THREE.SpotLight;
   private recLight?: THREE.Mesh; // small red marker shown while this hunter records
+  private statusIcon?: THREE.Mesh; // floats above a frozen/incapacitated hunter
+  private statusMat?: THREE.MeshBasicMaterial;
 
   constructor(private scene: THREE.Scene, role: string) {
     this.isBigfoot = role === "bigfoot";
@@ -40,6 +42,13 @@ export class RemotePlayer {
       this.recLight.position.set(0, h + 0.25, 0);
       this.recLight.visible = false;
       this.group.add(this.recLight);
+
+      // Status icon: cyan when frozen (a grab target), dim red when incapacitated.
+      this.statusMat = new THREE.MeshBasicMaterial({ color: 0x7fe0ff });
+      this.statusIcon = new THREE.Mesh(new THREE.OctahedronGeometry(0.16), this.statusMat);
+      this.statusIcon.position.set(0, h + 0.55, 0);
+      this.statusIcon.visible = false;
+      this.group.add(this.statusIcon);
     }
 
     this.flashlight = new THREE.SpotLight(0xfff2d6, 0, 50, 0.5, 0.4, 1.5);
@@ -59,6 +68,19 @@ export class RemotePlayer {
 
   setFilming(on: boolean) {
     if (this.recLight) this.recLight.visible = on;
+  }
+
+  setStatus(status: string) {
+    if (!this.statusIcon || !this.statusMat) return;
+    if (status === "frozen") {
+      this.statusIcon.visible = true;
+      this.statusMat.color.setHex(0x7fe0ff);
+    } else if (status === "incapacitated") {
+      this.statusIcon.visible = true;
+      this.statusMat.color.setHex(0xff5a5a);
+    } else {
+      this.statusIcon.visible = false;
+    }
   }
 
   update(dt: number) {

@@ -34,11 +34,25 @@ export class ClueField {
     }
   }
 
-  /** Flat (x,z) positions of every live clue — used by the map's tracking view. */
-  getDots(): Array<{ x: number; z: number }> {
+  /** (x,z) of clues seen within the last `maxAge` seconds — the map only shows recent tracks. */
+  getRecentDots(maxAge: number): Array<{ x: number; z: number }> {
     const out: Array<{ x: number; z: number }> = [];
-    for (const { obj } of this.items.values()) out.push({ x: obj.position.x, z: obj.position.z });
+    for (const { obj, born } of this.items.values()) {
+      if (this.now - born <= maxAge) out.push({ x: obj.position.x, z: obj.position.z });
+    }
     return out;
+  }
+
+  /** True if a recent clue sits within `range` of (x,z) — i.e. the hunter "sees evidence". */
+  hasRecentClueWithin(x: number, z: number, range: number, maxAge: number): boolean {
+    const r2 = range * range;
+    for (const { obj, born } of this.items.values()) {
+      if (this.now - born > maxAge) continue;
+      const dx = obj.position.x - x;
+      const dz = obj.position.z - z;
+      if (dx * dx + dz * dz <= r2) return true;
+    }
+    return false;
   }
 
   /** Fade clues toward (but not to) invisible as they age — "the trail goes cold". */

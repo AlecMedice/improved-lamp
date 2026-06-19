@@ -3,8 +3,9 @@ import { Color } from "three";
 /** Colyseus server endpoint. Override with VITE_SERVER_URL at build/dev time. */
 export const SERVER_URL = (import.meta.env.VITE_SERVER_URL as string) || "ws://localhost:2567";
 
-/** Length of one match (a compressed night), in seconds. Mirrors the server. */
-export const MATCH_SECONDS = 600;
+/** One night runs 8pm -> 8am in this many seconds; Bigfoot wins by surviving TOTAL_NIGHTS. Mirrors the server. */
+export const NIGHT_SECONDS = 300;
+export const TOTAL_NIGHTS = 3;
 
 export const WORLD = {
   size: 400, // full extent; world spans -200..200 on x/z
@@ -25,6 +26,20 @@ export const PLAYER = {
   batteryDrainPerSec: 1.4, // while flashlight is on
   staminaDrainPerSec: 18, // while sprinting
   staminaRegenPerSec: 12,
+  staminaRecover: 35, // once exhausted (0), must regen to this before sprinting again
+  slowFactor: 0.75, // movement multiplier while slowed (after incapacitation)
+};
+
+/** Bigfoot offense (client-side cooldown/feedback; the server is authoritative). */
+export const ABILITY = {
+  roarCooldown: 25, // seconds between roars (UI gate, mirrors server)
+};
+
+/** Map readout tuning for the clue trail (the "in-contact" gating). */
+export const MAP = {
+  clueWindow: 15, // only tracks from the last N seconds show on the map
+  hearRange: 35, // Bigfoot within this distance counts as "heard nearby"
+  evidenceSight: 18, // a clue within this distance counts as "sees recent evidence"
 };
 
 /** Camera / filming mechanic — the hunters' way to win. */

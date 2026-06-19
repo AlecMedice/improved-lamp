@@ -47,26 +47,27 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 
 ## Phase 3 — Asymmetry & abilities 🟡
 - 🟡 Two playable roles with distinct cameras/speed/models *(distinct speed, height, night‑vision, avatars + Bigfoot eye‑shine done; rigged models pending)*
-- ⬜ Bigfoot: charge, leap/climb, roar (AoE scare), full senses overlay
+- ✅ Bigfoot **roar** (AoE freeze) → **grab** frozen hunter → **incapacitate + drag + erase footage**; recover slowed
+- ⬜ Bigfoot: charge, leap/climb, full senses overlay
 - ✅ Bigfoot leaves a trackable trail (footprints + broken branches) — *the clue framework*
 - ✅ Bigfoot **cave fast-travel** network (spawn at a cave; pick the destination from the map)
-- ✅ **Map** (`M`) for both roles — position/heading, camp, caves; hunters also see teammates + clue trail
+- ✅ **Map** (`M`) for both roles — position/heading, camp, caves; hunters also see teammates + recent clue trail
 - ✅ **Stakeout pings** (`Q`/map-click) — shared hunter markers on the map + world beacons
-- ✅ Fade-to-black transition on Bigfoot cave fast-travel
-- ✅ Catch (proximity, after dusk grace) → caught/out, synced
-- ⬜ Searcher: jump/vault, ping, flashlight stun meter; downs + teammate revives (replace instant‑out)
+- ✅ Fade-to-black transition on Bigfoot cave fast-travel + between nights
+- ✅ Frozen/incapacitated states synced; remote status icons (grab targets)
+- ⬜ Searcher: jump/vault, flashlight stun meter; teammate revives
 
 **Goal:** "be the monster vs. survive the monster" is real and fun.
 
 ---
 
 ## Phase 4 — Game loop & objectives 🟡
-- ✅ **Filming win condition** — capture 3 solid videos of Bigfoot (client detects in‑frame, server tallies)
-- ✅ Clue trail spawn/expire/fade ("the trail goes cold")
-- ✅ Night phases & `timeOfDay` progression
-- ✅ Win/loss resolution + results screen (3 videos → hunters; team caught → Bigfoot; dawn → escape)
-- ✅ HUD: battery, stamina, footage, phase clock, recording viewfinder + clip progress
-- ⬜ Escalation buffs per phase (faster Bigfoot, faster drain); evidence side‑objectives; tutorial
+- ✅ **Filming win condition** — capture 3 solid videos of Bigfoot (client detects in‑frame, server tallies; pooled across nights)
+- ✅ Clue trail spawn/expire/fade ("the trail goes cold"); map trail gated by contact + recency
+- ✅ **3-night structure** — each night 8pm→8am, daylight skipped, fade between nights
+- ✅ Win/loss resolution + results screen (3 videos → hunters; survive 3 nights → Bigfoot)
+- ✅ HUD: battery, stamina (with exhaustion), footage, night + clock, viewfinder, status banner, roar cooldown
+- ⬜ Escalation buffs per night (faster Bigfoot, faster drain); tutorial
 
 **Goal:** a full match has a beginning, middle, and a winner. **← core of the vertical slice is in.**
 

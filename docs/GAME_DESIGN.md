@@ -19,61 +19,60 @@
 ## 2. Roles
 
 ### 2.1 Searchers (5) — *the expedition*
-- **Goal:** Capture **3 solid videos of Bigfoot** (team total) — without getting caught. Surviving to dawn is a secondary escape win.
+- **Goal:** Capture **3 solid videos of Bigfoot** (team total — every searcher's footage counts toward the same tally) before Bigfoot survives all three nights.
 - **Filming:** Hold the camera on Bigfoot, in frame and in range, to build a clip; ~3s in frame = one solid video. You must actually *see* Bigfoot — usually by lighting it with your flashlight or catching its eye-shine.
-- **Fragile:** If Bigfoot gets close enough it **catches** you — you're out for the match (spectate). When the whole team is caught, Bigfoot wins. (Future: downs + teammate revives, per ROADMAP Phase 3.)
-- **Cooperative tools:** Each searcher has one specialty (see `STORY.md`), but all share the same base verbs: move, sprint, jump, flashlight, interact, ping.
-- **Resources:** Stamina (sprint), flashlight battery (depletes; spares exist in the world / from the medic).
+- **Roared → frozen:** Bigfoot's roar **freezes** every nearby searcher in fear for 30s — you can still look around, but you can't move or film.
+- **Grabbed → incapacitated:** if Bigfoot reaches a frozen searcher and grabs them, they're **incapacitated for 60s** (screen fades to black, Bigfoot can drag them anywhere) and the **team's collected footage is erased**. After that they **recover**, but move **25% slower for 30s**. No permanent elimination.
+- **Cooperative tools:** Each searcher has one specialty (see `STORY.md`), but all share the same base verbs: move, sprint, flashlight, film, ping.
+- **Resources:** Stamina (sprint — hitting empty leaves you winded until it recovers), flashlight battery.
 
 ### 2.2 Bigfoot (1) — *the resident*
-- **Goal:** Stop the expedition before they get 3 videos — catch the searchers before the tape gets out.
+- **Goal:** **Survive 3 nights** without the expedition getting their 3 videos.
 - **Start:** Bigfoot begins at one of several **cave** lairs out in the forest — never at the searchers' camp.
-- **Strengths:** ~1.2× searcher speed and better night vision. (Future: **charge**, **leap**, **climb**, and **roar** — ROADMAP Phase 3.)
-- **Cave network (fast travel):** The caves form a tunnel network. Standing in a cave mouth, Bigfoot opens the **map (`M`) and clicks the destination cave** to emerge there — crossing the map in an instant to flank the team or escape a stakeout. (~2s cooldown.)
-- **The trail problem:** Bigfoot **leaves a trail** — footprints and broken branches — that hunters follow to find it. Moving more = a longer, fresher trail. Standing still hides you but lets the team regroup.
-- **Senses:** Sees who is currently **filming** (their recording light) and active flashlight cones. (Future: full "instincts" overlay + smell, per ROADMAP.)
-- **Counterplay:** Loud (footfalls audible), briefly **stunned by the photographer's flash** and by sustained focused flashlight, and must commit/cool‑down on big abilities.
+- **Strengths:** ~1.2× searcher speed and better night vision.
+- **Roar (right-click):** an AoE fear blast (~25m) that **freezes** nearby searchers for 30s. ~25s cooldown.
+- **Grab (left-click):** grab a **frozen** searcher to incapacitate them for 60s — **drag them anywhere** and **erase the team's footage**. Left-click again to drop them.
+- **Cave network (fast travel):** the caves form a tunnel network. In a cave mouth, open the **map (`M`) and click a destination cave** to emerge there — flank the team or escape a stakeout. (~2s cooldown.)
+- **The trail problem:** Bigfoot **leaves a trail** — footprints and broken branches — that hunters follow. Moving more = a longer, fresher trail; standing still hides you.
+- **Senses:** sees who is currently **filming** (their recording light) and which searchers are **frozen** (a grab target) vs **incapacitated**.
 
 ---
 
-## 3. Core loop (one match)
+## 3. Core loop (3 nights)
 
 ```
-DUSK (briefing)  →  TRACK  →  FILM  →  ESCALATION (night phases)  →  RESOLUTION
+NIGHT (8pm→8am)  →  TRACK  →  FILM  →  ROAR/GRAB pressure  →  (fade) next night  →  RESOLUTION
 ```
 
-1. **Dusk briefing:** Searchers spawn at base camp; Bigfoot starts out in the trees. During dusk Bigfoot **cannot catch** anyone (grace period).
-2. **Track:** Bigfoot leaves **footprints and broken branches** as it moves. Searchers read this fading trail to close in on it.
-3. **Film:** Get Bigfoot in frame (hold right‑mouse), in range, lit up — ~3s of clean footage = one solid video. The team needs **3** (`videosRequired`).
-4. **Escalation:** The match clock drives **night phases** (below); it gets darker and Bigfoot faster. Get too close and Bigfoot catches you.
-5. **Resolution:** 3 videos → searchers win; whole team caught → Bigfoot wins. See §5.
+1. **Night begins (8pm):** searchers at base camp, Bigfoot at a cave. Daylight is skipped — each night runs **8pm → 8am**, then a fade to the next.
+2. **Track:** Bigfoot leaves **footprints and broken branches**. Searchers read the fading trail (and their map, when in contact) to close in.
+3. **Film:** get Bigfoot in frame (hold right‑mouse), in range, lit up — ~3s of clean footage = one solid video. The team needs **3** (`videosRequired`), pooled across all searchers and **carried across nights**.
+4. **Pressure:** Bigfoot **roars** to freeze searchers, then **grabs** a frozen one to incapacitate + drag them and **wipe the team's footage**.
+5. **Resolution:** 3 videos → searchers win; Bigfoot survives all 3 nights → Bigfoot wins. See §5.
 
 ---
 
-## 4. Time of day & night phases
+## 4. Nights & time
 
-A single match is a compressed night. `timeOfDay` runs 0→1 over the match length.
+The hunt is **3 nights**, each a compressed **8pm → 8am** (`NIGHT_SECONDS`, daylight skipped). `timeOfDay` runs 0→1 within a night, then `nightNumber` advances with a fade. The sky/fog lerp dusk → deep night → dawn each night.
 
-| Phase        | Clock      | Sky / fog                  | Effect |
-|--------------|-----------|----------------------------|--------|
-| **Dusk**     | 0.00–0.15 | Amber/violet, light fog    | Briefing + grace period; Bigfoot can't grab yet |
-| **Nightfall**| 0.15–0.45 | Deep blue, fog thickens     | Full hunt begins |
-| **Midnight** | 0.45–0.75 | Near‑black, cold moonlight  | Bigfoot +speed; flashlights drain faster |
-| **Witching** | 0.75–0.95 | Black, heavy fog            | Bigfoot's senses overlay always on; max pressure |
-| **Dawn**     | 0.95–1.00 | Pale teal sunrise           | Survivors win if any remain; Bigfoot weakens |
+| Phase        | Clock (of night) | Sky / fog                  |
+|--------------|------------------|----------------------------|
+| **Dusk**     | 0.00–0.15        | Amber/violet, light fog    |
+| **Nightfall**| 0.15–0.45        | Deep blue, fog thickens    |
+| **Midnight** | 0.45–0.75        | Near‑black, cold moonlight |
+| **Witching** | 0.75–0.95        | Black, heavy fog           |
+| **Dawn**     | 0.95–1.00        | Pale teal — roll to next night (or end on night 3) |
 
 ---
 
 ## 5. Win / loss conditions
 
-**Searchers win if:**
-- The team captures **≥ 3 solid videos** of Bigfoot (`videosRequired`), **or**
-- **≥ 1 searcher** survives (un‑caught) until **dawn** — the expedition escapes.
+**Searchers win if:** the team captures **≥ 3 solid videos** of Bigfoot (`videosRequired`, pooled across all searchers and nights).
 
-**Bigfoot wins if:**
-- **Every searcher** has been **caught** before the team reaches 3 videos.
+**Bigfoot wins if:** it **survives all `totalNights` (3) nights** without the team reaching the footage target.
 
-**Tunable knobs** (server `ForestRoom`): `videosRequired`, `FILM_SECONDS` (footage per video), `FILM_RANGE`, `CATCH_RADIUS`, `CLUE_LIFETIME`/`STRIDE`/`BRANCH_CHANCE` (the trail), match length, Bigfoot speed.
+**Tunable knobs** (server `ForestRoom`): `videosRequired`, `FILM_SECONDS`/`FILM_RANGE` (filming), `ROAR_RADIUS`/`ROAR_COOLDOWN`/`FREEZE_SECONDS` (roar), `GRAB_RADIUS`/`INCAP_SECONDS`/`SLOW_SECONDS` (grab), `NIGHT_SECONDS`/`TOTAL_NIGHTS`, `CLUE_LIFETIME`/`STRIDE`/`BRANCH_CHANCE` (the trail), Bigfoot speed.
 
 ---
 
@@ -101,11 +100,11 @@ A single match is a compressed night. `timeOfDay` runs 0→1 over the match leng
 |-------|--------|
 | `W A S D` | Move |
 | Mouse | Look |
-| `Shift` | Charge (burst of speed) |
-| `Space` | Leap / climb |
+| `RMB` | **Roar** — freeze nearby searchers (~25m) for 30s (~25s cooldown) |
+| `LMB` | **Grab** a frozen searcher → incapacitate + drag + erase footage; click again to drop |
 | `M` | Toggle the **map**; in a cave mouth, **click a cave to fast-travel** there |
-| `LMB` | Swipe / grab (downs a searcher) *(planned)* |
-| `RMB` | Roar (area scare) *(planned)* |
+| `Shift` | Sprint (drains stamina) |
+| `Space` | Leap / climb *(planned)* |
 
 ---
 
@@ -124,14 +123,18 @@ A single match is a compressed night. `timeOfDay` runs 0→1 over the match leng
 
 ### 7.3 Clue trail — the hint framework — *implemented*
 - As Bigfoot walks, the **server** drops `Clue` entities every `STRIDE` metres: mostly **footprints** (oriented along its heading), occasionally **broken branches**. They're shared state, so the whole team follows the same trail.
-- Each clue **fades and expires** after `CLUE_LIFETIME`. A dense, bright trail = Bigfoot is near and recent; a sparse/faint one = it has moved on ("the trail goes cold").
+- In the **world** each clue **fades and expires** after `CLUE_LIFETIME`. On the **map** the readout is tighter: only tracks from the last `MAP.clueWindow` seconds show, and only while the hunter is **in contact** — Bigfoot within `MAP.hearRange` ("heard nearby") **or** a recent clue within `MAP.evidenceSight` ("sees evidence"). Walk away and the map trail clears.
 - Extensible: add `fur`, `claw‑marked tree`, `scat`, or `nest` as new `ctype`s; a Tracker specialty could highlight them.
 
-### 7.4 Catching, stamina & (future) revives
-- Sprinting drains **stamina**; walking/idle regenerates it.
-- **Caught:** if Bigfoot gets within `CATCH_RADIUS` of an active hunter (after the dusk grace), that hunter is **out** (spectates). Whole team caught → Bigfoot wins. *(Planned: downs + teammate revives instead of instant‑out, Phase 3.)*
+### 7.4 Roar → grab → incapacitate (Bigfoot's offense) — *implemented*
+- **Roar** (`RMB`, `ROAR_COOLDOWN`): every active searcher within `ROAR_RADIUS` is **frozen** for `FREEZE_SECONDS` — they can look but not move or film.
+- **Grab** (`LMB`): grabs the nearest **frozen** searcher within `GRAB_RADIUS` → **incapacitated** for `INCAP_SECONDS` (their screen fades to black, Bigfoot **drags** them by walking), and the **team's `videosCaptured` is wiped to 0**. Left-click again drops them (they stay incapacitated where left).
+- **Recovery:** after `INCAP_SECONDS` the searcher recovers to active but is **slowed** (`PLAYER.slowFactor`) for `SLOW_SECONDS`. Not eliminated — Bigfoot wins only by surviving the nights.
 
-### 7.5 Audio (design intent)
+### 7.5 Stamina & exhaustion — *implemented*
+- Sprinting drains **stamina**; walking/idle regenerates it. **Hitting 0 exhausts you**: sprint is locked out until stamina recovers past `PLAYER.staminaRecover` (no more sprint‑stutter at empty).
+
+### 7.6 Audio (design intent)
 - Directional footsteps, distant roars, the creek, wind, flashlight click, heartbeat that rises with proximity. Audio is a primary information channel for both sides.
 
 ---
@@ -163,7 +166,7 @@ A single match is a compressed night. `timeOfDay` runs 0→1 over the match leng
 ## 10. UI / HUD
 
 - **Minimal in‑world HUD:** flashlight battery, stamina, footage captured/required, current phase clock, contextual prompt, filming viewfinder + clip bar.
-- **Map (`M`) — *implemented*:** top‑down overlay for both roles showing the player's position + heading, base camp, and caves. Hunters also see teammates, the clue trail, and **stakeout pings** (a live tracking map). For Bigfoot in a cave mouth, caves become **clickable fast‑travel destinations** (with a fade‑to‑black transition). Opening the map frees the cursor and pauses local movement.
+- **Map (`M`) — *implemented*:** top‑down overlay for both roles showing the player's position + heading, base camp, and caves. Hunters also see teammates, **stakeout pings**, and the **recent clue trail — but only while in contact** (Bigfoot heard nearby, or recent footprints in sight). For Bigfoot in a cave mouth, caves become **clickable fast‑travel destinations** (with a fade‑to‑black transition). Opening the map frees the cursor and pauses local movement.
 - **Stakeout pings (`Q` / map click) — *implemented*:** hunters drop a shared marker (one active per hunter; ~35s lifetime) to coordinate. Pings show on every hunter's map and as an in‑world beacon; they're hidden from Bigfoot.
 - **Bigfoot HUD:** *(planned)* ability cooldowns, senses toggle, searchers‑caught counter.
 - **Diegetic where possible** (battery on the flashlight model, footage in a field journal).

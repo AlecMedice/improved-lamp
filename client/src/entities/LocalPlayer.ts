@@ -12,6 +12,7 @@ export class LocalPlayer {
   battery = 100;
   stamina = 100;
   groundY = 0; // terrain height under the player (= feet height)
+  externalSpeedMul = 1; // set by Game (e.g. 0.75 while slowed after incapacitation)
 
   private env: Environment;
   private eyeHeight: number;
@@ -19,6 +20,7 @@ export class LocalPlayer {
   private yaw = 0;
   private pitch = 0;
   private flashlightOn = false;
+  private exhausted = false; // true once stamina hits 0, until it recovers past the threshold
 
   constructor(camera: THREE.PerspectiveCamera, env: Environment, role: string, spawn: { x: number; z: number }) {
     this.camera = camera;
@@ -81,8 +83,8 @@ export class LocalPlayer {
     if (input.isDown("KeyA")) wish.sub(right);
 
     const moving = wish.lengthSq() > 0;
-    const sprinting = moving && input.isDown("ShiftLeft") && this.stamina > 0;
-    const speed = (sprinting ? PLAYER.sprintSpeed : PLAYER.walkSpeed) * this.speedMul;
+    const sprinting = moving && input.isDown("ShiftLeft") && !this.exhausted;
+    const speed = (sprinting ? PLAYER.sprintSpeed : PLAYER.walkSpeed) * this.speedMul * this.externalSpeedMul;
     if (moving) this.position.addScaledVector(wish.normalize(), speed * dt);
 
     // Keep inside the world, push out of trees, then sit on the terrain.
@@ -96,10 +98,12 @@ export class LocalPlayer {
     this.position.y = this.groundY + this.eyeHeight;
     this.camera.position.copy(this.position);
 
-    // Resources.
+    // Resources. Hitting 0 stamina exhausts you: no sprinting until it recovers past a threshold.
     this.stamina = sprinting
       ? Math.max(0, this.stamina - PLAYER.staminaDrainPerSec * dt)
       : Math.min(100, this.stamina + PLAYER.staminaRegenPerSec * dt);
+    if (this.stamina <= 0) this.exhausted = true;
+    else if (this.exhausted && this.stamina >= PLAYER.staminaRecover) this.exhausted = false;
 
     if (this.flashlightOn) {
       this.battery = Math.max(0, this.battery - PLAYER.batteryDrainPerSec * dt);

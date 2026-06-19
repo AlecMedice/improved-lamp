@@ -16,7 +16,8 @@ export class Player extends Schema {
   @type("number") battery = 100;
   @type("number") stamina = 100;
 
-  @type("string") status = "active"; // "active" | "caught" | "out"
+  @type("string") status = "active"; // "active" | "frozen" | "incapacitated"
+  @type("boolean") slowed = false; // 25% movement slow after recovering from incapacitation
   @type("boolean") filming = false; // hunter is currently recording
   @type("number") filmProgress = 0; // 0..1 of the current video clip
 }
@@ -46,10 +47,12 @@ export class GameState extends Schema {
   @type([Clue]) clues = new ArraySchema<Clue>();
   @type([Ping]) pings = new ArraySchema<Ping>();
 
-  @type("string") phase = "dusk"; // dusk|nightfall|midnight|witching|dawn
-  @type("number") timeOfDay = 0; // 0 (dusk) .. 1 (dawn)
+  @type("string") phase = "dusk"; // dusk|nightfall|midnight|witching|dawn (within one night, 8pm->8am)
+  @type("number") timeOfDay = 0; // 0 (8pm) .. 1 (8am) of the current night
+  @type("number") nightNumber = 1; // current night, 1..totalNights
+  @type("number") totalNights = 3; // Bigfoot wins by surviving this many nights
 
-  // Win condition: hunters must capture this many solid videos of Bigfoot.
+  // Win condition: hunters must capture this many solid videos of Bigfoot (team total).
   @type("number") videosRequired = 3;
   @type("number") videosCaptured = 0;
 
