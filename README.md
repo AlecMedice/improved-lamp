@@ -35,9 +35,9 @@ cd client
 npm install
 npm run dev        # open the printed http://localhost:5173
 ```
-Click the canvas to lock the mouse. `WASD` move, mouse look, `F` flashlight, **hold right‑mouse to film Bigfoot**.
+Click the canvas to lock the mouse. `WASD` move, mouse look, `F` flashlight, **hold right‑mouse to film Bigfoot**, `M` map.
 
-**The hunt:** Searchers start at a campfire-and-RV base camp; **Bigfoot starts in a cave** out in the forest. Bigfoot leaves a trail of **footprints and broken branches** that fades over time — follow it. Searchers win by capturing **3 solid videos** of Bigfoot (light it up, hold it in frame for ~3s); Bigfoot wins by **catching** the whole team first. Bigfoot can stand in any **cave mouth and press `E`** to fast-travel to the next cave and flank the team. Open one tab as Bigfoot and another as a searcher to see it in action.
+**The hunt:** Searchers start at a campfire-and-RV base camp; **Bigfoot starts in a cave** out in the forest. Bigfoot leaves a trail of **footprints and broken branches** that fades over time — follow it. Searchers win by capturing **3 solid videos** of Bigfoot (light it up, hold it in frame for ~3s); Bigfoot wins by **catching** the whole team first. Press **`M`** for a top-down **map** (your position, base camp, caves; hunters also see teammates and the clue trail). Bigfoot stands in a **cave mouth, opens the map, and clicks a destination cave** to fast-travel there and flank the team. Open one tab as Bigfoot and another as a searcher to see it in action.
 
 **2. Server (optional, for multiplayer)**
 ```bash

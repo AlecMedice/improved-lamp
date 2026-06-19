@@ -96,6 +96,15 @@ export class Network {
     return this.bigfoot ? this.bigfoot.group.position.clone() : null;
   }
 
+  /** Flat (x,z) of remote searchers — teammates shown on the hunters' map. */
+  getRemoteSearchers(): Array<{ x: number; z: number }> {
+    const out: Array<{ x: number; z: number }> = [];
+    for (const rp of this.remotes.values()) {
+      if (!rp.isBigfoot) out.push({ x: rp.group.position.x, z: rp.group.position.z });
+    }
+    return out;
+  }
+
   sendMove(p: MovePayload) {
     this.room?.send("move", p);
   }

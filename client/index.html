@@ -74,6 +74,28 @@
         border-radius: 5px; padding: 1px 6px; font-size: 11px; }
       #end-overlay { display: none; }
       #end-title { color: var(--amber); }
+
+      /* Map overlay */
+      #map-overlay { position: fixed; inset: 0; display: none; flex-direction: column;
+        align-items: center; justify-content: center; gap: 12px; z-index: 9;
+        background: rgba(6,7,10,.86); }
+      .map-title { letter-spacing: .14em; color: var(--amber); font-weight: 700; font-size: 18px; }
+      #map-frame { position: relative; width: min(600px, 82vmin); height: min(600px, 82vmin);
+        border: 1px solid rgba(255,255,255,.2); border-radius: 8px; overflow: hidden; }
+      #map-canvas { width: 100%; height: 100%; display: block; }
+      .map-cave { position: absolute; transform: translate(-50%,-50%); width: 24px; height: 24px;
+        border-radius: 50%; border: 2px solid #9b8cff; background: rgba(60,50,110,.7);
+        color: #fff; font-size: 12px; font-weight: 700; cursor: default; padding: 0; }
+      .map-cave.selectable { cursor: pointer; border-color: #ffd27a; background: rgba(120,90,40,.9);
+        box-shadow: 0 0 12px rgba(255,210,122,.7); }
+      .map-cave.current { border-color: #ff7a7a; }
+      #map-legend { display: flex; gap: 16px; font-size: 12px; opacity: .85; }
+      #map-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+        margin-right: 5px; vertical-align: middle; }
+      .lg-self { background:#fff; } .lg-team { background:#7ad1ff; } .lg-clue { background:#e6b478; }
+      .lg-cave { background:#9b8cff; } .lg-camp { background:#ffae5e; }
+      #map-hint { font-size: 13px; color: var(--amber); min-height: 16px; }
+      .map-foot { font-size: 11px; opacity: .5; }
     </style>
   </head>
   <body>
@@ -104,6 +126,20 @@
 
     <div id="caught-banner">CAUGHT — Bigfoot has you. You can only watch now.</div>
 
+    <div id="map-overlay">
+      <div class="map-title">FOREST MAP</div>
+      <div id="map-frame"><canvas id="map-canvas" width="600" height="600"></canvas></div>
+      <div id="map-legend">
+        <span><i class="lg-self"></i>You</span>
+        <span><i class="lg-team"></i>Team</span>
+        <span><i class="lg-clue"></i>Tracks</span>
+        <span><i class="lg-cave"></i>Cave</span>
+        <span><i class="lg-camp"></i>Camp</span>
+      </div>
+      <div id="map-hint"></div>
+      <div class="map-foot">Press M to close</div>
+    </div>
+
     <div id="start-overlay" class="overlay">
       <h1>HOLLOW&nbsp;PINES</h1>
       <p class="tag">Dusk falls over the Pacific Northwest. Five searchers hunt for proof that Bigfoot is real —
@@ -121,7 +157,9 @@
       <p class="help">
         <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp;·&nbsp; mouse look &nbsp;·&nbsp;
         <kbd>Shift</kbd> sprint &nbsp;·&nbsp; <kbd>F</kbd> flashlight &nbsp;·&nbsp;
-        hold <kbd>Right&nbsp;Mouse</kbd> to film Bigfoot &nbsp;·&nbsp; <kbd>Esc</kbd> release cursor<br />
+        hold <kbd>Right&nbsp;Mouse</kbd> to film Bigfoot &nbsp;·&nbsp; <kbd>M</kbd> map &nbsp;·&nbsp;
+        <kbd>Esc</kbd> release cursor<br />
+        Bigfoot: open the <kbd>M</kbd> map while in a cave mouth to choose where to emerge.<br />
         Follow the footprints and broken branches to find Bigfoot. No server? You'll still roam the woods solo.
       </p>
     </div>

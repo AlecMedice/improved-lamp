@@ -6,6 +6,7 @@ import { LocalPlayer } from "../entities/LocalPlayer";
 import { Input } from "./Input";
 import { Network, SelfInfo } from "./Network";
 import { HUD } from "../ui/HUD";
+import { MapView } from "../ui/MapView";
 
 /** Wires renderer + world + player + input + networking into one loop. */
 export class Game {
@@ -19,6 +20,8 @@ export class Game {
   private input: Input;
   private net: Network;
   private hud = new HUD();
+  private map = new MapView();
+  private canvas: HTMLCanvasElement;
 
   private readonly isBigfoot: boolean;
   private sendAccum = 0;
@@ -35,6 +38,7 @@ export class Game {
 
   constructor(canvas: HTMLCanvasElement, role: string, name: string) {
     this.isBigfoot = role === "bigfoot";
+    this.canvas = canvas;
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -59,8 +63,9 @@ export class Game {
 
     this.input = new Input(canvas);
     this.input.setLookHandler((dx, dy) => this.player.look(dx, dy));
-    if (this.isBigfoot) this.input.onPress("KeyE", () => this.tryCaveTravel());
-    else this.input.onPress("KeyF", () => this.player.toggleFlashlight());
+    this.input.onPress("KeyM", () => this.toggleMap());
+    if (!this.isBigfoot) this.input.onPress("KeyF", () => this.player.toggleFlashlight());
+    this.map.onSelectCave = (i) => this.travelToCave(i);
 
     this.net = new Network(this.scene, role, name);
     this.net.onStatus = (s) => this.hud.setStatus(s);
@@ -89,7 +94,8 @@ export class Game {
     const t = this.clock.elapsedTime;
 
     const caught = this.self.status !== "active";
-    if (!this.ended && !caught) this.player.update(dt, this.input);
+    const frozen = this.ended || caught || this.map.isOpen;
+    if (!frozen) this.player.update(dt, this.input);
 
     // Day/night: prefer the server's clock; otherwise advance locally (offline/solo).
     if (this.serverTimeOfDay !== null) this.timeOfDay = this.serverTimeOfDay;
@@ -105,14 +111,28 @@ export class Game {
     if (this.isBigfoot && !this.ended) {
       this.caveCooldown = Math.max(0, this.caveCooldown - dt);
       const ready = this.caveCooldown === 0 && this.nearestCaveIndex() >= 0;
-      this.hud.setPrompt(ready ? "Press E — travel through the cave system" : null);
+      this.hud.setPrompt(ready && !this.map.isOpen ? "Press M — choose a cave to travel to" : null);
+    }
+
+    // Live map refresh while open.
+    if (this.map.isOpen) {
+      const hunter = !this.isBigfoot;
+      this.map.refresh({
+        ownX: this.player.position.x,
+        ownZ: this.player.position.z,
+        yaw: this.player.yawAngle,
+        travelMode: this.isBigfoot && this.caveCooldown === 0 && this.nearestCaveIndex() >= 0,
+        currentCave: this.nearestCaveIndex(),
+        others: hunter ? this.net.getRemoteSearchers() : [],
+        clues: hunter ? this.clues.getDots() : [],
+      });
     }
 
     // Filming (hunters only): hold right mouse to record; Bigfoot in frame builds footage.
     let recording = false;
     let inView = false;
     if (!this.isBigfoot) {
-      if (!this.ended && !caught) {
+      if (!frozen) {
         recording = this.input.isMouseDown(2);
         inView = recording && this.computeBigfootInView();
       }
@@ -125,7 +145,7 @@ export class Game {
     this.sendAccum += dt;
     if (this.sendAccum >= 1 / NET.sendHz) {
       this.sendAccum = 0;
-      if (!this.ended && !caught) {
+      if (!frozen) {
         this.net.sendMove({
           x: this.player.position.x,
           y: this.player.groundY,
@@ -170,22 +190,41 @@ export class Game {
     return -1;
   }
 
-  /** Bigfoot steps into a cave mouth and emerges from the next cave in the network. */
-  private tryCaveTravel() {
+  /** Bigfoot picks a destination cave from the map and emerges from its mouth. */
+  private travelToCave(i: number) {
     if (!this.isBigfoot || this.ended || this.caveCooldown > 0) return;
-    const i = this.nearestCaveIndex();
-    if (i < 0) return;
-    const dest = CAVES[(i + 1) % CAVES.length];
+    const here = this.nearestCaveIndex();
+    if (here < 0 || i === here || i < 0 || i >= CAVES.length) return;
+    const dest = CAVES[i];
     const dl = Math.hypot(dest.x, dest.z) || 1;
     this.player.teleportTo(dest.x - (dest.x / dl) * 1.5, dest.z - (dest.z / dl) * 1.5); // at the mouth
     this.caveCooldown = CAVE.travelCooldown;
-    this.hud.setPrompt(null);
+    this.closeMap();
+  }
+
+  private toggleMap() {
+    if (this.ended) return;
+    if (this.map.isOpen) {
+      this.closeMap();
+    } else {
+      this.map.open();
+      this.hud.setPrompt(null);
+      this.input.allowPointerLock = false;
+      document.exitPointerLock();
+    }
+  }
+
+  private closeMap() {
+    this.map.close();
+    this.input.allowPointerLock = true;
+    if (!this.ended) this.canvas.requestPointerLock();
   }
 
   private endMatch(winner: string) {
     if (this.ended) return;
     this.ended = true;
     this.hud.setPrompt(null);
+    this.map.close();
     document.exitPointerLock();
     const youWon = winner === (this.isBigfoot ? "bigfoot" : "hunters");
     const title = winner === "hunters" ? "The footage is secured" : "The forest goes quiet";

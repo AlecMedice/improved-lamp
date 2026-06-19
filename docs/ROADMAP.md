@@ -49,7 +49,8 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 - 🟡 Two playable roles with distinct cameras/speed/models *(distinct speed, height, night‑vision, avatars + Bigfoot eye‑shine done; rigged models pending)*
 - ⬜ Bigfoot: charge, leap/climb, roar (AoE scare), full senses overlay
 - ✅ Bigfoot leaves a trackable trail (footprints + broken branches) — *the clue framework*
-- ✅ Bigfoot **cave fast-travel** network (spawn at a cave; `E` to hop to the next)
+- ✅ Bigfoot **cave fast-travel** network (spawn at a cave; pick the destination from the map)
+- ✅ **Map** (`M`) for both roles — position/heading, camp, caves; hunters also see teammates + clue trail
 - ✅ Catch (proximity, after dusk grace) → caught/out, synced
 - ⬜ Searcher: jump/vault, ping, flashlight stun meter; downs + teammate revives (replace instant‑out)
 

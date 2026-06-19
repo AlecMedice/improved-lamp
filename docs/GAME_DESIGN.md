@@ -29,7 +29,7 @@
 - **Goal:** Stop the expedition before they get 3 videos — catch the searchers before the tape gets out.
 - **Start:** Bigfoot begins at one of several **cave** lairs out in the forest — never at the searchers' camp.
 - **Strengths:** ~1.2× searcher speed and better night vision. (Future: **charge**, **leap**, **climb**, and **roar** — ROADMAP Phase 3.)
-- **Cave network (fast travel):** The caves form a tunnel network. Standing in a cave mouth, Bigfoot presses `E` to **emerge from the next cave** — crossing the map in an instant to flank the team or escape a stakeout. (~2s cooldown.)
+- **Cave network (fast travel):** The caves form a tunnel network. Standing in a cave mouth, Bigfoot opens the **map (`M`) and clicks the destination cave** to emerge there — crossing the map in an instant to flank the team or escape a stakeout. (~2s cooldown.)
 - **The trail problem:** Bigfoot **leaves a trail** — footprints and broken branches — that hunters follow to find it. Moving more = a longer, fresher trail. Standing still hides you but lets the team regroup.
 - **Senses:** Sees who is currently **filming** (their recording light) and active flashlight cones. (Future: full "instincts" overlay + smell, per ROADMAP.)
 - **Counterplay:** Loud (footfalls audible), briefly **stunned by the photographer's flash** and by sustained focused flashlight, and must commit/cool‑down on big abilities.
@@ -90,6 +90,7 @@ A single match is a compressed night. `timeOfDay` runs 0→1 over the match leng
 | `Space` | Jump / vault low obstacles |
 | `F` | Toggle flashlight |
 | Right Mouse (hold) | Raise camera & **film** Bigfoot (build a video clip) |
+| `M` | Toggle the **map** (your position, base camp, caves, teammates, the clue trail) |
 | `E` | Interact — revive teammate *(planned, Phase 3)* |
 | `Q` | Ping / shout (places a marker, alerts team) *(planned)* |
 | `Tab` | Objectives & footage count |
@@ -102,9 +103,9 @@ A single match is a compressed night. `timeOfDay` runs 0→1 over the match leng
 | Mouse | Look |
 | `Shift` | Charge (burst of speed) |
 | `Space` | Leap / climb |
-| `LMB` | Swipe / grab (downs a searcher) |
-| `RMB` | Roar (area scare) |
-| `E` | Smell nearest trail / destroy evidence node |
+| `M` | Toggle the **map**; in a cave mouth, **click a cave to fast-travel** there |
+| `LMB` | Swipe / grab (downs a searcher) *(planned)* |
+| `RMB` | Roar (area scare) *(planned)* |
 
 ---
 
@@ -161,10 +162,10 @@ A single match is a compressed night. `timeOfDay` runs 0→1 over the match leng
 
 ## 10. UI / HUD
 
-- **Minimal in‑world HUD:** flashlight battery, stamina, evidence collected/required, current phase clock, contextual interact prompt.
-- **Objectives panel** (`Tab`): evidence list, teammate status, transmission progress.
-- **Bigfoot HUD:** ability cooldowns, senses toggle, searchers‑downed counter.
-- **Diegetic where possible** (battery on the flashlight model, evidence in a field journal).
+- **Minimal in‑world HUD:** flashlight battery, stamina, footage captured/required, current phase clock, contextual prompt, filming viewfinder + clip bar.
+- **Map (`M`) — *implemented*:** top‑down overlay for both roles showing the player's position + heading, base camp, and caves. Hunters also see teammates and the clue trail (a live tracking map). For Bigfoot in a cave mouth, caves become **clickable fast‑travel destinations**. Opening the map frees the cursor and pauses local movement.
+- **Bigfoot HUD:** *(planned)* ability cooldowns, senses toggle, searchers‑caught counter.
+- **Diegetic where possible** (battery on the flashlight model, footage in a field journal).
 
 ---
 

@@ -5,6 +5,7 @@ export class Input {
   private onTap: Record<string, () => void> = {};
   private onLook: (dx: number, dy: number) => void = () => {};
   locked = false;
+  allowPointerLock = true; // disabled while a menu/map is open
 
   constructor(private canvas: HTMLElement) {
     window.addEventListener("keydown", (e) => {
@@ -13,7 +14,9 @@ export class Input {
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.code));
 
-    canvas.addEventListener("click", () => canvas.requestPointerLock());
+    canvas.addEventListener("click", () => {
+      if (this.allowPointerLock) canvas.requestPointerLock();
+    });
     canvas.addEventListener("contextmenu", (e) => e.preventDefault()); // RMB = record, not menu
     window.addEventListener("mousedown", (e) => this.buttons.add(e.button));
     window.addEventListener("mouseup", (e) => this.buttons.delete(e.button));

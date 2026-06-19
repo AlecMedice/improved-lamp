@@ -34,6 +34,13 @@ export class ClueField {
     }
   }
 
+  /** Flat (x,z) positions of every live clue — used by the map's tracking view. */
+  getDots(): Array<{ x: number; z: number }> {
+    const out: Array<{ x: number; z: number }> = [];
+    for (const { obj } of this.items.values()) out.push({ x: obj.position.x, z: obj.position.z });
+    return out;
+  }
+
   /** Fade clues toward (but not to) invisible as they age — "the trail goes cold". */
   update(t: number) {
     this.now = t;
