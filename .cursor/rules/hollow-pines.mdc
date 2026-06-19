@@ -1,0 +1,26 @@
+---
+description: Hollow Pines project context (1v5 Bigfoot game, Three.js + Colyseus)
+alwaysApply: true
+---
+
+# Hollow Pines
+
+Read **`CLAUDE.md`** (repo root) first — it's the full orientation. Then `docs/GAME_DESIGN.md`
+is the source of truth for rules, `docs/ROADMAP.md` for what's done/next.
+
+Critical things to remember:
+- Monorepo-ish: `client/` (Three.js + Vite + TS) and `server/` (Colyseus + TS) are separate
+  packages. Run `npm run dev` in each. `ws://localhost:2567` is the backend, not a web page —
+  open the Vite URL (`http://localhost:5173`).
+- The **server (`server/src/rooms/ForestRoom.ts`) is authoritative** for match state, abilities,
+  and win/loss. Gameplay tuning lives in constants at the top of that file and in `client/src/config.ts`.
+- `CAVES` coordinates are **duplicated** in `client/src/config.ts` and `ForestRoom.ts` — keep in sync.
+- Each client renders its **own** Three.js scene; world generation is **seeded/deterministic**.
+- Colyseus 0.15 uses **legacy decorators** (`experimentalDecorators`, `useDefineForClassFields:false`
+  in the server tsconfig) — don't modernize.
+
+Before claiming a change works: `npx tsc --noEmit` in both packages and `npx vite build` in `client/`.
+For gameplay/server logic, prove it with a throwaway headless `colyseus.js` script (see CLAUDE.md),
+then delete it. Don't commit `dist/` or smoke-test files.
+
+Aesthetic: low-poly with **smooth** vertex normals (never blocky), fog, ACES tone mapping.
