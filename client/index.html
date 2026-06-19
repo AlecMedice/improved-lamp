@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hollow Pines</title>
+    <style>
+      :root { --amber: #e8a062; --ink: #0c0d12; }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { height: 100%; overflow: hidden; background: var(--ink); color: #eee;
+        font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif; }
+      #game { display: block; width: 100vw; height: 100vh; }
+
+      /* Crosshair */
+      #crosshair { position: fixed; inset: 0; margin: auto; width: 6px; height: 6px;
+        border-radius: 50%; background: rgba(255,255,255,.5); pointer-events: none; }
+
+      /* HUD */
+      #hud { position: fixed; inset: 0; pointer-events: none; padding: 18px;
+        display: flex; flex-direction: column; justify-content: space-between; }
+      .row { display: flex; gap: 16px; align-items: center; }
+      .top { justify-content: space-between; }
+      .pill { background: rgba(0,0,0,.45); border: 1px solid rgba(255,255,255,.12);
+        border-radius: 10px; padding: 8px 12px; font-size: 13px; letter-spacing: .03em;
+        backdrop-filter: blur(4px); }
+      .label { opacity: .6; font-size: 11px; text-transform: uppercase; letter-spacing: .12em; }
+      .bar { width: 160px; height: 8px; border-radius: 6px; background: rgba(255,255,255,.15); overflow: hidden; }
+      .bar > i { display: block; height: 100%; width: 100%; transition: width .12s linear; }
+      #battery-fill { background: linear-gradient(90deg, #ffd27a, #ffe9b0); }
+      #stamina-fill { background: linear-gradient(90deg, #7ad1ff, #b9ecff); }
+      #phase { color: var(--amber); font-weight: 700; }
+
+      /* Start overlay */
+      #start-overlay { position: fixed; inset: 0; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 18px; text-align: center;
+        background: radial-gradient(120% 90% at 50% 10%, #1b1830 0%, #0a0a10 70%); z-index: 10; }
+      #start-overlay h1 { font-size: 44px; letter-spacing: .06em; }
+      #start-overlay .tag { opacity: .65; max-width: 520px; line-height: 1.5; }
+      .panel { background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12);
+        border-radius: 14px; padding: 20px 22px; display: flex; flex-direction: column; gap: 12px; min-width: 320px; }
+      .panel label { font-size: 12px; opacity: .7; text-align: left; }
+      .panel input, .panel select { width: 100%; padding: 10px; border-radius: 8px;
+        border: 1px solid rgba(255,255,255,.18); background: #14141c; color: #eee; font-size: 14px; }
+      #start-btn { cursor: pointer; pointer-events: auto; border: none; border-radius: 10px;
+        padding: 12px 18px; font-size: 15px; font-weight: 700; color: #1a1208;
+        background: linear-gradient(90deg, #ffcf86, var(--amber)); }
+      .help { font-size: 12px; opacity: .6; line-height: 1.7; }
+      kbd { background: #14141c; border: 1px solid rgba(255,255,255,.2); border-bottom-width: 2px;
+        border-radius: 5px; padding: 1px 6px; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <div id="crosshair"></div>
+
+    <div id="hud">
+      <div class="row top">
+        <div class="pill"><span class="label">Forest</span> &nbsp;<span id="phase">DUSK</span>
+          &nbsp;·&nbsp; night <span id="clock">0%</span></div>
+        <div class="pill"><span class="label">Evidence</span> &nbsp;<span id="evidence">0 / 3</span>
+          &nbsp;·&nbsp; <span id="net-status">connecting…</span></div>
+      </div>
+      <div class="row">
+        <div class="pill"><span class="label">Flashlight</span><div class="bar"><i id="battery-fill"></i></div></div>
+        <div class="pill"><span class="label">Stamina</span><div class="bar"><i id="stamina-fill"></i></div></div>
+      </div>
+    </div>
+
+    <div id="start-overlay">
+      <h1>HOLLOW&nbsp;PINES</h1>
+      <p class="tag">Dusk falls over the Pacific Northwest. Five searchers look for proof that Bigfoot is real.
+        One of you <em>is</em> Bigfoot. Find the evidence — or stop it from leaving the forest.</p>
+      <div class="panel">
+        <label for="name">Name</label>
+        <input id="name" placeholder="Searcher" maxlength="16" />
+        <label for="role">Role</label>
+        <select id="role">
+          <option value="searcher">Searcher (one of five)</option>
+          <option value="bigfoot">Bigfoot (the hunter)</option>
+        </select>
+        <button id="start-btn">Enter the forest</button>
+      </div>
+      <p class="help">
+        <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp;·&nbsp; mouse look &nbsp;·&nbsp;
+        <kbd>Shift</kbd> sprint &nbsp;·&nbsp; <kbd>F</kbd> flashlight &nbsp;·&nbsp; <kbd>Esc</kbd> release cursor<br />
+        Click the screen to look around. No server? You'll still walk the woods solo.
+      </p>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

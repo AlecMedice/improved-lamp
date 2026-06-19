@@ -1,0 +1,22 @@
+{
+  "name": "hollow-pines-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Three.js browser client for Hollow Pines (1v5 Bigfoot hunt).",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "colyseus.js": "^0.15.0",
+    "three": "^0.160.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.160.0",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.0"
+  }
+}
