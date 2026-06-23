@@ -22,6 +22,9 @@ export type SelfInfo = { status: string; filmProgress: number; role: string; slo
 export class Network {
   private client: Client;
   private room?: Room;
+  private adopted?: Room; // an already-joined room handed over from the lobby
+  private reconnectionToken?: string;
+  private intentionalLeave = false;
   private remotes = new Map<string, RemotePlayer>();
   private bigfoot?: RemotePlayer;
   connected = false;
@@ -36,15 +39,29 @@ export class Network {
   onClueRemove: (id: string) => void = () => {};
   onPingAdd: (id: string, x: number, z: number) => void = () => {};
   onPingRemove: (id: string) => void = () => {};
+  onReturnToLobby: () => void = () => {}; // host reset the match back to the lobby
 
-  constructor(private scene: THREE.Scene, private role: string, private name: string) {
+  private prevMatchPhase = "";
+
+  constructor(private scene: THREE.Scene, private role: string, private name: string, room?: Room) {
     this.client = new Client(SERVER_URL);
+    this.adopted = room;
   }
 
   async connect(): Promise<boolean> {
+    // Lobby handed us a live room — reuse it instead of joining a new one.
+    if (this.adopted) {
+      this.room = this.adopted;
+      this.connected = true;
+      this.reconnectionToken = this.room.reconnectionToken;
+      this.onStatus("online");
+      this.bind(this.room);
+      return true;
+    }
     try {
       this.room = await this.client.joinOrCreate("forest", { role: this.role, name: this.name });
       this.connected = true;
+      this.reconnectionToken = this.room.reconnectionToken;
       this.onStatus("online");
       this.bind(this.room);
       return true;
@@ -53,6 +70,33 @@ export class Network {
       console.warn("Could not reach the Hollow Pines server — running offline.", e);
       return false;
     }
+  }
+
+  /** Tear down avatars before a rebind (e.g. after reconnecting) to avoid duplicates. */
+  private clearRemotes() {
+    for (const rp of this.remotes.values()) rp.dispose();
+    this.remotes.clear();
+    this.bigfoot = undefined;
+  }
+
+  /** Lost the connection mid-match: retry with the saved token for ~20s (server holds the slot). */
+  private async tryReconnect() {
+    if (this.intentionalLeave || !this.reconnectionToken) return;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      this.onStatus("reconnecting…");
+      try {
+        this.room = await this.client.reconnect(this.reconnectionToken);
+        this.reconnectionToken = this.room.reconnectionToken;
+        this.connected = true;
+        this.onStatus("online");
+        this.clearRemotes();
+        this.bind(this.room);
+        return;
+      } catch {
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
+    this.onStatus("disconnected");
   }
 
   private bind(room: Room) {
@@ -101,7 +145,19 @@ export class Network {
       this.onNight(s.nightNumber, s.totalNights);
       this.onFootage(s.videosCaptured, s.videosRequired);
       if (s.winner) this.onEnd(s.winner);
+      // Host pressed "Return to lobby" after a result → everyone resets.
+      if (this.prevMatchPhase === "results" && s.matchPhase === "lobby") this.onReturnToLobby();
+      this.prevMatchPhase = s.matchPhase;
     });
+
+    // Unexpected drop → try to reconnect within the server's grace window.
+    room.onLeave((code: number) => {
+      this.connected = false;
+      if (!this.intentionalLeave && code !== 1000) this.tryReconnect();
+    });
+    room.onError((code: number, message?: string) =>
+      console.warn(`Room error ${code}: ${message ?? ""}`)
+    );
   }
 
   /** This player's authoritative position (used to follow Bigfoot's drag while incapacitated). */
@@ -147,6 +203,17 @@ export class Network {
 
   sendMove(p: MovePayload) {
     this.room?.send("move", p);
+  }
+
+  /** Is this client the host (can return the match to the lobby)? */
+  isHost(): boolean {
+    const s = this.room?.state as any;
+    return !!s && !!this.room && s.hostId === this.room.sessionId;
+  }
+
+  /** Host asks the server to reset back to the lobby after a result. */
+  sendReturnToLobby() {
+    this.room?.send("returnToLobby");
   }
 
   update(dt: number) {

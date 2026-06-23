@@ -8,9 +8,9 @@ export const NIGHT_SECONDS = 300;
 export const TOTAL_NIGHTS = 3;
 
 export const WORLD = {
-  size: 400, // full extent; world spans -200..200 on x/z
-  segments: 96, // terrain mesh resolution
-  treeCount: 320,
+  size: 800, // full extent; world spans -400..400 on x/z
+  segments: 160, // terrain mesh resolution (~same triangle density as original)
+  treeCount: 700,
   hillHeight: 14,
   seed: 1337, // shared so every client builds an identical forest
   baseCampRadius: 16,
@@ -28,11 +28,35 @@ export const PLAYER = {
   staminaRegenPerSec: 12,
   staminaRecover: 35, // once exhausted (0), must regen to this before sprinting again
   slowFactor: 0.75, // movement multiplier while slowed (after incapacitation)
+  bobFreqWalk: 1.8, // head-bob cycles per second while walking
+  bobFreqSprint: 2.6, // head-bob cycles per second while sprinting
+  bobAmpWalk: 0.05, // vertical bob amplitude in metres while walking
+  bobAmpSprint: 0.09, // vertical bob amplitude in metres while sprinting
+  stepIntervalWalk: 0.52, // seconds between footstep sounds while walking
+  stepIntervalSprint: 0.32, // seconds between footstep sounds while sprinting
+  stepHeight: 0.75, // max terrain rise auto-stepped over when a collider blocks (m)
+  logSlowFactor: 0.35, // hunter speed multiplier when clambering over a fallen log
+  lakeHunterFactor: 0.28, // hunter speed multiplier while wading (heavy kit)
+  lakeBigfootFactor: 0.72, // Bigfoot speed multiplier while wading (strong, but water impedes)
+  jumpSpeed: 5.2, // initial upward velocity on jump (m/s)
+  gravity: 16, // downward acceleration while airborne (m/s^2)
+  crouchFactor: 0.55, // eye-height multiplier while crouched
+  crouchSpeedMul: 0.5, // movement-speed multiplier while crouched
+  eyeLerp: 12, // how fast eye height eases between standing/crouched
 };
 
 /** Bigfoot offense (client-side cooldown/feedback; the server is authoritative). */
 export const ABILITY = {
   roarCooldown: 25, // seconds between roars (UI gate, mirrors server)
+};
+
+/**
+ * Per-night escalation (client-side; driven by the server's nightNumber).
+ * Multiplier for night N is `1 + perNight * (N - 1)`, so night 1 is baseline.
+ */
+export const ESCALATION = {
+  bigfootSpeedPerNight: 0.08, // +8% Bigfoot move speed each night after the first
+  hunterDrainPerNight: 0.15, // +15% flashlight battery & sprint stamina drain each night
 };
 
 /** Map readout tuning for the clue trail (the "in-contact" gating). */
@@ -55,13 +79,23 @@ export const NET = { sendHz: 15 };
  * Cave entrances — Bigfoot's lairs and the nodes of its fast-travel network.
  * Kept in sync with the server's copy in ForestRoom.ts (used for the spawn point).
  */
-export const CAVES: ReadonlyArray<{ x: number; z: number }> = [
-  { x: 120, z: 45 },
-  { x: -115, z: 95 },
-  { x: 70, z: -135 },
-  { x: -95, z: -80 },
-  { x: 10, z: 150 },
-];
+/**
+ * Cave positions — regenerated randomly each page load so every session has a
+ * different map. Five caves spread across the outer ring of the world (150-340 m
+ * from centre) with at least 120 m between each pair.
+ */
+function _generateCaves(): ReadonlyArray<{ x: number; z: number }> {
+  const out: { x: number; z: number }[] = [];
+  for (let attempt = 0; out.length < 5 && attempt < 400; attempt++) {
+    const angle = Math.random() * Math.PI * 2;
+    const r = 150 + Math.random() * 190;
+    const x = Math.round(Math.cos(angle) * r);
+    const z = Math.round(Math.sin(angle) * r);
+    if (out.every((c) => Math.hypot(c.x - x, c.z - z) >= 120)) out.push({ x, z });
+  }
+  return out;
+}
+export const CAVES: ReadonlyArray<{ x: number; z: number }> = _generateCaves();
 
 export const CAVE = {
   triggerRadius: 6, // how close Bigfoot must be to a mouth to use it

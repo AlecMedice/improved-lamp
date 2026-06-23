@@ -6,8 +6,10 @@ import { PingField } from "../world/PingField";
 import { LocalPlayer } from "../entities/LocalPlayer";
 import { Input } from "./Input";
 import { Network, SelfInfo } from "./Network";
+import { Room } from "colyseus.js";
 import { HUD } from "../ui/HUD";
 import { MapView } from "../ui/MapView";
+import { AudioManager } from "./Audio";
 
 /** Wires renderer + world + player + input + networking into one loop. */
 export class Game {
@@ -36,11 +38,17 @@ export class Game {
   private night = 1;
   private totalNights = 3;
 
+  private audio: AudioManager;
+
+  // Hunter-side Bigfoot footstep tracking: compare server positions frame-to-frame.
+  private bfPrevPos: { x: number; z: number } | null = null;
+  private bfStepTimer = 0;
+
   // reused scratch vectors (avoid per-frame allocation)
   private fwd = new THREE.Vector3();
   private toBf = new THREE.Vector3();
 
-  constructor(canvas: HTMLCanvasElement, role: string, name: string) {
+  constructor(canvas: HTMLCanvasElement, role: string, name: string, room?: Room) {
     this.isBigfoot = role === "bigfoot";
     this.canvas = canvas;
 
@@ -51,14 +59,16 @@ export class Game {
     // Bigfoot sees better in the dark (its own render only — scenes are per-client).
     this.renderer.toneMappingExposure = this.isBigfoot ? 1.7 : 1.15;
 
-    this.camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 600);
+    this.camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 900);
     this.scene.add(this.camera); // so the flashlight (a child) renders
 
     this.env = new Environment(this.scene);
+    this.map.setBakedMap(this.env.generateMapCanvas(600, 400));
     this.clues = new ClueField(this.scene, this.env);
-    // Bigfoot starts at a random cave; searchers start scattered around the campfire.
-    const spawn = this.isBigfoot ? caveMouthSpawn() : campfireSpawn();
-    this.player = new LocalPlayer(this.camera, this.env, role, spawn);
+    // Online: use the server-assigned spawn. Offline/solo: pick one locally.
+    const spawn = spawnFor(role, room);
+    this.audio = new AudioManager();
+    this.player = new LocalPlayer(this.camera, this.env, role, spawn, this.audio);
 
     if (this.isBigfoot) {
       // A constant dim floor so Bigfoot can navigate once the night turns black.
@@ -71,7 +81,7 @@ export class Game {
     if (!this.isBigfoot) this.input.onPress("KeyF", () => this.player.toggleFlashlight());
     this.map.onSelectCave = (i) => this.travelToCave(i);
 
-    this.net = new Network(this.scene, role, name);
+    this.net = new Network(this.scene, role, name, room);
     this.net.onStatus = (s) => this.hud.setStatus(s);
     this.net.onPhase = (_phase, tod) => (this.serverTimeOfDay = tod);
     this.net.onNight = (n, total) => this.onNightChange(n, total);
@@ -80,6 +90,8 @@ export class Game {
     this.net.onClueAdd = (c) => this.clues.add(c);
     this.net.onClueRemove = (id) => this.clues.remove(id);
     this.net.onEnd = (winner) => this.endMatch(winner);
+    // Host reset us to the lobby — reload back into the waiting room.
+    this.net.onReturnToLobby = () => location.reload();
 
     // Bigfoot abilities: right-click roar, left-click grab a frozen hunter.
     if (this.isBigfoot) {
@@ -104,6 +116,36 @@ export class Game {
 
   start() {
     this.renderer.setAnimationLoop(() => this.frame());
+    this.startTutorial();
+  }
+
+  /** Brief, role-specific control hints shown one at a time at the start of a match. */
+  private startTutorial() {
+    const hints = this.isBigfoot
+      ? [
+          "You ARE Bigfoot. WASD to move · mouse to look · you're faster than they are.",
+          "Right-click to ROAR — freezes nearby hunters in place.",
+          "Left-click to GRAB a frozen hunter — erases the team's footage.",
+          "Stand in a cave mouth, press M, and pick a cave to fast-travel.",
+          "Survive 3 nights to win. Each night you grow stronger.",
+        ]
+      : [
+          "WASD to move · mouse to look · Shift to sprint · Ctrl to crouch.",
+          "F toggles your flashlight — watch the battery.",
+          "Hold Right-Mouse to film Bigfoot — fill the bar 3 times to win.",
+          "M opens the map · Q drops a stakeout ping for your team.",
+          "Follow footprints and broken branches. Don't get caught.",
+        ];
+    let i = 0;
+    const show = () => {
+      if (this.ended || i >= hints.length) {
+        this.hud.setTutorial(null);
+        return;
+      }
+      this.hud.setTutorial(hints[i++]);
+      window.setTimeout(show, 4500);
+    };
+    show();
   }
 
   private frame() {
@@ -131,6 +173,10 @@ export class Game {
     this.env.update(t);
     this.clues.update(t);
     this.net.update(dt);
+
+    // Creek ambience swells as you near the water (audible within ~30 m).
+    const creekDist = this.env.distanceToCreek(this.player.position.x, this.player.position.z);
+    this.audio.setCreekProximity(1 - creekDist / 30);
 
     this.hud.setStatusBanner(this.ended ? "active" : this.self.status);
     this.hud.setBlackout(incapacitated && !this.ended);
@@ -171,6 +217,34 @@ export class Game {
       this.hud.setFilmProgress(this.self.filmProgress);
     }
 
+    // Bigfoot footstep audio: hunters hear heavy steps when Bigfoot is within MAP.hearRange.
+    // We detect movement by comparing the server-reported position between frames; a delta
+    // larger than 15 m in one frame is a cave teleport and is skipped.
+    if (!this.isBigfoot && !this.ended) {
+      const bfPos = this.net.getBigfootPosition();
+      if (bfPos) {
+        const dx = bfPos.x - this.player.position.x;
+        const dz = bfPos.z - this.player.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist < MAP.hearRange && this.bfPrevPos) {
+          const delta = Math.hypot(bfPos.x - this.bfPrevPos.x, bfPos.z - this.bfPrevPos.z);
+          if (delta > 0.05 && delta < 15) {
+            this.bfStepTimer -= dt;
+            if (this.bfStepTimer <= 0) {
+              // Stereo pan: project Bigfoot's direction onto the hunter's right vector.
+              const yaw = this.player.yawAngle;
+              const pan = (Math.cos(yaw) * dx - Math.sin(yaw) * dz) / dist;
+              this.audio.playBigfootFootstep(dist, pan);
+              this.bfStepTimer = 0.55;
+            }
+          }
+        }
+        this.bfPrevPos = { x: bfPos.x, z: bfPos.z };
+      } else {
+        this.bfPrevPos = null;
+      }
+    }
+
     // Stream our transform + intent to the server at a fixed rate.
     this.sendAccum += dt;
     if (this.sendAccum >= 1 / NET.sendHz) {
@@ -178,7 +252,7 @@ export class Game {
       if (!locked) {
         this.net.sendMove({
           x: this.player.position.x,
-          y: this.player.groundY,
+          y: this.player.feetY,
           z: this.player.position.z,
           ry: this.player.yawAngle,
           flashlightOn: this.player.isFlashlightOn,
@@ -222,8 +296,21 @@ export class Game {
     this.totalNights = total;
     if (night !== this.night) {
       this.night = night;
-      if (!this.ended) this.hud.fade(() => {}); // brief fade between nights
+      this.player.night = night; // drives per-night escalation (speed / drain)
+      if (!this.ended) {
+        this.hud.fade(() => {}); // brief fade between nights
+        if (night > 1) this.showNightNote(night);
+      }
     }
+  }
+
+  /** Flash a short escalation note when a new night begins. */
+  private showNightNote(night: number) {
+    const note = this.isBigfoot
+      ? `Night ${night} — you move faster and bolder now.`
+      : `Night ${night} — Bigfoot is faster, and your gear drains quicker.`;
+    this.hud.setTutorial(note);
+    window.setTimeout(() => this.hud.setTutorial(null), 5000);
   }
 
   /** Is Bigfoot within range, centred in frame, and not hidden behind a trunk? */
@@ -261,7 +348,9 @@ export class Game {
     this.caveCooldown = CAVE.travelCooldown;
     this.closeMap(); // synchronous (keeps the pointer-lock user gesture)
     // Fade to black, hop at the darkest point, fade back in at the new cave.
-    this.hud.fade(() => this.player.teleportTo(dest.x - (dest.x / dl) * 1.5, dest.z - (dest.z / dl) * 1.5));
+    // Face away from the destination cave (into the forest) on emergence.
+    const exitYaw = Math.atan2(dest.x, dest.z);
+    this.hud.fade(() => this.player.teleportTo(dest.x - (dest.x / dl) * 8, dest.z - (dest.z / dl) * 8, exitYaw));
   }
 
   /** Drop a stakeout ping at (x,z), or at the player's feet if not given. */
@@ -301,6 +390,8 @@ export class Game {
         ? "Enough solid video. The expedition makes it out with proof Bigfoot is real."
         : "Bigfoot outlasted three nights. The expedition goes home with nothing.";
     this.hud.showEnd(youWon ? "VICTORY" : "DEFEAT", `${title}. ${body}`);
+    // The host can send everyone back to the lobby for another match.
+    if (this.net.isHost()) this.hud.showHostRematch(() => this.net.sendReturnToLobby());
   }
 
   private onResize() {
@@ -308,6 +399,18 @@ export class Game {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
   }
+}
+
+/** Spawn point for the local player: server-assigned when online, local fallback when solo. */
+function spawnFor(role: string, room?: Room): { x: number; z: number; yaw?: number } {
+  if (room) {
+    const self = (room.state as any).players?.get(room.sessionId);
+    if (self) {
+      const yaw = role === "bigfoot" ? Math.atan2(self.x, self.z) : 0;
+      return { x: self.x, z: self.z, yaw };
+    }
+  }
+  return role === "bigfoot" ? caveMouthSpawn() : campfireSpawn();
 }
 
 /** A scatter point around the campfire for searcher spawns. */
@@ -318,8 +421,9 @@ function campfireSpawn(): { x: number; z: number } {
 }
 
 /** A random cave mouth (offset toward map centre) for the Bigfoot spawn. */
-function caveMouthSpawn(): { x: number; z: number } {
+function caveMouthSpawn(): { x: number; z: number; yaw: number } {
   const cave = CAVES[Math.floor(Math.random() * CAVES.length)];
   const dl = Math.hypot(cave.x, cave.z) || 1;
-  return { x: cave.x - (cave.x / dl) * 1.5, z: cave.z - (cave.z / dl) * 1.5 };
+  // atan2(cave.x, cave.z) points the camera away from the cave (toward map centre).
+  return { x: cave.x - (cave.x / dl) * 8, z: cave.z - (cave.z / dl) * 8, yaw: Math.atan2(cave.x, cave.z) };
 }

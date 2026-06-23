@@ -88,6 +88,17 @@ export class HUD {
     }
   }
 
+  /** Transient onboarding / escalation hint, centred low on screen. Pass null to hide. */
+  setTutorial(text: string | null) {
+    const el = this.el("tutorial");
+    if (text) {
+      el.textContent = text;
+      el.style.display = "block";
+    } else {
+      el.style.display = "none";
+    }
+  }
+
   /** Quick fade-to-black; runs `midAction` at full black, then fades back in. */
   fade(midAction: () => void) {
     const el = this.el("fade");
@@ -104,7 +115,15 @@ export class HUD {
     this.el("blackout").style.opacity = "0";
     this.el("end-title").textContent = title;
     this.el("end-msg").textContent = message;
+    this.el("end-lobby").style.display = "none"; // host-only; shown by showHostRematch
     this.el("end-overlay").style.display = "flex";
+  }
+
+  /** Reveal the host's "Return to lobby" button on the results screen. */
+  showHostRematch(onReturn: () => void) {
+    const el = this.el("end-lobby") as HTMLButtonElement;
+    el.style.display = "block";
+    el.onclick = onReturn;
   }
 }
 

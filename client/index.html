@@ -38,6 +38,10 @@
       #prompt { position: fixed; left: 50%; transform: translateX(-50%); bottom: 84px; display: none;
         background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.2); border-radius: 10px;
         padding: 9px 15px; font-size: 13px; letter-spacing: .03em; }
+      #tutorial { position: fixed; left: 50%; transform: translateX(-50%); bottom: 130px; display: none;
+        background: rgba(10,12,20,.72); border: 1px solid rgba(255,207,134,.35); border-radius: 10px;
+        padding: 10px 16px; font-size: 14px; letter-spacing: .02em; max-width: 560px; text-align: center;
+        transition: opacity .3s; pointer-events: none; }
 
       /* Filming viewfinder */
       #viewfinder { position: fixed; inset: 0; display: none; pointer-events: none; z-index: 5; }
@@ -73,6 +77,12 @@
       .btn { cursor: pointer; pointer-events: auto; border: none; border-radius: 10px;
         padding: 12px 18px; font-size: 15px; font-weight: 700; color: #1a1208;
         background: linear-gradient(90deg, #ffcf86, var(--amber)); }
+      .btn-ghost { background: rgba(255,255,255,.08); color: #cfcfe0; font-weight: 600; }
+      .lobby-label { font-size: 12px; opacity: .7; text-align: left; letter-spacing: .04em; }
+      #lobby-players { display: flex; flex-direction: column; gap: 6px; min-height: 24px; text-align: left; }
+      .lobby-player { font-size: 15px; padding: 6px 10px; border-radius: 8px; background: rgba(255,255,255,.05); }
+      .lobby-status { font-size: 12px; opacity: .65; min-height: 16px; }
+      #lobby-overlay { display: none; }
       .help { font-size: 12px; opacity: .6; line-height: 1.7; }
       kbd { background: #14141c; border: 1px solid rgba(255,255,255,.2); border-bottom-width: 2px;
         border-radius: 5px; padding: 1px 6px; font-size: 11px; }
@@ -125,6 +135,8 @@
       <div id="prompt"></div>
     </div>
 
+    <div id="tutorial"></div>
+
     <div id="viewfinder">
       <div class="vf tl"></div><div class="vf tr"></div><div class="vf bl"></div><div class="vf br"></div>
       <div id="rec">● REC</div>
@@ -160,7 +172,8 @@
           <option value="searcher">Searcher (one of five)</option>
           <option value="bigfoot">Bigfoot (the hunter)</option>
         </select>
-        <button id="start-btn" class="btn">Enter the forest</button>
+        <button id="lobby-btn" class="btn">Multiplayer lobby</button>
+        <button id="start-btn" class="btn btn-ghost">Enter the forest (solo)</button>
       </div>
       <p class="help">
         <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp;·&nbsp; mouse look &nbsp;·&nbsp;
@@ -173,10 +186,22 @@
       </p>
     </div>
 
+    <div id="lobby-overlay" class="overlay">
+      <h1>WAITING&nbsp;ROOM</h1>
+      <p class="tag">One of you will be chosen as Bigfoot when the host begins. The rest hunt for proof.</p>
+      <div class="panel">
+        <div class="lobby-label">Expedition</div>
+        <div id="lobby-players"></div>
+        <button id="lobby-start" class="btn" style="display:none">Start the hunt</button>
+        <div id="lobby-status" class="lobby-status"></div>
+      </div>
+    </div>
+
     <div id="end-overlay" class="overlay">
       <h1 id="end-title">—</h1>
       <p class="tag" id="end-msg"></p>
       <button class="btn" onclick="location.reload()">Play again</button>
+      <button id="end-lobby" class="btn" style="display:none">Return to lobby (host)</button>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

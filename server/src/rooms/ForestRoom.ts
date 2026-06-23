@@ -4,7 +4,7 @@ import { GameState, Player, Clue, Ping } from "./schema/GameState";
 // --- Night / match structure ---
 const NIGHT_SECONDS = 300; // one night runs 8pm -> 8am in this many real seconds
 const TOTAL_NIGHTS = 3; // Bigfoot wins by surviving this many nights
-const WORLD_HALF = 200;
+const WORLD_HALF = 400;
 
 // --- Clue (hint) framework tuning ---
 const STRIDE = 2.4; // metres Bigfoot travels between dropped footprints
@@ -38,14 +38,18 @@ const PHASES: Array<[number, string]> = [
   [Infinity, "dawn"],
 ];
 
-/** Cave entrances — Bigfoot spawns at one. Kept in sync with the client's config.ts. */
-const CAVES = [
-  { x: 120, z: 45 },
-  { x: -115, z: 95 },
-  { x: 70, z: -135 },
-  { x: -95, z: -80 },
-  { x: 10, z: 150 },
-];
+/** Cave entrances — randomised each server start; Bigfoot spawns at one. */
+const CAVES = (() => {
+  const out: { x: number; z: number }[] = [];
+  for (let attempt = 0; out.length < 5 && attempt < 400; attempt++) {
+    const angle = Math.random() * Math.PI * 2;
+    const r = 150 + Math.random() * 190;
+    const x = Math.round(Math.cos(angle) * r);
+    const z = Math.round(Math.sin(angle) * r);
+    if (out.every((c) => Math.hypot(c.x - x, c.z - z) >= 120)) out.push({ x, z });
+  }
+  return out;
+})();
 
 type FilmFlag = { recording: boolean; inView: boolean };
 
@@ -75,6 +79,7 @@ export class ForestRoom extends Room<GameState> {
 
     // Clients stream their transform + intent here. v1: trust + clamp.
     this.onMessage("move", (client, data: any) => {
+      if (this.state.matchPhase !== "playing") return; // ignore stray moves in lobby/results
       const p = this.state.players.get(client.sessionId);
       if (!p || p.status !== "active" || !data) return; // frozen/incapacitated players don't self-move
 
@@ -155,34 +160,63 @@ export class ForestRoom extends Room<GameState> {
       this.state.videosCaptured = 0; // all the team's footage is erased
     });
 
+    // Host starts the match: assign roles (one random Bigfoot if 2+), spawn, begin night 1.
+    this.onMessage("startMatch", (client) => {
+      if (client.sessionId !== this.state.hostId || this.state.matchPhase !== "lobby") return;
+      const sids = [...this.state.players.keys()];
+      const bigfootSid = sids.length >= 2 ? sids[Math.floor(Math.random() * sids.length)] : null;
+      this.state.players.forEach((p, sid) => {
+        p.role = sid === bigfootSid ? "bigfoot" : "searcher";
+        this.spawnPlayer(p);
+      });
+      this.resetMatchState();
+      this.state.matchPhase = "playing";
+      console.log(`Match started by ${client.sessionId}; Bigfoot = ${bigfootSid ?? "(solo)"}.`);
+    });
+
+    // Host returns everyone to the lobby after a result.
+    this.onMessage("returnToLobby", (client) => {
+      if (client.sessionId !== this.state.hostId || this.state.matchPhase !== "results") return;
+      this.resetMatchState();
+      this.state.matchPhase = "lobby";
+    });
+
     this.setSimulationInterval((dt) => this.update(dt), 1000 / 20);
     console.log("ForestRoom created.");
   }
 
   onJoin(client: Client, options: any) {
+    // Players land in the lobby as searchers; roles are assigned when the host starts.
     const p = new Player();
-    const hasBigfoot = [...this.state.players.values()].some((pl) => pl.role === "bigfoot");
-    p.role = options?.role === "bigfoot" && !hasBigfoot ? "bigfoot" : "searcher";
-    p.name = (options?.name as string) || (p.role === "bigfoot" ? "Bigfoot" : "Searcher");
-
-    // Searchers start at the base-camp clearing; Bigfoot starts at a cave.
-    if (p.role === "bigfoot") {
-      const cave = CAVES[Math.floor(Math.random() * CAVES.length)];
-      p.x = cave.x;
-      p.z = cave.z;
-    } else {
-      p.x = (Math.random() - 0.5) * 8;
-      p.z = 18 + (Math.random() - 0.5) * 4;
-    }
-    p.y = 0;
-
+    p.role = "searcher";
+    p.name = (options?.name as string) || "Searcher";
+    p.connected = true;
     this.state.players.set(client.sessionId, p);
     this.filmFlags.set(client.sessionId, { recording: false, inView: false });
-    console.log(`${client.sessionId} joined as ${p.role} (${this.clients.length}/${this.maxClients}).`);
+    if (this.state.hostId === "") this.state.hostId = client.sessionId;
+    console.log(`${client.sessionId} joined the lobby (${this.clients.length}/${this.maxClients}).`);
   }
 
-  onLeave(client: Client) {
+  async onLeave(client: Client, consented?: boolean) {
     const sid = client.sessionId;
+    const p = this.state.players.get(sid);
+
+    // Mid-match disconnects get a grace period to reconnect (unless they left on purpose).
+    if (p && !consented && this.state.matchPhase === "playing") {
+      p.connected = false;
+      try {
+        await this.allowReconnection(client, 20);
+        p.connected = true; // same sessionId resumes; sid-keyed timers stay valid
+        return;
+      } catch {
+        // fell through the grace window — remove them below
+      }
+    }
+    this.removePlayer(sid);
+  }
+
+  /** Drop a player and all their per-session state; reassign the host if they were it. */
+  private removePlayer(sid: string) {
     this.state.players.delete(sid);
     this.filmFlags.delete(sid);
     this.lastTrack.delete(sid);
@@ -194,12 +228,58 @@ export class ForestRoom extends Room<GameState> {
     this.grabbedBy.delete(sid);
     // If a leaving Bigfoot was dragging hunters, free them (they stay incapacitated in place).
     for (const [hsid, bsid] of this.grabbedBy) if (bsid === sid) this.grabbedBy.delete(hsid);
+    // Hand the host role to any remaining player.
+    if (this.state.hostId === sid) {
+      const next = this.state.players.keys().next();
+      this.state.hostId = next.done ? "" : next.value;
+    }
+  }
+
+  /** Place a player at their role's start point. */
+  private spawnPlayer(p: Player) {
+    if (p.role === "bigfoot") {
+      const cave = CAVES[Math.floor(Math.random() * CAVES.length)];
+      const dl = Math.hypot(cave.x, cave.z) || 1;
+      // 8 m toward map centre — outside the boulder horseshoe (boulders extend ~3–4 m).
+      p.x = cave.x - (cave.x / dl) * 8;
+      p.z = cave.z - (cave.z / dl) * 8;
+    } else {
+      p.x = (Math.random() - 0.5) * 8;
+      p.z = 18 + (Math.random() - 0.5) * 4;
+    }
+    p.y = 0;
+    p.status = "active";
+    p.slowed = false;
+    p.filming = false;
+    p.filmProgress = 0;
+  }
+
+  /** Clear the night clock, footage, clues, pings, and all status timers for a fresh match. */
+  private resetMatchState() {
+    this.state.winner = "";
+    this.state.nightNumber = 1;
+    this.state.timeOfDay = 0;
+    this.state.phase = "dusk";
+    this.state.videosCaptured = 0;
+    this.elapsed = 0;
+    this.nightElapsed = 0;
+    this.state.clues.clear();
+    this.state.pings.clear();
+    this.clueAge.clear();
+    this.lastTrack.clear();
+    this.pingAge.clear();
+    this.pingOwner.clear();
+    this.roarReadyAt.clear();
+    this.frozenUntil.clear();
+    this.incapUntil.clear();
+    this.slowUntil.clear();
+    this.grabbedBy.clear();
   }
 
   // ---------------------------------------------------------------------------
 
   private update(dtMs: number) {
-    if (this.state.winner) return;
+    if (this.state.matchPhase !== "playing") return; // no clock in lobby/results
     const dt = dtMs / 1000;
     this.elapsed += dt;
     this.nightElapsed += dt;
@@ -279,6 +359,7 @@ export class ForestRoom extends Room<GameState> {
     } else if (nightsComplete) {
       this.state.winner = "bigfoot"; // survived all the nights without being filmed enough
     }
+    if (this.state.winner) this.state.matchPhase = "results"; // freezes the clock; host can rematch
   }
 
   // --- Clues -----------------------------------------------------------------

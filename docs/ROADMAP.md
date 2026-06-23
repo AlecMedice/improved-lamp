@@ -22,26 +22,27 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 
 ---
 
-## Phase 1 — Feel & environment 🟡
-- 🟡 Tune movement (accel, friction, head‑bob, footsteps)
+## Phase 1 — Feel & environment ✅
+- ✅ Tune movement: head‑bob (walk/sprint), footsteps, crouch (`Ctrl`‑hold: lower eye height + slower, stealthier steps)
 - ✅ Collision (terrain height sampling + tree trunk colliders)
-- 🟡 Jump / vault, stamina + sprint *(stamina + sprint done; jump/vault pending)*
+- ✅ Jump (`Space`, gravity + ballistic feetY, networked) + auto‑step/vault over small rises + stamina + sprint
 - ✅ Day‑night cycle driving sky/fog/ambient over the match (`timeOfDay`)
-- 🟡 Landmarks: base camp (campfire + **RV**) ✅ and **cave entrances** ✅; creek/trailhead pending
-- ⬜ Audio bed (wind, creek, footsteps, flashlight click)
+- ✅ Landmarks: base camp (campfire + **RV**), **cave entrances**, **creek**, **trailhead sign**, **lookout tower**, **lake**, **fallen logs** (asymmetric: slow hunters, not Bigfoot), bushes + shore rocks, terrain vertex coloring
+- ✅ Audio bed: wind (gusting brown‑noise loop), creek (proximity‑driven), footsteps, Bigfoot footsteps (hunters hear within range), flashlight click
 
-**Goal:** the forest *feels* like a place you don't want to be alone in.
+**Goal:** the forest *feels* like a place you don't want to be alone in. **← done.**
 
 ---
 
-## Phase 2 — Multiplayer solidified ⬜
-- 🟡 Authoritative room state; movement validation/clamps
-- ⬜ Client‑side interpolation + basic reconciliation
-- ⬜ Lobby → match → results room lifecycle
-- ⬜ Role assignment (volunteer/random Bigfoot)
-- ⬜ Disconnect/reconnect handling, host migration N/A (server‑owned)
+## Phase 2 — Multiplayer solidified 🟡
+- 🟡 Authoritative room state; movement validation/clamps *(client‑sent + server‑clamped; full authority deferred)*
+- 🟡 Client‑side interpolation + basic reconciliation *(remotes interpolate; reconciliation pending)*
+- ✅ **Lobby → match → results room lifecycle** (`matchPhase` lobby/playing/results; clock only runs in‑match)
+- ✅ **Role assignment** — host presses Start; server picks **one random Bigfoot** (solo player roams as searcher)
+- ✅ **Disconnect/reconnect handling** — 20s reconnection grace (`allowReconnection`), `connected` flag, host reassignment; host migration N/A (server‑owned)
+- ✅ Host **rematch** (results → Return to lobby) + preserved offline‑solo entry path
 
-**Goal:** 6 players reliably share one forest with smooth movement.
+**Goal:** 6 players reliably share one forest with smooth movement. *(Lifecycle + reconnection done; server‑authoritative movement is the remaining piece.)*
 
 ---
 

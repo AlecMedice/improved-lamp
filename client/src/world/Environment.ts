@@ -5,6 +5,12 @@ import { WORLD, DUSK, CAVES } from "../config";
 import { mulberry32, makeValueNoise } from "../util/rng";
 
 type Collider = { x: number; z: number; r: number };
+type FallenLog = {
+  cx: number; cz: number; // centre
+  ax: number; az: number; // unit axis along the trunk (world XZ)
+  halfLen: number;        // half-length of the trunk
+  r: number;             // trunk radius
+};
 
 /** A keyframe in the dusk -> night -> dawn cycle. */
 type SkyStop = {
@@ -39,6 +45,10 @@ export class Environment {
   readonly colliders: Collider[] = [];
 
   private noise = makeValueNoise(WORLD.seed);
+  private creekPoints: THREE.Vector3[] = []; // sampled centre-line, for proximity audio
+  private fallenLogs: FallenLog[] = [];
+  // Lake: an ellipse SW of camp, fed visually by the creek.
+  private readonly lake = { x: -120, z: -110, rx: 60, rz: 45 };
   private campfire?: THREE.PointLight;
   private skyMat!: THREE.ShaderMaterial;
   private hemi!: THREE.HemisphereLight;
@@ -54,6 +64,13 @@ export class Environment {
     this.buildBaseCamp();
     this.buildRV(9, -4, -0.5);
     this.buildCaves();
+    this.buildCreek();
+    this.buildTrailhead();
+    this.buildLookoutTower(220, -230);
+    this.buildLake();
+    this.buildFallenTrees();
+    this.buildBushes();
+    this.buildRocks();
   }
 
   /** Terrain height at world (x,z). Players/props sample this to sit on the ground. */
@@ -110,6 +127,48 @@ export class Environment {
       if (ddx * ddx + ddz * ddz < t.r * t.r) return true;
     }
     return false;
+  }
+
+  /** Horizontal distance from (x,z) to the nearest point on the creek centre-line. */
+  distanceToCreek(x: number, z: number): number {
+    let best = Infinity;
+    for (const p of this.creekPoints) {
+      const dx = p.x - x;
+      const dz = p.z - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < best) best = d2;
+    }
+    return Math.sqrt(best);
+  }
+
+  /**
+   * Capsule overlap against all fallen logs, 0 = clear, 1 = fully inside.
+   * Used to apply the hunter slow-down penalty (Bigfoot ignores logs).
+   */
+  logOverlap(x: number, z: number, playerRadius: number): number {
+    let best = 0;
+    for (const log of this.fallenLogs) {
+      const dx = x - log.cx;
+      const dz = z - log.cz;
+      const t = Math.max(-log.halfLen, Math.min(log.halfLen, dx * log.ax + dz * log.az));
+      const nx = log.cx + t * log.ax;
+      const nz = log.cz + t * log.az;
+      const dist = Math.hypot(x - nx, z - nz);
+      const threshold = log.r + playerRadius;
+      if (dist < threshold) best = Math.max(best, 1 - dist / threshold);
+    }
+    return best;
+  }
+
+  /**
+   * How deep into the lake the point is, 0 = outside, 1 = dead centre.
+   * Used to scale the wading speed penalty.
+   */
+  lakeDepth(x: number, z: number): number {
+    const nx = (x - this.lake.x) / this.lake.rx;
+    const nz = (z - this.lake.z) / this.lake.rz;
+    const d2 = nx * nx + nz * nz;
+    return d2 < 1 ? Math.max(0, 1 - Math.sqrt(d2)) : 0;
   }
 
   /** Drive the sky/fog/lights from match time (0 = dusk .. 1 = dawn). */
@@ -170,11 +229,47 @@ export class Environment {
     const geo = new THREE.PlaneGeometry(WORLD.size, WORLD.size, WORLD.segments, WORLD.segments);
     geo.rotateX(-Math.PI / 2);
     const pos = geo.attributes.position as THREE.BufferAttribute;
+    const colorArr: number[] = [];
+
     for (let i = 0; i < pos.count; i++) {
-      pos.setY(i, this.getHeight(pos.getX(i), pos.getZ(i)));
+      const x = pos.getX(i);
+      const z = pos.getZ(i);
+      const h = this.getHeight(x, z);
+      pos.setY(i, h);
+
+      // Base colour from height: damp low ground → forest floor → rocky ridgeline.
+      let r: number, g: number, b: number;
+      if (h < 0.8) {
+        r = 0.19; g = 0.26; b = 0.14; // low/wet
+      } else if (h < 5) {
+        r = 0.22; g = 0.33; b = 0.17; // mid forest floor
+      } else if (h < 9) {
+        r = 0.26; g = 0.36; b = 0.20; // upper slope
+      } else {
+        r = 0.32; g = 0.38; b = 0.24; // rocky ridge
+      }
+
+      // Camp clearing → brighter grass.
+      const d = Math.sqrt(x * x + z * z);
+      const clearK = 1 - THREE.MathUtils.smoothstep(d, 0, WORLD.baseCampRadius + 10);
+      r = THREE.MathUtils.lerp(r, 0.38, clearK * 0.55);
+      g = THREE.MathUtils.lerp(g, 0.52, clearK * 0.55);
+      b = THREE.MathUtils.lerp(b, 0.22, clearK * 0.55);
+
+      // Lake shore → grey-blue mud.
+      const ldx = (x - this.lake.x) / (this.lake.rx * 1.25);
+      const ldz = (z - this.lake.z) / (this.lake.rz * 1.25);
+      const lakeK = Math.max(0, 1 - Math.sqrt(ldx * ldx + ldz * ldz));
+      r = THREE.MathUtils.lerp(r, 0.17, lakeK * 0.7);
+      g = THREE.MathUtils.lerp(g, 0.23, lakeK * 0.7);
+      b = THREE.MathUtils.lerp(b, 0.30, lakeK * 0.7);
+
+      colorArr.push(r, g, b);
     }
-    geo.computeVertexNormals(); // smooth normals => rounded, not blocky
-    const mat = new THREE.MeshStandardMaterial({ color: DUSK.ground, roughness: 1, metalness: 0 });
+
+    geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(colorArr), 3));
+    geo.computeVertexNormals();
+    const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
     this.scene.add(new THREE.Mesh(geo, mat));
   }
 
@@ -302,7 +397,6 @@ export class Environment {
   /** Rocky cave entrances — Bigfoot's lairs and the nodes of its fast-travel network. */
   private buildCaves() {
     const rock = new THREE.MeshStandardMaterial({ color: 0x6a6a73, roughness: 1 });
-    const mouthMat = new THREE.MeshStandardMaterial({ color: 0x07080b, roughness: 1 });
 
     const boulder = (bx: number, by: number, bz: number, r: number, sy: number) => {
       const m = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 1), rock);
@@ -322,14 +416,11 @@ export class Environment {
 
       const g = new THREE.Group();
       // Horseshoe of boulders with the opening facing the map centre.
-      g.add(boulder(cave.x - dx * 3, y, cave.z - dz * 3, 3.4, 1.1));
-      g.add(boulder(cave.x + px * 3.4, y, cave.z + pz * 3.4, 2.7, 1.2));
-      g.add(boulder(cave.x - px * 3.4, y, cave.z - pz * 3.4, 2.7, 1.2));
+      g.add(boulder(cave.x - dx * 3, y, cave.z - dz * 3, 2.0, 1.1));
+      g.add(boulder(cave.x + px * 3.0, y, cave.z + pz * 3.0, 1.7, 1.2));
+      g.add(boulder(cave.x - px * 3.0, y, cave.z - pz * 3.0, 1.7, 1.2));
 
-      const mouth = new THREE.Mesh(new THREE.SphereGeometry(2.2, 16, 12), mouthMat);
-      mouth.scale.set(1.1, 1.4, 1.1);
-      mouth.position.set(cave.x - dx * 0.5, y + 1.5, cave.z - dz * 0.5);
-      g.add(mouth);
+      // No explicit mouth sphere — the boulder horseshoe + interior glow is enough.
 
       const glow = new THREE.PointLight(0x4a6ab0, 4, 12, 2); // faint depth inside the dark
       glow.position.set(cave.x - dx * 1.5, y + 1.4, cave.z - dz * 1.5);
@@ -337,10 +428,394 @@ export class Environment {
       this.scene.add(g);
 
       // Side + back colliders; the mouth (toward centre) stays walkable.
-      this.colliders.push({ x: cave.x - dx * 3, z: cave.z - dz * 3, r: 2.6 });
-      this.colliders.push({ x: cave.x + px * 3.4, z: cave.z + pz * 3.4, r: 2.1 });
-      this.colliders.push({ x: cave.x - px * 3.4, z: cave.z - pz * 3.4, r: 2.1 });
+      this.colliders.push({ x: cave.x - dx * 3, z: cave.z - dz * 3, r: 1.8 });
+      this.colliders.push({ x: cave.x + px * 3.0, z: cave.z + pz * 3.0, r: 1.5 });
+      this.colliders.push({ x: cave.x - px * 3.0, z: cave.z - pz * 3.0, r: 1.5 });
     }
+  }
+
+  /**
+   * Bake a top-down terrain image for the map overlay (call once, reuse forever).
+   * Draws: forest base, camp clearing, lake, creek, fallen logs.
+   * Cave markers and player dots are drawn live on top by MapView.
+   */
+  generateMapCanvas(S: number, half: number): HTMLCanvasElement {
+    const canvas = document.createElement("canvas");
+    canvas.width = S;
+    canvas.height = S;
+    const ctx = canvas.getContext("2d")!;
+    const w2c = (wx: number, wz: number) => ({
+      x: ((wx + half) / (half * 2)) * S,
+      y: ((wz + half) / (half * 2)) * S,
+    });
+    const sc = S / (half * 2); // world units → pixels
+
+    // Base: dark forest floor
+    ctx.fillStyle = "#243020";
+    ctx.fillRect(0, 0, S, S);
+
+    // Camp clearing — soft lighter grass disc
+    const camp = w2c(0, 0);
+    const campR = WORLD.baseCampRadius * sc;
+    const campGrad = ctx.createRadialGradient(camp.x, camp.y, 0, camp.x, camp.y, campR * 2.4);
+    campGrad.addColorStop(0, "rgba(70,100,48,0.95)");
+    campGrad.addColorStop(1, "rgba(70,100,48,0)");
+    ctx.fillStyle = campGrad;
+    ctx.beginPath();
+    ctx.arc(camp.x, camp.y, campR * 2.4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Lake — blue ellipse
+    const lk = w2c(this.lake.x, this.lake.z);
+    const lrx = this.lake.rx * sc;
+    const lrz = this.lake.rz * sc;
+    ctx.save();
+    ctx.translate(lk.x, lk.y);
+    ctx.scale(lrx, lrz);
+    ctx.beginPath();
+    ctx.arc(0, 0, 1, 0, Math.PI * 2);
+    ctx.fillStyle = "#2a5a7a";
+    ctx.fill();
+    ctx.restore();
+
+    // Creek — thin blue-grey polyline
+    if (this.creekPoints.length > 0) {
+      ctx.beginPath();
+      this.creekPoints.forEach((p, i) => {
+        const cp = w2c(p.x, p.z);
+        if (i === 0) ctx.moveTo(cp.x, cp.y);
+        else ctx.lineTo(cp.x, cp.y);
+      });
+      ctx.strokeStyle = "#4a8a9a";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+
+    // Fallen logs — short dark-brown segments
+    ctx.strokeStyle = "#6a4a2c";
+    ctx.lineWidth = 2;
+    for (const log of this.fallenLogs) {
+      const c = w2c(log.cx, log.cz);
+      const hw = log.halfLen * sc;
+      ctx.beginPath();
+      ctx.moveTo(c.x - log.ax * hw, c.y - log.az * hw);
+      ctx.lineTo(c.x + log.ax * hw, c.y + log.az * hw);
+      ctx.stroke();
+    }
+
+    return canvas;
+  }
+
+  /**
+   * Winding stream that runs SW→NE, passing south of the camp.
+   * Built as a ribbon along a CatmullRom spline, each vertex dropped onto the terrain.
+   */
+  private buildCreek() {
+    const waypoints = [
+      new THREE.Vector3(-380, 0, -200),
+      new THREE.Vector3(-220, 0, -140),
+      new THREE.Vector3(-80, 0, -55),
+      new THREE.Vector3(60, 0, -35),
+      new THREE.Vector3(180, 0, 40),
+      new THREE.Vector3(320, 0, 20),
+      new THREE.Vector3(390, 0, -80),
+    ];
+    // +0.10 keeps the ribbon above the terrain mesh so it's always visible.
+    waypoints.forEach((p) => { p.y = this.getHeight(p.x, p.z) + 0.10; });
+
+    const curve = new THREE.CatmullRomCurve3(waypoints);
+    const N = 140;
+    const halfW = 4.0;
+    const positions: number[] = [];
+    const normals: number[] = [];
+    const indices: number[] = [];
+
+    for (let i = 0; i <= N; i++) {
+      const t = i / N;
+      const pos = curve.getPoint(t);
+      this.creekPoints.push(pos.clone()); // centre-line sample for proximity audio
+      const tan = curve.getTangent(t);
+      // Perpendicular in the XZ plane — keeps the ribbon flat on the ground.
+      const right = new THREE.Vector3(tan.z, 0, -tan.x).normalize();
+
+      for (const side of [-1, 1]) {
+        const v = pos.clone().addScaledVector(right, side * halfW);
+        v.y = this.getHeight(v.x, v.z) + 0.10;
+        positions.push(v.x, v.y, v.z);
+        normals.push(0, 1, 0);
+      }
+      if (i < N) {
+        const base = i * 2;
+        indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
+      }
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(positions), 3));
+    geo.setAttribute("normal", new THREE.BufferAttribute(new Float32Array(normals), 3));
+    geo.setIndex(indices);
+
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x1a7aaa,
+      emissive: 0x0a4a7a,
+      emissiveIntensity: 0.9,
+      roughness: 0.0,
+      metalness: 0.7,
+    });
+    this.scene.add(new THREE.Mesh(geo, mat));
+  }
+
+  /** Simple wooden sign post at the south edge of the camp clearing — trailhead marker. */
+  private buildTrailhead() {
+    const x = -2;
+    const z = -(WORLD.baseCampRadius + 5);
+    const y = this.getHeight(x, z);
+    const g = new THREE.Group();
+    const wood = new THREE.MeshStandardMaterial({ color: 0x7a5a3a, roughness: 1 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x4a3020, roughness: 1 });
+
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.14, 3.5, 6), wood);
+    post.position.y = 1.75;
+
+    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.4, 5), dark);
+    bar.rotation.z = Math.PI / 2;
+    bar.position.y = 3.2;
+
+    const plaque = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.72, 0.1), wood);
+    plaque.position.set(0, 3.2, 0.08);
+
+    // Lantern: warm point light so it's a visible beacon at night.
+    const lamp = new THREE.PointLight(0xffa040, 8, 14, 2);
+    lamp.position.set(0, 3.6, 0.3);
+
+    g.add(post, bar, plaque, lamp);
+    g.position.set(x, y, z);
+    g.rotation.y = Math.PI; // faces into the forest
+    this.scene.add(g);
+  }
+
+  /** Tall wooden fire-lookout tower — visible nav landmark in the SE quadrant. */
+  private buildLookoutTower(x: number, z: number) {
+    const y = this.getHeight(x, z);
+    const g = new THREE.Group();
+    const wood = new THREE.MeshStandardMaterial({ color: 0x6a4a2c, roughness: 1 });
+    const plank = new THREE.MeshStandardMaterial({ color: 0x7a5a3a, roughness: 0.9 });
+
+    // Four corner posts (10 m tall).
+    const postGeo = new THREE.CylinderGeometry(0.18, 0.22, 10, 5);
+    for (const [px, pz] of [[-1.8, -1.8], [1.8, -1.8], [-1.8, 1.8], [1.8, 1.8]] as const) {
+      const p = new THREE.Mesh(postGeo, wood);
+      p.position.set(px, 5, pz);
+      g.add(p);
+    }
+
+    // Horizontal braces at 3 m and 7 m.
+    for (const h of [3, 7]) {
+      const hx = new THREE.Mesh(new THREE.BoxGeometry(4.0, 0.14, 0.14), wood);
+      hx.position.set(0, h, -1.8);
+      const hx2 = hx.clone();
+      hx2.position.set(0, h, 1.8);
+      const hz = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 4.0), wood);
+      hz.position.set(-1.8, h, 0);
+      const hz2 = hz.clone();
+      hz2.position.set(1.8, h, 0);
+      g.add(hx, hx2, hz, hz2);
+    }
+
+    // Platform floor.
+    const floor = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.22, 4.2), plank);
+    floor.position.y = 10.1;
+    g.add(floor);
+
+    // Railings along all four sides.
+    const railMat = wood;
+    for (const [rx, rz, rw, rd] of [
+      [0, -2.0, 4.2, 0.14],
+      [0, 2.0, 4.2, 0.14],
+      [-2.0, 0, 0.14, 4.2],
+      [2.0, 0, 0.14, 4.2],
+    ] as const) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(rw, 0.8, rd), railMat);
+      rail.position.set(rx, 10.6, rz);
+      g.add(rail);
+    }
+
+    // Lantern at the top for night visibility.
+    const lamp = new THREE.PointLight(0xffb060, 10, 30, 2);
+    lamp.position.set(0, 11.2, 0);
+    g.add(lamp);
+
+    g.position.set(x, y, z);
+    this.scene.add(g);
+    this.colliders.push({ x, z, r: 2.4 });
+  }
+
+  /** Still lake fed by the creek — ellipse water plane with a faint blue-green glow. */
+  private buildLake() {
+    const { x, z, rx, rz } = this.lake;
+    const y = this.getHeight(x, z) - 0.25; // sit slightly below surrounding terrain
+
+    // Ellipse: start with a circle, scale X and Z to get the ellipse shape.
+    const geo = new THREE.CircleGeometry(1, 40);
+    geo.rotateX(-Math.PI / 2);
+    const pos = geo.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      pos.setX(i, pos.getX(i) * rx);
+      pos.setZ(i, pos.getZ(i) * rz);
+    }
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x2a5a6a,
+      emissive: 0x0a2a3a,
+      emissiveIntensity: 0.5,
+      roughness: 0.05,
+      metalness: 0.6,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, y, z);
+    this.scene.add(mesh);
+
+    // Subtle ambient light over the surface — visible reflection at night.
+    const glow = new THREE.PointLight(0x2a6a8a, 6, 70, 2);
+    glow.position.set(x, y + 2, z);
+    this.scene.add(glow);
+  }
+
+  /** Scatter fallen logs as asymmetric obstacles across the map. */
+  private buildFallenTrees() {
+    // [cx, cz, angle(rad), length(m)] — curated for interesting choke points.
+    const logs: [number, number, number, number][] = [
+      [120, -160, 0.3, 11],   // south, path toward cave 3
+      [60, -90, 1.8, 9],      // near creek crossing
+      [-60, -70, 0.7, 10],    // creek area SW of camp
+      [-170, -80, -0.4, 12],  // lake shore approach
+      [-200, 30, 1.1, 10],    // NW of camp
+      [160, 80, -0.8, 9],     // NE, path toward cave 1
+      [240, -160, 0.5, 13],   // SE near lookout tower
+      [-100, 200, 1.4, 10],   // northern forest
+      [50, 260, -0.6, 11],    // north toward cave 5
+      [-280, 120, 0.9, 9],    // far NW toward cave 2
+    ];
+    for (const [cx, cz, angle, len] of logs) this.buildFallenTree(cx, cz, angle, len);
+  }
+
+  private buildFallenTree(cx: number, cz: number, angle: number, len: number) {
+    const y = this.getHeight(cx, cz);
+    const trunkR = 0.38;
+
+    // CylinderGeometry stands upright along Y; rotateZ(PI/2) lays it along X;
+    // mesh.rotation.y = angle then points it in the desired direction.
+    const geo = new THREE.CylinderGeometry(trunkR * 0.85, trunkR, len, 7);
+    geo.rotateZ(Math.PI / 2);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x5a4030, roughness: 1 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(cx, y + trunkR * 0.7, cz);
+    mesh.rotation.y = angle;
+    this.scene.add(mesh);
+
+    // After rotateZ then rotation.y = angle, the trunk's long axis in world XZ is:
+    // localX (1,0,0) → (cos(angle), 0, -sin(angle)).
+    this.fallenLogs.push({ cx, cz, ax: Math.cos(angle), az: -Math.sin(angle), halfLen: len / 2, r: trunkR });
+  }
+
+  /**
+   * Scatter low-poly bush clusters across the map (two green variants, InstancedMesh).
+   * Avoided near camp, caves, and the lake.
+   */
+  private buildBushes() {
+    const rand = mulberry32(WORLD.seed ^ 0xf1e2d3c4);
+    const N = 300;
+    const geo = new THREE.IcosahedronGeometry(1, 0); // faceted — deliberately rough
+    geo.computeVertexNormals();
+    const matDark = new THREE.MeshStandardMaterial({ color: 0x3a6028, roughness: 1 });
+    const matLight = new THREE.MeshStandardMaterial({ color: 0x4a7835, roughness: 1 });
+    const meshDark = new THREE.InstancedMesh(geo, matDark, Math.ceil(N * 0.6));
+    const meshLight = new THREE.InstancedMesh(geo, matLight, Math.floor(N * 0.4));
+
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const up = new THREE.Vector3(0, 1, 0);
+    const half = WORLD.size / 2 - 10;
+    let dIdx = 0;
+    let lIdx = 0;
+
+    for (let attempt = 0; dIdx + lIdx < N && attempt < N * 6; attempt++) {
+      const x = (rand() * 2 - 1) * half;
+      const z = (rand() * 2 - 1) * half;
+      if (Math.sqrt(x * x + z * z) < WORLD.baseCampRadius + 6) continue;
+      if (this.nearCave(x, z, 9)) continue;
+      if (this.lakeDepth(x, z) > 0.08) continue;
+
+      const y = this.getHeight(x, z);
+      const sx = 0.4 + rand() * 0.75;
+      const sy = sx * (0.55 + rand() * 0.5);
+      const sz = 0.4 + rand() * 0.75;
+      q.setFromAxisAngle(up, rand() * Math.PI * 2);
+      m.compose(new THREE.Vector3(x, y + sy * 0.55, z), q, new THREE.Vector3(sx, sy, sz));
+
+      const useDark = rand() < 0.6;
+      if (useDark && dIdx < meshDark.count) {
+        meshDark.setMatrixAt(dIdx++, m);
+      } else if (lIdx < meshLight.count) {
+        meshLight.setMatrixAt(lIdx++, m);
+      } else if (dIdx < meshDark.count) {
+        meshDark.setMatrixAt(dIdx++, m);
+      }
+    }
+
+    meshDark.count = dIdx;
+    meshLight.count = lIdx;
+    meshDark.instanceMatrix.needsUpdate = true;
+    meshLight.instanceMatrix.needsUpdate = true;
+    this.scene.add(meshDark, meshLight);
+  }
+
+  /** Scatter stones along the lake shore and creek crossing points. */
+  private buildRocks() {
+    const rand = mulberry32(WORLD.seed ^ 0xa2b3c4d5);
+    const N = 90;
+    const geo = new THREE.IcosahedronGeometry(1, 0);
+    geo.computeVertexNormals();
+    const mat = new THREE.MeshStandardMaterial({ color: 0x585860, roughness: 1 });
+    const mesh = new THREE.InstancedMesh(geo, mat, N);
+
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const up = new THREE.Vector3(0, 1, 0);
+    let placed = 0;
+
+    // Lake shore — ring of stones just outside the water ellipse.
+    for (let attempt = 0; placed < Math.floor(N * 0.55) && attempt < 200; attempt++) {
+      const angle = rand() * Math.PI * 2;
+      const rr = 0.88 + rand() * 0.22;
+      const sx = this.lake.x + Math.cos(angle) * this.lake.rx * rr;
+      const sz = this.lake.z + Math.sin(angle) * this.lake.rz * rr;
+      if (this.lakeDepth(sx, sz) > 0.15) continue;
+      const y = this.getHeight(sx, sz);
+      const s = 0.25 + rand() * 0.75;
+      q.setFromAxisAngle(up, rand() * Math.PI * 2);
+      m.compose(new THREE.Vector3(sx, y + s * 0.25, sz), q, new THREE.Vector3(s, s * 0.55, s));
+      mesh.setMatrixAt(placed++, m);
+    }
+
+    // Creek crossings — clusters of small stones near the water.
+    for (const [cx, cz] of [[-80, -55], [60, -35], [180, 40]] as const) {
+      for (let i = 0; i < 8 && placed < N; i++) {
+        const rx = cx + (rand() - 0.5) * 14;
+        const rz = cz + (rand() - 0.5) * 10;
+        const y = this.getHeight(rx, rz);
+        const s = 0.15 + rand() * 0.55;
+        q.setFromAxisAngle(up, rand() * Math.PI * 2);
+        m.compose(new THREE.Vector3(rx, y + s * 0.2, rz), q, new THREE.Vector3(s, s * 0.6, s));
+        mesh.setMatrixAt(placed++, m);
+      }
+    }
+
+    mesh.count = placed;
+    mesh.instanceMatrix.needsUpdate = true;
+    this.scene.add(mesh);
   }
 
   /** Per-frame ambience (campfire flicker). */

@@ -1,7 +1,7 @@
 import { CAVES } from "../config";
 
 const S = 600; // internal canvas resolution (px); CSS scales it to fit
-const HALF = 200; // world half-extent (world spans -HALF..HALF on x/z)
+const HALF = 400; // world half-extent (world spans -HALF..HALF on x/z)
 
 type Dot = { x: number; z: number };
 
@@ -31,6 +31,7 @@ export class MapView {
   private hint: HTMLElement;
   private caveButtons: HTMLButtonElement[] = [];
   private open_ = false;
+  private bgCanvas?: HTMLCanvasElement;
 
   constructor() {
     this.overlay = byId("map-overlay");
@@ -65,6 +66,11 @@ export class MapView {
     });
   }
 
+  /** Provide the pre-baked terrain image from Environment — drawn as the map background. */
+  setBakedMap(canvas: HTMLCanvasElement): void {
+    this.bgCanvas = canvas;
+  }
+
   get isOpen() {
     return this.open_;
   }
@@ -93,8 +99,15 @@ export class MapView {
 
     const ctx = this.ctx;
     ctx.clearRect(0, 0, S, S);
-    ctx.fillStyle = "rgba(18,22,18,0.7)";
-    ctx.fillRect(0, 0, S, S);
+    if (this.bgCanvas) {
+      ctx.drawImage(this.bgCanvas, 0, 0);
+      // Slight dark veil so dynamic markers stay readable over the terrain colours.
+      ctx.fillStyle = "rgba(0,0,0,0.28)";
+      ctx.fillRect(0, 0, S, S);
+    } else {
+      ctx.fillStyle = "rgba(18,22,18,0.7)";
+      ctx.fillRect(0, 0, S, S);
+    }
     ctx.strokeStyle = "rgba(255,255,255,0.22)";
     ctx.lineWidth = 2;
     ctx.strokeRect(1, 1, S - 2, S - 2);
