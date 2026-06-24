@@ -33,11 +33,13 @@ lobbyBtn.addEventListener("click", async () => {
   const name = nameInput.value.trim() || "Searcher";
   lobbyBtn.disabled = true;
   lobbyBtn.textContent = "Connecting…";
+  overlay.style.display = "none";
   try {
     const handoff = await new Lobby().join(name);
     launch(handoff.role, handoff.name, handoff.room);
   } catch (e) {
     console.warn("Could not reach the lobby — play solo instead.", e);
+    overlay.style.display = "flex";
     lobbyBtn.disabled = false;
     lobbyBtn.textContent = "Multiplayer lobby (server offline)";
   }

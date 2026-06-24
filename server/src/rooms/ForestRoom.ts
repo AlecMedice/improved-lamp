@@ -73,6 +73,7 @@ export class ForestRoom extends Room<GameState> {
   private incapUntil = new Map<string, number>(); // hunter sid -> elapsed when incapacitation ends
   private slowUntil = new Map<string, number>(); // hunter sid -> elapsed when slow ends
   private grabbedBy = new Map<string, string>(); // hunter sid -> bigfoot sid currently dragging
+  private devRoles = new Map<string, string>(); // sid -> "bigfoot"|"searcher" (dev URL param override)
 
   onCreate() {
     this.setState(new GameState());
@@ -164,7 +165,24 @@ export class ForestRoom extends Room<GameState> {
     this.onMessage("startMatch", (client) => {
       if (client.sessionId !== this.state.hostId || this.state.matchPhase !== "lobby") return;
       const sids = [...this.state.players.keys()];
-      const bigfootSid = sids.length >= 2 ? sids[Math.floor(Math.random() * sids.length)] : null;
+      // Start with a random Bigfoot (null = solo, everyone gets searcher).
+      let bigfootSid: string | null = sids.length >= 2 ? sids[Math.floor(Math.random() * sids.length)] : null;
+
+      // Apply ?devRole overrides: first dev-bigfoot request wins; demote the random pick if needed.
+      for (const [sid, dr] of this.devRoles) {
+        if (!this.state.players.has(sid)) continue;
+        if (dr === "bigfoot" && bigfootSid !== sid) {
+          bigfootSid = sid; // force this player to be Bigfoot
+          break;
+        }
+        if (dr === "searcher" && bigfootSid === sid) {
+          // Pick any other player as Bigfoot instead.
+          const other = sids.find((s) => s !== sid);
+          bigfootSid = other ?? null;
+          break;
+        }
+      }
+
       this.state.players.forEach((p, sid) => {
         p.role = sid === bigfootSid ? "bigfoot" : "searcher";
         this.spawnPlayer(p);
@@ -194,6 +212,8 @@ export class ForestRoom extends Room<GameState> {
     this.state.players.set(client.sessionId, p);
     this.filmFlags.set(client.sessionId, { recording: false, inView: false });
     if (this.state.hostId === "") this.state.hostId = client.sessionId;
+    const devRole = options?.devRole;
+    if (devRole === "bigfoot" || devRole === "searcher") this.devRoles.set(client.sessionId, devRole);
     console.log(`${client.sessionId} joined the lobby (${this.clients.length}/${this.maxClients}).`);
   }
 
@@ -226,6 +246,7 @@ export class ForestRoom extends Room<GameState> {
     this.slowUntil.delete(sid);
     this.roarReadyAt.delete(sid);
     this.grabbedBy.delete(sid);
+    this.devRoles.delete(sid);
     // If a leaving Bigfoot was dragging hunters, free them (they stay incapacitated in place).
     for (const [hsid, bsid] of this.grabbedBy) if (bsid === sid) this.grabbedBy.delete(hsid);
     // Hand the host role to any remaining player.

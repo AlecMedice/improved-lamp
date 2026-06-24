@@ -18,7 +18,8 @@ export class Lobby {
 
   /** Join and show the lobby. Resolves when the host starts the match. */
   async join(name: string): Promise<MatchHandoff> {
-    const room = await this.client.joinOrCreate("forest", { name });
+    const devRole = new URLSearchParams(location.search).get("devRole") ?? undefined;
+    const room = await this.client.joinOrCreate("forest", { name, devRole });
     this.overlay.style.display = "flex";
     this.startBtn.onclick = () => room.send("startMatch");
 
@@ -39,14 +40,16 @@ export class Lobby {
 
   private render(s: any, selfId: string) {
     const isHost = s.hostId === selfId;
+    const devRole = new URLSearchParams(location.search).get("devRole");
     this.list.innerHTML = "";
     s.players.forEach((p: any, sid: string) => {
       const li = document.createElement("div");
       li.className = "lobby-player";
       const crown = sid === s.hostId ? " 👑" : "";
       const you = sid === selfId ? " (you)" : "";
+      const dev = sid === selfId && devRole ? ` [dev: ${devRole}]` : "";
       const off = p.connected ? "" : " — reconnecting…";
-      li.textContent = `${p.name}${crown}${you}${off}`;
+      li.textContent = `${p.name}${crown}${you}${dev}${off}`;
       this.list.appendChild(li);
     });
 
