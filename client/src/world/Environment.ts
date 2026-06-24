@@ -2,15 +2,13 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { WORLD, DUSK, CAVES } from "../config";
-import { mulberry32, makeValueNoise } from "../util/rng";
-
-type Collider = { x: number; z: number; r: number };
-type FallenLog = {
-  cx: number; cz: number; // centre
-  ax: number; az: number; // unit axis along the trunk (world XZ)
-  halfLen: number;        // half-length of the trunk
-  r: number;             // trunk radius
-};
+import { mulberry32 } from "../util/rng";
+import {
+  makeTerrain, buildColliders, FALLEN_LOGS, LOG_TABLE, LAKE, RV as RV_CFG,
+  resolveCollision as simResolveCollision, logOverlap as simLogOverlap,
+  lakeDepth as simLakeDepth, lineBlocked as simLineBlocked,
+  type Collider, type FallenLog, type World,
+} from "../../../shared/sim";
 
 /** A keyframe in the dusk -> night -> dawn cycle. */
 type SkyStop = {
@@ -41,14 +39,17 @@ const SKY_STOPS: SkyStop[] = [
  */
 export class Environment {
   readonly scene: THREE.Scene;
-  /** Static circle colliders (trees, the RV, cave boulders) used for movement + line-of-sight. */
-  readonly colliders: Collider[] = [];
+  /**
+   * Static circle colliders (trees, the RV, cave boulders, tower) used for movement + LOS.
+   * Built from the shared sim so the client and the authoritative server share one collider set.
+   */
+  readonly colliders: Collider[] = buildColliders(WORLD.seed, CAVES);
 
-  private noise = makeValueNoise(WORLD.seed);
+  private height = makeTerrain(WORLD.seed); // shared terrain sampler
   private creekPoints: THREE.Vector3[] = []; // sampled centre-line, for proximity audio
-  private fallenLogs: FallenLog[] = [];
-  // Lake: an ellipse SW of camp, fed visually by the creek.
-  private readonly lake = { x: -120, z: -110, rx: 60, rz: 45 };
+  private fallenLogs: FallenLog[] = FALLEN_LOGS; // shared (collision); meshes drawn from LOG_TABLE
+  // Lake: an ellipse SW of camp, fed visually by the creek (shared so the sim agrees).
+  private readonly lake = LAKE;
   private campfire?: THREE.PointLight;
   private skyMat!: THREE.ShaderMaterial;
   private hemi!: THREE.HemisphereLight;
@@ -62,7 +63,7 @@ export class Environment {
     this.buildTerrain();
     this.buildForest();
     this.buildBaseCamp();
-    this.buildRV(9, -4, -0.5);
+    this.buildRV(RV_CFG.x, RV_CFG.z, RV_CFG.ry);
     this.buildCaves();
     this.buildCreek();
     this.buildTrailhead();
@@ -75,58 +76,33 @@ export class Environment {
 
   /** Terrain height at world (x,z). Players/props sample this to sit on the ground. */
   getHeight(x: number, z: number): number {
-    const nx = x * 0.0065;
-    const nz = z * 0.0065;
-    let h = 0;
-    let amp = 1;
-    let freq = 1;
-    let norm = 0;
-    for (let o = 0; o < 4; o++) {
-      h += this.noise(nx * freq, nz * freq) * amp;
-      norm += amp;
-      amp *= 0.5;
-      freq *= 2;
-    }
-    h = (h / norm) * WORLD.hillHeight;
-    const d = Math.sqrt(x * x + z * z);
-    const flat = THREE.MathUtils.smoothstep(d, WORLD.baseCampRadius, WORLD.baseCampRadius + 12);
-    return h * flat;
+    return this.height(x, z);
+  }
+
+  /**
+   * The sim world (terrain + colliders + logs) backing the shared movement step. Reuses
+   * THIS Environment's own collider/log arrays so the local player and the rendered world
+   * share one set. Built lazily and cached.
+   */
+  private _simWorld?: World;
+  get simWorld(): World {
+    return (this._simWorld ??= {
+      seed: WORLD.seed,
+      caves: CAVES,
+      getHeight: this.height,
+      colliders: this.colliders,
+      fallenLogs: this.fallenLogs,
+    });
   }
 
   /** Push an (x,z) point out of any solid collider it overlaps. Returns the resolved point. */
   resolveCollision(x: number, z: number, radius: number): { x: number; z: number } {
-    let nx = x;
-    let nz = z;
-    for (const t of this.colliders) {
-      const min = t.r + radius;
-      const dx = nx - t.x;
-      const dz = nz - t.z;
-      const d2 = dx * dx + dz * dz;
-      if (d2 < min * min && d2 > 1e-6) {
-        const d = Math.sqrt(d2);
-        const push = min - d;
-        nx += (dx / d) * push;
-        nz += (dz / d) * push;
-      }
-    }
-    return { x: nx, z: nz };
+    return simResolveCollision(this.colliders, x, z, radius);
   }
 
   /** True if a solid collider blocks the straight (XZ) line between two points. */
   lineBlocked(a: THREE.Vector3, b: THREE.Vector3): boolean {
-    const dx = b.x - a.x;
-    const dz = b.z - a.z;
-    const len2 = dx * dx + dz * dz || 1e-6;
-    for (const t of this.colliders) {
-      let s = ((t.x - a.x) * dx + (t.z - a.z) * dz) / len2;
-      s = Math.max(0, Math.min(1, s));
-      const cx = a.x + dx * s;
-      const cz = a.z + dz * s;
-      const ddx = t.x - cx;
-      const ddz = t.z - cz;
-      if (ddx * ddx + ddz * ddz < t.r * t.r) return true;
-    }
-    return false;
+    return simLineBlocked(this.colliders, a, b);
   }
 
   /** Horizontal distance from (x,z) to the nearest point on the creek centre-line. */
@@ -146,18 +122,7 @@ export class Environment {
    * Used to apply the hunter slow-down penalty (Bigfoot ignores logs).
    */
   logOverlap(x: number, z: number, playerRadius: number): number {
-    let best = 0;
-    for (const log of this.fallenLogs) {
-      const dx = x - log.cx;
-      const dz = z - log.cz;
-      const t = Math.max(-log.halfLen, Math.min(log.halfLen, dx * log.ax + dz * log.az));
-      const nx = log.cx + t * log.ax;
-      const nz = log.cz + t * log.az;
-      const dist = Math.hypot(x - nx, z - nz);
-      const threshold = log.r + playerRadius;
-      if (dist < threshold) best = Math.max(best, 1 - dist / threshold);
-    }
-    return best;
+    return simLogOverlap(this.fallenLogs, x, z, playerRadius);
   }
 
   /**
@@ -165,10 +130,7 @@ export class Environment {
    * Used to scale the wading speed penalty.
    */
   lakeDepth(x: number, z: number): number {
-    const nx = (x - this.lake.x) / this.lake.rx;
-    const nz = (z - this.lake.z) / this.lake.rz;
-    const d2 = nx * nx + nz * nz;
-    return d2 < 1 ? Math.max(0, 1 - Math.sqrt(d2)) : 0;
+    return simLakeDepth(x, z);
   }
 
   /** Drive the sky/fog/lights from match time (0 = dusk .. 1 = dawn). */
@@ -313,7 +275,7 @@ export class Environment {
       m.compose(new THREE.Vector3(x, this.getHeight(x, z), z), q, new THREE.Vector3(s, s, s));
       trunks.setMatrixAt(placed, m);
       crowns.setMatrixAt(placed, m);
-      this.colliders.push({ x, z, r: 0.45 * s });
+      // Collider for this tree is produced by the shared buildColliders() (same seed/sequence).
       placed++;
     }
     trunks.count = placed;
@@ -385,13 +347,7 @@ export class Environment {
     g.position.set(x, this.getHeight(x, z), z);
     g.rotation.y = ry;
     this.scene.add(g);
-
-    // Collision: a few circles along the body so players can't walk through it.
-    const axis = new THREE.Vector3(0, 1, 0);
-    for (const lx of [-2.2, 0, 2.2]) {
-      const local = new THREE.Vector3(lx, 0, 0).applyAxisAngle(axis, ry);
-      this.colliders.push({ x: x + local.x, z: z + local.z, r: 1.6 });
-    }
+    // RV body colliders are produced by the shared buildColliders().
   }
 
   /** Rocky cave entrances — Bigfoot's lairs and the nodes of its fast-travel network. */
@@ -426,11 +382,7 @@ export class Environment {
       glow.position.set(cave.x - dx * 1.5, y + 1.4, cave.z - dz * 1.5);
       g.add(glow);
       this.scene.add(g);
-
-      // Side + back colliders; the mouth (toward centre) stays walkable.
-      this.colliders.push({ x: cave.x - dx * 3, z: cave.z - dz * 3, r: 1.8 });
-      this.colliders.push({ x: cave.x + px * 3.0, z: cave.z + pz * 3.0, r: 1.5 });
-      this.colliders.push({ x: cave.x - px * 3.0, z: cave.z - pz * 3.0, r: 1.5 });
+      // Side + back colliders (mouth stays walkable) are produced by the shared buildColliders().
     }
   }
 
@@ -647,7 +599,7 @@ export class Environment {
 
     g.position.set(x, y, z);
     this.scene.add(g);
-    this.colliders.push({ x, z, r: 2.4 });
+    // Tower collider is produced by the shared buildColliders().
   }
 
   /** Still lake fed by the creek — ellipse water plane with a faint blue-green glow. */
@@ -683,22 +635,9 @@ export class Environment {
     this.scene.add(glow);
   }
 
-  /** Scatter fallen logs as asymmetric obstacles across the map. */
+  /** Scatter fallen logs as asymmetric obstacles across the map (table shared with the sim). */
   private buildFallenTrees() {
-    // [cx, cz, angle(rad), length(m)] — curated for interesting choke points.
-    const logs: [number, number, number, number][] = [
-      [120, -160, 0.3, 11],   // south, path toward cave 3
-      [60, -90, 1.8, 9],      // near creek crossing
-      [-60, -70, 0.7, 10],    // creek area SW of camp
-      [-170, -80, -0.4, 12],  // lake shore approach
-      [-200, 30, 1.1, 10],    // NW of camp
-      [160, 80, -0.8, 9],     // NE, path toward cave 1
-      [240, -160, 0.5, 13],   // SE near lookout tower
-      [-100, 200, 1.4, 10],   // northern forest
-      [50, 260, -0.6, 11],    // north toward cave 5
-      [-280, 120, 0.9, 9],    // far NW toward cave 2
-    ];
-    for (const [cx, cz, angle, len] of logs) this.buildFallenTree(cx, cz, angle, len);
+    for (const [cx, cz, angle, len] of LOG_TABLE) this.buildFallenTree(cx, cz, angle, len);
   }
 
   private buildFallenTree(cx: number, cz: number, angle: number, len: number) {
@@ -714,10 +653,7 @@ export class Environment {
     mesh.position.set(cx, y + trunkR * 0.7, cz);
     mesh.rotation.y = angle;
     this.scene.add(mesh);
-
-    // After rotateZ then rotation.y = angle, the trunk's long axis in world XZ is:
-    // localX (1,0,0) → (cos(angle), 0, -sin(angle)).
-    this.fallenLogs.push({ cx, cz, ax: Math.cos(angle), az: -Math.sin(angle), halfLen: len / 2, r: trunkR });
+    // Collision data for this log lives in the shared FALLEN_LOGS table.
   }
 
   /**

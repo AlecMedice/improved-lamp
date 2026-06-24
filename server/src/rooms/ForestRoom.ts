@@ -1,5 +1,6 @@
 import { Room, Client } from "@colyseus/core";
 import { GameState, Player, Clue, Ping } from "./schema/GameState";
+import { WORLD, generateCaves } from "../../../shared/sim";
 
 // --- Night / match structure ---
 const NIGHT_SECONDS = 300; // one night runs 8pm -> 8am in this many real seconds
@@ -38,18 +39,12 @@ const PHASES: Array<[number, string]> = [
   [Infinity, "dawn"],
 ];
 
-/** Cave entrances — randomised each server start; Bigfoot spawns at one. */
-const CAVES = (() => {
-  const out: { x: number; z: number }[] = [];
-  for (let attempt = 0; out.length < 5 && attempt < 400; attempt++) {
-    const angle = Math.random() * Math.PI * 2;
-    const r = 150 + Math.random() * 190;
-    const x = Math.round(Math.cos(angle) * r);
-    const z = Math.round(Math.sin(angle) * r);
-    if (out.every((c) => Math.hypot(c.x - x, c.z - z) >= 120)) out.push({ x, z });
-  }
-  return out;
-})();
+/**
+ * Cave entrances — Bigfoot spawns at one. Seed-derived from the shared sim so the server,
+ * every client, and the collision world all agree on the layout (previously each side
+ * rolled its own Math.random() set, so caves silently disagreed everywhere).
+ */
+const CAVES = generateCaves(WORLD.seed);
 
 type FilmFlag = { recording: boolean; inView: boolean };
 

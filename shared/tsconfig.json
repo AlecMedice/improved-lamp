@@ -1,0 +1,13 @@
+{
+  "comment": "Standalone typecheck for the shared sim. Both apps also compile these files transitively via their own imports; this just lets `tsc --noEmit` run over shared on its own.",
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["sim"]
+}
