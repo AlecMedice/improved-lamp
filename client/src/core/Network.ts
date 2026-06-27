@@ -228,6 +228,11 @@ export class Network {
     this.room?.send("move", p);
   }
 
+  /** Bigfoot asks the server to fast-travel to cave `index` (server validates + is authoritative). */
+  sendCaveTravel(index: number) {
+    this.room?.send("caveTravel", { index });
+  }
+
   /** Is this client the host (can return the match to the lobby)? */
   isHost(): boolean {
     const s = this.room?.state as any;

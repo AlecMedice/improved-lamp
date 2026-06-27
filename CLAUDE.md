@@ -37,13 +37,21 @@ Don't commit smoke files or `client/dist/`.
 - **Server is authoritative** for match state: night clock, clues, pings, roar/grab/
   incapacitation, footage tally, win/loss. The simulation runs at 20 Hz in
   `ForestRoom.update()`.
-- **Movement is client‑sent + server‑clamped** (v1). Clients stream `move` ~15 Hz; the
-  server validates and ignores moves from non‑`active` players. Remotes interpolate.
-  (Upgrade path: server‑authoritative movement + reconciliation — see ROADMAP Phase 2.)
-- **Deterministic world.** Terrain + tree placement come from `WORLD.seed` via
-  `client/src/util/rng.ts`, so every client builds the *same* forest. `CAVES` coordinates
-  are **duplicated in `client/src/config.ts` and `server/src/rooms/ForestRoom.ts` — keep
-  them in sync.**
+- **Movement is server‑authoritative** (Phase 2). The client predicts locally (`LocalPlayer`)
+  and streams `move` ~15 Hz; the server **re‑validates** each move against the shared world
+  (`ForestRoom.applyMove`: world‑bounds clamp, max‑speed gate, collision pushout, terrain
+  feet‑clamp) and ignores moves from non‑`active` players. The client **reconciles** by easing
+  toward the server's corrected position (`LocalPlayer.correctTo`); large desyncs snap. Remotes
+  interpolate on a snapshot buffer. Cave fast‑travel is a validated `caveTravel` command.
+  (Resources stay client‑owned; full input‑replay prediction is the deferred Phase 2.3 stretch.)
+- **Deterministic world is shared.** Terrain height, tree/RV/cave/tower colliders, fallen logs,
+  and **seeded `CAVES`** all live in `shared/world/WorldModel.ts` + `shared/world/caves.ts`,
+  imported by both sides via the `@shared/*` alias (tsconfig `paths` + Vite `resolve.alias`).
+  The client's `Environment` is now a renderer that builds meshes from the `WorldModel` and
+  delegates `getHeight`/`resolveCollision`/… to it; the server builds one per room to validate
+  movement. **Keep `shared/` pure** — no Three.js, no DOM, no decorators (the dual `tsc --noEmit`
+  gate catches leaks). (Old gotcha, now fixed: `CAVES` were `Math.random()`‑duplicated and
+  disagreed every run.)
 - **`y` is feet height** in the network/schema (terrain height), so avatars sit on the
   ground for everyone; the local camera adds eye height.
 
@@ -135,6 +143,7 @@ Server (`server/src/`):
 
 ## Not done yet (see ROADMAP)
 Bigfoot charge/leap‑climb + full senses overlay; teammate revives; post‑processing
-(bloom/vignette); server‑authoritative movement; deploy. (Done: audio — procedural + diegetic;
-per‑night escalation; lobby/lifecycle + reconnection.) Lock the vertical slice before piling on
-Phase 5+.
+(bloom/vignette); deploy; full input‑replay movement prediction (Phase 2.3 stretch — server
+authority + correction already shipped). (Done: audio — procedural + diegetic; per‑night
+escalation; lobby/lifecycle + reconnection; **server‑authoritative movement + reconciliation +
+shared deterministic world**.) Lock the vertical slice before piling on Phase 5+.

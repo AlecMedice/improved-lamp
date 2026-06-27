@@ -1,13 +1,21 @@
 import * as THREE from "three";
 import { AudioEngine } from "../core/AudioEngine";
 
+/** A timestamped server snapshot for interpolation. */
+type Snapshot = { t: number; x: number; y: number; z: number; ry: number };
+
+// Render remotes slightly behind the latest snapshot and interpolate between the two that bracket
+// "now − delay". At the server's 20 Hz patch rate this turns chase-the-latest jitter into smooth,
+// constant-velocity motion. A jump larger than SNAP_DIST is a teleport (cave travel) — snap instead.
+const INTERP_DELAY = 0.1; // seconds rendered behind the newest snapshot (~2 patches of slack)
+const SNAP_DIST = 3; // metres; a larger step is a teleport, not movement
+
 /** A networked other player — a smooth low-poly avatar that interpolates toward server state. */
 export class RemotePlayer {
   readonly group = new THREE.Group();
   readonly isBigfoot: boolean;
 
-  private target = new THREE.Vector3();
-  private targetYaw = 0;
+  private buffer: Snapshot[] = []; // recent server snapshots, oldest → newest
   private flashlight: THREE.SpotLight;
   private recLight?: THREE.Mesh; // small red marker shown while this hunter records
   private statusIcon?: THREE.Mesh; // floats above a frozen/incapacitated hunter
@@ -67,10 +75,14 @@ export class RemotePlayer {
     scene.add(this.group);
   }
 
-  /** Server sends feet-height y, so place the group directly there. */
+  /** Server sends feet-height y, so place the group directly there. Buffered for interpolation. */
   setTarget(x: number, y: number, z: number, ry: number, flashlightOn: boolean) {
-    this.target.set(x, y, z);
-    this.targetYaw = ry;
+    const now = performance.now() / 1000;
+    const last = this.buffer[this.buffer.length - 1];
+    // Teleport (cave travel / first packet) → drop history so we snap rather than slide across the map.
+    if (last && Math.hypot(x - last.x, z - last.z) > SNAP_DIST) this.buffer.length = 0;
+    this.buffer.push({ t: now, x, y, z, ry });
+    if (this.buffer.length > 12) this.buffer.shift();
     this.flashlight.intensity = flashlightOn ? 90 : 0;
   }
 
@@ -91,14 +103,43 @@ export class RemotePlayer {
     }
   }
 
-  update(dt: number) {
-    const k = Math.min(1, dt * 10);
-    this.group.position.lerp(this.target, k);
-    let d = this.targetYaw - this.group.rotation.y;
-    d = Math.atan2(Math.sin(d), Math.cos(d)); // shortest arc
-    this.group.rotation.y += d * k;
-
+  update(_dt: number) {
+    this.applyInterpolation();
     this.tickFootsteps();
+  }
+
+  /** Place the avatar at the interpolated position for "now − INTERP_DELAY". */
+  private applyInterpolation() {
+    const buf = this.buffer;
+    if (buf.length === 0) return;
+    if (buf.length === 1) {
+      this.group.position.set(buf[0].x, buf[0].y, buf[0].z);
+      this.group.rotation.y = buf[0].ry;
+      return;
+    }
+    const renderT = performance.now() / 1000 - INTERP_DELAY;
+    const newest = buf[buf.length - 1];
+    let a = buf[0];
+    let b = newest;
+    if (renderT <= buf[0].t) {
+      b = a; // older than anything we have — hold the oldest
+    } else if (renderT >= newest.t) {
+      a = newest; // newer than anything — hold the latest (no extrapolation drift)
+    } else {
+      for (let i = 0; i < buf.length - 1; i++) {
+        if (renderT >= buf[i].t && renderT <= buf[i + 1].t) {
+          a = buf[i];
+          b = buf[i + 1];
+          break;
+        }
+      }
+    }
+    const span = b.t - a.t;
+    const k = span > 1e-4 ? Math.max(0, Math.min(1, (renderT - a.t) / span)) : 0;
+    this.group.position.set(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k, a.z + (b.z - a.z) * k);
+    let d = b.ry - a.ry;
+    d = Math.atan2(Math.sin(d), Math.cos(d)); // shortest arc
+    this.group.rotation.y = a.ry + d * k;
   }
 
   /** Emit a positional footstep each stride of ground covered (cadence scales with speed). */

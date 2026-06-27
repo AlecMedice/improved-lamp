@@ -11,7 +11,9 @@
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "useDefineForClassFields": false,
-    "outDir": "dist"
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": { "@shared/*": ["../shared/*"] }
   },
-  "include": ["src"]
+  "include": ["src", "../shared"]
 }
