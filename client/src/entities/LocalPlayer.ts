@@ -1,8 +1,8 @@
 import * as THREE from "three";
-import { PLAYER, ESCALATION } from "../config";
+import { PLAYER } from "../config";
 import { Input } from "../core/Input";
 import { Environment } from "../world/Environment";
-import { AudioManager } from "../core/Audio";
+import { AudioEngine } from "../core/AudioEngine";
 
 /** First-person controller + flashlight for the player at this keyboard. */
 export class LocalPlayer {
@@ -15,10 +15,14 @@ export class LocalPlayer {
   groundY = 0; // terrain height under the player
   feetY = 0; // actual feet height (above groundY while jumping); this is what we network
   externalSpeedMul = 1; // set by Game (e.g. 0.75 while slowed after incapacitation)
-  night = 1; // current night (set by Game) — drives per-night escalation
+
+  // Per-night escalation (set by Game from server-replicated multipliers; 1 = night-1 baseline).
+  nightSpeedMul = 1; // Bigfoot grows faster on later nights (hunters stay 1)
+  batteryDrainMul = 1; // flashlight drains faster on later nights
+  staminaDrainMul = 1; // sprinting tires you faster on later nights
 
   private env: Environment;
-  private audio?: AudioManager;
+  private audio?: AudioEngine;
   private eyeHeight: number;
   private speedMul: number;
   private yaw = 0;
@@ -32,7 +36,7 @@ export class LocalPlayer {
   private grounded = true;
   private curEye: number; // current (eased) eye height — lerps toward standing/crouched
 
-  constructor(camera: THREE.PerspectiveCamera, env: Environment, role: string, spawn: { x: number; z: number; yaw?: number }, audio?: AudioManager) {
+  constructor(camera: THREE.PerspectiveCamera, env: Environment, role: string, spawn: { x: number; z: number; yaw?: number }, audio?: AudioEngine) {
     this.camera = camera;
     this.env = env;
     this.audio = audio;
@@ -106,8 +110,8 @@ export class LocalPlayer {
     const sprinting = moving && input.isDown("ShiftLeft") && !this.exhausted && !crouching;
     let speed = (sprinting ? PLAYER.sprintSpeed : PLAYER.walkSpeed) * this.speedMul * this.externalSpeedMul;
     if (crouching) speed *= PLAYER.crouchSpeedMul;
-    // Escalation: Bigfoot grows faster each night.
-    if (this.isBigfoot) speed *= 1 + ESCALATION.bigfootSpeedPerNight * (this.night - 1);
+    // Escalation: Bigfoot grows faster each night (server-driven; hunters' mul stays 1).
+    speed *= this.nightSpeedMul;
 
     // Terrain obstacles: fallen logs slow hunters only; lake slows everyone (less so Bigfoot).
     if (!this.isBigfoot) {
@@ -186,7 +190,7 @@ export class LocalPlayer {
       if (moving && this.grounded) {
         this.stepTimer -= dt;
         if (this.stepTimer <= 0) {
-          this.audio.playFootstep(sprinting);
+          this.audio.playFootstep(sprinting, this.isBigfoot);
           this.stepTimer = sprinting
             ? PLAYER.stepIntervalSprint
             : PLAYER.stepIntervalWalk * (crouching ? 1.6 : 1);
@@ -196,18 +200,16 @@ export class LocalPlayer {
       }
     }
 
-    // Escalation: gear drains faster each night (battery + sprint stamina).
-    const drainEsc = 1 + ESCALATION.hunterDrainPerNight * (this.night - 1);
-
+    // Escalation: gear drains faster each night (server-driven multipliers; 1 = baseline).
     // Resources. Hitting 0 stamina exhausts you: no sprinting until it recovers past a threshold.
     this.stamina = sprinting
-      ? Math.max(0, this.stamina - PLAYER.staminaDrainPerSec * drainEsc * dt)
+      ? Math.max(0, this.stamina - PLAYER.staminaDrainPerSec * this.staminaDrainMul * dt)
       : Math.min(100, this.stamina + PLAYER.staminaRegenPerSec * dt);
     if (this.stamina <= 0) this.exhausted = true;
     else if (this.exhausted && this.stamina >= PLAYER.staminaRecover) this.exhausted = false;
 
     if (this.flashlightOn) {
-      this.battery = Math.max(0, this.battery - PLAYER.batteryDrainPerSec * drainEsc * dt);
+      this.battery = Math.max(0, this.battery - PLAYER.batteryDrainPerSec * this.batteryDrainMul * dt);
       if (this.battery <= 0) {
         this.flashlightOn = false;
         this.flashlight.intensity = 0;

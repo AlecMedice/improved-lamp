@@ -3,6 +3,7 @@ import { Client, Room } from "colyseus.js";
 import { SERVER_URL } from "../config";
 import { RemotePlayer } from "../entities/RemotePlayer";
 import { ClueData } from "../world/ClueField";
+import { AudioEngine } from "./AudioEngine";
 
 type MovePayload = {
   x: number; y: number; z: number; ry: number;
@@ -11,6 +12,14 @@ type MovePayload = {
 };
 
 export type SelfInfo = { status: string; filmProgress: number; role: string; slowed: boolean };
+
+/** Per-night escalation multipliers, server-authoritative (see GameState). */
+export type EscalationInfo = {
+  bigfootSpeedMul: number;
+  batteryDrainMul: number;
+  staminaDrainMul: number;
+  roarCooldownSec: number;
+};
 
 /**
  * Thin Colyseus wrapper. Degrades gracefully: if the server is unreachable the
@@ -40,10 +49,12 @@ export class Network {
   onPingAdd: (id: string, x: number, z: number) => void = () => {};
   onPingRemove: (id: string) => void = () => {};
   onReturnToLobby: () => void = () => {}; // host reset the match back to the lobby
+  onRoar: (x: number, z: number) => void = () => {}; // another player's roar, at its world position
+  onEscalation: (e: EscalationInfo) => void = () => {};
 
   private prevMatchPhase = "";
 
-  constructor(private scene: THREE.Scene, private role: string, private name: string, room?: Room) {
+  constructor(private scene: THREE.Scene, private role: string, private name: string, room?: Room, private audio?: AudioEngine) {
     this.client = new Client(SERVER_URL);
     this.adopted = room;
   }
@@ -115,7 +126,7 @@ export class Network {
         player.onChange(applySelf);
         return;
       }
-      const rp = new RemotePlayer(this.scene, player.role);
+      const rp = new RemotePlayer(this.scene, player.role, this.audio);
       this.remotes.set(key, rp);
       if (player.role === "bigfoot") this.bigfoot = rp;
       const apply = () => {
@@ -140,10 +151,22 @@ export class Network {
     state.pings.onAdd((p: any) => this.onPingAdd(p.id, p.x, p.z));
     state.pings.onRemove((p: any) => this.onPingRemove(p.id));
 
+    // Diegetic roar broadcast — fired for everyone; skip our own (we play it locally).
+    room.onMessage("roar", (m: any) => {
+      if (m?.by === room.sessionId) return;
+      this.onRoar(m.x, m.z);
+    });
+
     room.onStateChange((s: any) => {
       this.onPhase(s.phase, s.timeOfDay);
       this.onNight(s.nightNumber, s.totalNights);
       this.onFootage(s.videosCaptured, s.videosRequired);
+      this.onEscalation({
+        bigfootSpeedMul: s.bigfootSpeedMul ?? 1,
+        batteryDrainMul: s.batteryDrainMul ?? 1,
+        staminaDrainMul: s.staminaDrainMul ?? 1,
+        roarCooldownSec: s.roarCooldownSec ?? 25,
+      });
       if (s.winner) this.onEnd(s.winner);
       // Host pressed "Return to lobby" after a result → everyone resets.
       if (this.prevMatchPhase === "results" && s.matchPhase === "lobby") this.onReturnToLobby();

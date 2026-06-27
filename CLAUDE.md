@@ -53,14 +53,24 @@ Client → server (`Network.send*`):
 - `ping` `{x,z}` — hunters only (stakeout marker).
 - `roar` — Bigfoot: AoE freeze.
 - `grab` — Bigfoot: grab nearest frozen hunter / drop the dragged one.
+- `startMatch` / `returnToLobby` — host only (lobby lifecycle).
+
+Server → client (broadcast, not state):
+- `roar` `{x, z, by}` — fired on every roar so all clients can play it as **positional audio**
+  from Bigfoot's real position (carries beyond the freeze radius). Clients skip their own (`by`).
 
 Server state (`GameState`, replicated):
 - `players: Map<sid, Player>` — `{role, name, x,y,z,ry, flashlightOn, battery, stamina,
-  status, slowed, filming, filmProgress}`. `status ∈ "active" | "frozen" | "incapacitated"`.
+  status, slowed, filming, filmProgress, connected}`. `status ∈ "active" | "frozen" | "incapacitated"`.
 - `clues: Clue[]` `{id, ctype("footprint"|"branch"), x, z, ry}` — Bigfoot's trail.
 - `pings: Ping[]` `{id, x, z}` — hunter stakeout markers (1 per hunter).
+- `matchPhase ("lobby"|"playing"|"results"), hostId` — lifecycle; the clock only runs while playing.
 - `phase, timeOfDay (0..1 of the night), nightNumber, totalNights`,
   `videosRequired, videosCaptured (team total), winner ("" | "hunters" | "bigfoot")`.
+- **Per‑night escalation** (server sets each tick from the `ESCALATION` table):
+  `bigfootSpeedMul, batteryDrainMul, staminaDrainMul, roarCooldownSec`. The client applies these
+  (movement/drain are client‑side in v1); freeze duration + clue lifetime are escalated
+  server‑side only. Single source of truth — don't mirror the table on the client.
 
 ## Rules (current)
 - **3 nights**, each 8pm→8am (daylight skipped, fade between nights).
@@ -76,11 +86,18 @@ Server state (`GameState`, replicated):
 
 ## Where things live
 Client (`client/src/`):
-- `core/Game.ts` — main loop; wires input/world/net/HUD; win/end; map/cave/roar/grab.
-- `core/Network.ts` — Colyseus wrapper; `on*` callbacks + `send*` + getters. State typed `any`.
+- `core/Game.ts` — main loop; wires input/world/net/HUD/audio; win/end; map/cave/roar/grab.
+- `core/Network.ts` — Colyseus wrapper; `on*` callbacks (incl. `onRoar`/`onEscalation`) + `send*` + getters. State typed `any`.
+- `core/AudioEngine.ts` — all sound. **Hybrid**: cues are synthesized procedurally (no asset files),
+  but any cue can be overridden by a recording in `client/public/audio/` listed in `audio/manifest.json`.
+  `THREE.AudioListener` rides the camera; `playOnce`/`playAt` (positional) + wind/creek/heartbeat beds.
+  Autoplay‑gated: `resume()` on first gesture (and from `Game.start()`).
+- `core/Lobby.ts` — pre‑match waiting room; hands a joined `Room` to `Game`.
 - `core/Input.ts` — keyboard/mouse, pointer lock; `onPress` (keys), `onMousePress` (buttons).
-- `entities/LocalPlayer.ts` — FP controller, stamina/exhaustion, `externalSpeedMul` (slow), `teleportTo`.
-- `entities/RemotePlayer.ts` — avatars, Bigfoot eye‑shine, rec light, frozen/incap status icon.
+- `entities/LocalPlayer.ts` — FP controller, stamina/exhaustion, jump/crouch, `externalSpeedMul` (slow),
+  per‑night `nightSpeedMul`/`batteryDrainMul`/`staminaDrainMul`, `teleportTo`.
+- `entities/RemotePlayer.ts` — avatars, Bigfoot eye‑shine, rec light, frozen/incap status icon,
+  positional footsteps (from interpolation deltas).
 - `world/Environment.ts` — terrain/forest/sky/lights/RV/caves; `getHeight`, `resolveCollision`,
   `lineBlocked`, `setTimeOfDay` (day‑night lerp), `colliders[]`.
 - `world/ClueField.ts` — footprint/branch meshes; `getRecentDots`, `hasRecentClueWithin`.
@@ -94,11 +111,17 @@ Server (`server/src/`):
 - `index.ts` — Colyseus + Express `/health`.
 
 ## Tuning
-- **Server constants** (top of `ForestRoom.ts`): `NIGHT_SECONDS` (300), `TOTAL_NIGHTS` (3),
+- **Server constants** (top of `ForestRoom.ts`): `NIGHT_SECONDS` (300, overridable via the
+  `NIGHT_SECONDS` env var for quick test matches), `TOTAL_NIGHTS` (3),
   `ROAR_RADIUS/ROAR_COOLDOWN/FREEZE_SECONDS`, `GRAB_RADIUS/INCAP_SECONDS/SLOW_SECONDS`,
-  `FILM_RANGE/FILM_SECONDS`, `CLUE_LIFETIME/STRIDE/BRANCH_CHANCE`, `PING_LIFETIME`, `CAVES`.
-- **Client constants** (`config.ts`): `PLAYER` (speeds, `staminaRecover`, `slowFactor`),
-  `FILM`, `ABILITY.roarCooldown`, `MAP` (clueWindow/hearRange/evidenceSight), `CAVES`, `CAVE`.
+  `FILM_RANGE/FILM_SECONDS`, `CLUE_LIFETIME/STRIDE/BRANCH_CHANCE`, `PING_LIFETIME`, `CAVES`,
+  and the **`ESCALATION`** per‑night table (`speed/battery/stamina/roarCd/freeze/clueLife`
+  multipliers, indexed by `nightNumber-1`).
+- **Client constants** (`config.ts`): `PLAYER` (speeds, drains, jump/crouch, `staminaRecover`,
+  `slowFactor`), `FILM`, `ABILITY.roarCooldown`, `MAP` (clueWindow/hearRange/evidenceSight),
+  `CAVES`, `CAVE`. (Per‑night escalation is server‑owned and replicated — no client table.)
+- **Audio**: cue synthesis + per‑cue volumes in `core/AudioEngine.ts`; trigger volumes/ranges at
+  the call sites in `Game.ts` (and `RemotePlayer.ts` for footsteps).
 
 ## Conventions / gotchas
 - TypeScript strict; small focused modules; match the surrounding comment density + naming.
@@ -111,6 +134,7 @@ Server (`server/src/`):
 - `.gitignore` covers `node_modules/` and `dist/`; lockfiles are committed.
 
 ## Not done yet (see ROADMAP)
-Bigfoot charge/leap‑climb + full senses overlay; teammate revives; audio (roar/footsteps/
-heartbeat); per‑night escalation; post‑processing (bloom/vignette); lobby/ready‑up;
-server‑authoritative movement; deploy. Lock the vertical slice before piling on Phase 5+.
+Bigfoot charge/leap‑climb + full senses overlay; teammate revives; post‑processing
+(bloom/vignette); server‑authoritative movement; deploy. (Done: audio — procedural + diegetic;
+per‑night escalation; lobby/lifecycle + reconnection.) Lock the vertical slice before piling on
+Phase 5+.

@@ -51,13 +51,9 @@ export const ABILITY = {
 };
 
 /**
- * Per-night escalation (client-side; driven by the server's nightNumber).
- * Multiplier for night N is `1 + perNight * (N - 1)`, so night 1 is baseline.
+ * Per-night escalation now lives on the server (the `ESCALATION` table in `ForestRoom.ts`),
+ * which replicates the multipliers to clients — single source of truth. See GameState.
  */
-export const ESCALATION = {
-  bigfootSpeedPerNight: 0.08, // +8% Bigfoot move speed each night after the first
-  hunterDrainPerNight: 0.15, // +15% flashlight battery & sprint stamina drain each night
-};
 
 /** Map readout tuning for the clue trail (the "in-contact" gating). */
 export const MAP = {

@@ -61,5 +61,13 @@ export class GameState extends Schema {
   @type("number") videosRequired = 3;
   @type("number") videosCaptured = 0;
 
+  // Per-night escalation, server-authoritative (set each tick from the ESCALATION table).
+  // The server enforces the rest (freeze, clue lifetime); these are the multipliers the client
+  // computes with (movement/drain are client-side in v1), replicated as the single source of truth.
+  @type("number") bigfootSpeedMul = 1; // Bigfoot moves this much faster on later nights
+  @type("number") batteryDrainMul = 1; // flashlight drains this much faster
+  @type("number") staminaDrainMul = 1; // sprinting drains this much faster
+  @type("number") roarCooldownSec = 25; // effective roar cooldown (for the Bigfoot client's UI gate)
+
   @type("string") winner = ""; // "" | "hunters" | "bigfoot"
 }
