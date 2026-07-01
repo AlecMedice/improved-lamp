@@ -37,14 +37,23 @@ Don't commit smoke files or `client/dist/`.
 - **Server is authoritative** for match state: night clock, clues, pings, roar/grab/
   incapacitation, footage tally, win/loss. The simulation runs at 20 Hz in
   `ForestRoom.update()`.
-- **Movement is client‑sent + server‑clamped** (v1). Clients stream `move` ~15 Hz; the
-  server validates and ignores moves from non‑`active` players. Remotes interpolate.
-  (Upgrade path: server‑authoritative movement + reconciliation — see ROADMAP Phase 2.)
-- **Deterministic world + movement sim live in `shared/sim/`** (dependency-free, no three.js),
-  imported by both the client and the server. Terrain, tree/collider placement, and `CAVES`
-  are all derived from `WORLD.seed` there, so every client and the server agree on the world
-  with no duplicated coordinates. Client movement physics is `stepPlayer()` from the shared
-  sim; `LocalPlayer` only does presentation (camera, bob, audio, flashlight visuals).
+- **Movement is server‑authoritative** (Phase 2). The client predicts locally (shared‑sim
+  `stepPlayer` in `LocalPlayer`) and streams `move` ~15 Hz; the server **re‑validates** each move
+  against the shared world (`ForestRoom.applyMove`: world‑bounds clamp, max‑speed gate, collision
+  pushout, terrain feet‑clamp) and ignores moves from non‑`active` players. The client
+  **reconciles** by easing toward the server's corrected position (`LocalPlayer.correctTo`);
+  large desyncs snap. Remotes interpolate on a snapshot buffer. Cave fast‑travel is a validated
+  `caveTravel` command. (Resources stay client‑owned; full input‑replay prediction is the
+  deferred Phase 2.3 stretch — the pure `stepPlayer` sim is the foundation for it.)
+- **Deterministic world + movement sim live in `shared/sim/`**, imported by both the client and
+  the server (relative imports, no alias). Terrain height, tree/RV/cave/tower colliders, fallen
+  logs, and **seeded `CAVES`** are all derived from `WORLD.seed` there, so every client and the
+  server agree on the world with no duplicated coordinates. The client's `Environment` is a
+  renderer that builds meshes from the shared world and delegates `getHeight`/`resolveCollision`/…
+  to it; `LocalPlayer` only does presentation (camera, bob, audio, flashlight visuals).
+  **Keep `shared/` pure** — no Three.js, no DOM, no decorators (the dual `tsc --noEmit` gate
+  catches leaks). (Old gotcha, now fixed: `CAVES` were `Math.random()`‑duplicated and disagreed
+  every run.)
 - **`y` is feet height** in the network/schema (terrain height), so avatars sit on the
   ground for everyone; the local camera adds eye height.
 
@@ -54,6 +63,7 @@ Client → server (`Network.send*`):
 - `ping` `{x,z}` — hunters only (stakeout marker).
 - `roar` — Bigfoot: AoE freeze.
 - `grab` — Bigfoot: grab nearest frozen hunter / drop the dragged one.
+- `caveTravel` `{index}` — Bigfoot: validated cave fast‑travel (must stand in a mouth; cooldown).
 - `startMatch` / `returnToLobby` — host only (lobby lifecycle).
 
 Server → client (broadcast, not state):
@@ -145,6 +155,7 @@ Shared (`shared/sim/`) — dependency‑free deterministic sim, imported by both
 
 ## Not done yet (see ROADMAP)
 Bigfoot charge/leap‑climb + full senses overlay; teammate revives; post‑processing
-(bloom/vignette); server‑authoritative movement; deploy. (Done: audio — procedural + diegetic;
-per‑night escalation; lobby/lifecycle + reconnection.) Lock the vertical slice before piling on
-Phase 5+.
+(bloom/vignette); deploy; full input‑replay movement prediction (Phase 2.3 stretch — server
+authority + correction already shipped). (Done: audio — procedural + diegetic; per‑night
+escalation; lobby/lifecycle + reconnection; **server‑authoritative movement + reconciliation +
+shared deterministic world**.) Lock the vertical slice before piling on Phase 5+.

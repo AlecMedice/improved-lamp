@@ -11,6 +11,13 @@ import { HUD } from "../ui/HUD";
 import { MapView } from "../ui/MapView";
 import { AudioEngine } from "./AudioEngine";
 
+// Client reconciliation tuning: how the local player eases toward the server's authoritative
+// position. IGNORE absorbs ordinary prediction-vs-latency lag (our prediction is slightly ahead
+// of the server's last-known state); only larger disagreements ease, and a teleport-grade gap snaps.
+const RECONCILE_IGNORE = 1.5; // metres of disagreement tolerated before correcting
+const RECONCILE_SNAP = 8; // metres beyond which we snap instead of easing
+const RECONCILE_EASE = 8; // ease rate (× dt) when blending out a correction
+
 /** Wires renderer + world + player + input + networking into one loop. */
 export class Game {
   private renderer: THREE.WebGLRenderer;
@@ -34,6 +41,7 @@ export class Game {
   private self: SelfInfo = { status: "active", filmProgress: 0, role: "searcher", slowed: false };
   private ended = false;
   private caveCooldown = 0;
+  private traveling = false; // suspends local control + move-sends during a cave hop
   private roarCooldown = 0;
   private roarCooldownSec = ABILITY.roarCooldown; // effective, from server escalation
   private night = 1;
@@ -166,11 +174,13 @@ export class Game {
 
     const incapacitated = this.self.status === "incapacitated";
     const controlsLocked = this.self.status !== "active"; // frozen or incapacitated
-    const locked = this.ended || controlsLocked || this.map.isOpen;
+    const locked = this.ended || controlsLocked || this.map.isOpen || this.traveling;
 
     this.player.externalSpeedMul = this.self.slowed ? PLAYER.slowFactor : 1;
-    if (!locked) this.player.update(dt, this.input);
-    else if (incapacitated) {
+    if (!locked) {
+      this.player.update(dt, this.input);
+      this.reconcile(dt); // ease toward the server's authoritative (validated) position
+    } else if (incapacitated) {
       // Bigfoot is dragging us — follow the server's authoritative position.
       const sp = this.net.getSelfPosition();
       if (sp) this.player.teleportTo(sp.x, sp.z);
@@ -252,6 +262,23 @@ export class Game {
     this.hud.setBattery(this.player.battery);
     this.hud.setStamina(this.player.stamina);
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /**
+   * Reconcile the local player toward the server's authoritative position. The server validates
+   * every move (collision, speed, terrain); when it corrects us we ease the error out, or snap on a
+   * teleport-grade gap. Small deltas are ignored so ordinary lag between our prediction and the
+   * server's slightly-older state doesn't rubber-band normal movement.
+   */
+  private reconcile(dt: number) {
+    const sp = this.net.getSelfPosition();
+    if (!sp) return; // offline/solo, or not yet in state
+    const dx = sp.x - this.player.position.x;
+    const dz = sp.z - this.player.position.z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < RECONCILE_IGNORE * RECONCILE_IGNORE) return; // server agrees closely enough
+    if (d2 > RECONCILE_SNAP * RECONCILE_SNAP) this.player.teleportTo(sp.x, sp.z); // gross desync
+    else this.player.correctTo(sp.x, sp.z, Math.min(1, dt * RECONCILE_EASE));
   }
 
   /** Map only shows the trail when the hunter hears Bigfoot nearby or sees recent evidence. */
@@ -367,12 +394,17 @@ export class Game {
     const dest = CAVES[i];
     const dl = Math.hypot(dest.x, dest.z) || 1;
     this.caveCooldown = CAVE.travelCooldown;
+    this.traveling = true; // suspend local control + move-sends; the server moves us authoritatively
+    this.net.sendCaveTravel(i); // server validates the jump and is authoritative for it
     this.closeMap(); // synchronous (keeps the pointer-lock user gesture)
-    // Fade to black, hop at the darkest point, fade back in at the new cave.
+    // Fade to black, hop at the darkest point (matching the server), fade back in at the new cave.
     // Face away from the destination cave (into the forest) on emergence.
     const exitYaw = Math.atan2(dest.x, dest.z);
     this.audio.playOnce("cave_whoosh", { volume: 0.6 });
-    this.hud.fade(() => this.player.teleportTo(dest.x - (dest.x / dl) * 8, dest.z - (dest.z / dl) * 8, exitYaw));
+    this.hud.fade(() => {
+      this.player.teleportTo(dest.x - (dest.x / dl) * 8, dest.z - (dest.z / dl) * 8, exitYaw);
+      this.traveling = false;
+    });
   }
 
   /** Drop a stakeout ping at (x,z), or at the player's feet if not given. */

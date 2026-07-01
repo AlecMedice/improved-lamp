@@ -34,15 +34,17 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 
 ---
 
-## Phase 2 — Multiplayer solidified 🟡
-- 🟡 Authoritative room state; movement validation/clamps *(client‑sent + server‑clamped; full authority deferred)*
-- 🟡 Client‑side interpolation + basic reconciliation *(remotes interpolate; reconciliation pending)*
+## Phase 2 — Multiplayer solidified 🟢
+- ✅ **Server‑authoritative movement** — the shared deterministic world (`shared/sim/`) gives the server terrain + collision; the `move` handler validates every update (world‑bounds clamp, **max‑speed gate** vs teleport/speedhack, **collision pushout** vs phasing, terrain feet‑clamp). Cave fast‑travel is a validated `caveTravel` command, not a client self‑teleport.
+- ✅ **Client reconciliation** — local player predicts as before, then **eases toward the server's corrected position** (`LocalPlayer.correctTo`); large desyncs snap. *(Resources stay client‑owned; full input‑replay prediction is the deferred Phase 2.3 stretch — see plan.)*
+- ✅ **Client‑side interpolation** — remotes render on a small **snapshot buffer** (interpolate between bracketing snapshots, render ~100 ms behind) for smooth constant‑velocity motion; teleports snap.
+- ✅ **Shared deterministic world + movement sim** — `shared/sim/` (rng, constants, terrain, colliders, **seeded `CAVES`**, and the pure `stepPlayer` movement physics) imported by both client + server; the old `Math.random()` cave duplication is gone (client + server now agree).
 - ✅ **Lobby → match → results room lifecycle** (`matchPhase` lobby/playing/results; clock only runs in‑match)
 - ✅ **Role assignment** — host presses Start; server picks **one random Bigfoot** (solo player roams as searcher)
 - ✅ **Disconnect/reconnect handling** — 20s reconnection grace (`allowReconnection`), `connected` flag, host reassignment; host migration N/A (server‑owned)
 - ✅ Host **rematch** (results → Return to lobby) + preserved offline‑solo entry path
 
-**Goal:** 6 players reliably share one forest with smooth movement. *(Lifecycle + reconnection done; server‑authoritative movement is the remaining piece.)*
+**Goal:** 6 players reliably share one forest with smooth movement. **← done** (server has final say on position; full input‑replay prediction deferred as an optional polish pass).
 
 ---
 

@@ -1,12 +1,12 @@
 import { Room, Client } from "@colyseus/core";
 import { GameState, Player, Clue, Ping } from "./schema/GameState";
-import { WORLD, generateCaves } from "../../../shared/sim";
+import { WORLD, PLAYER, CAVE, generateCaves, makeWorld, resolveCollision } from "../../../shared/sim";
 
 // --- Night / match structure ---
 // One night runs 8pm -> 8am in this many real seconds. Overridable via env for quick test matches.
 const NIGHT_SECONDS = Number(process.env.NIGHT_SECONDS) || 300;
 const TOTAL_NIGHTS = 3; // Bigfoot wins by surviving this many nights
-const WORLD_HALF = 400;
+const WORLD_HALF = WORLD.size / 2; // ±400 on x/z
 
 // --- Clue (hint) framework tuning ---
 const STRIDE = 2.4; // metres Bigfoot travels between dropped footprints
@@ -57,10 +57,21 @@ const PHASES: Array<[number, string]> = [
  */
 const CAVES = generateCaves(WORLD.seed);
 
+// --- Server-authoritative movement validation -------------------------------------------------
+// The client predicts movement locally and streams its result; the server re-validates each move
+// against the shared world and corrects out-of-bounds results (phasing through trees, teleporting).
+const SPEED_GATE_MARGIN = 1.6; // generous headroom over sprint speed (diagonal + downhill + jitter)
+const SPEED_GATE_BASE = 2.0; // metres of always-allowed slack per move (covers bursts / first move)
+const Y_BELOW_TOL = 1.0; // how far below terrain a feet-y may sit (sampling slop) before clamping
+const Y_ABOVE_TOL = 3.0; // how far above terrain a feet-y may sit (jump arc ~0.85 m + headroom)
+
 type FilmFlag = { recording: boolean; inView: boolean };
 
 export class ForestRoom extends Room<GameState> {
   maxClients = 6;
+
+  /** Shared deterministic world — terrain + colliders the server validates movement against. */
+  private world = makeWorld(WORLD.seed);
 
   private elapsed = 0; // global time, for clue/ping/ability aging
   private nightElapsed = 0; // time within the current night
@@ -69,6 +80,8 @@ export class ForestRoom extends Room<GameState> {
   private clueAge = new Map<string, number>(); // clue id -> elapsed when created
   private lastTrack = new Map<string, { x: number; z: number }>(); // bigfoot sid -> last footprint
   private filmFlags = new Map<string, FilmFlag>(); // hunter sid -> live recording flags
+  private lastMoveMs = new Map<string, number>(); // sid -> Date.now() of last accepted move (speed gate)
+  private caveReadyAt = new Map<string, number>(); // bigfoot sid -> elapsed when cave travel is ready
 
   private pingSeq = 0;
   private pingAge = new Map<string, number>(); // ping id -> elapsed when created
@@ -84,16 +97,14 @@ export class ForestRoom extends Room<GameState> {
   onCreate() {
     this.setState(new GameState());
 
-    // Clients stream their transform + intent here. v1: trust + clamp.
+    // Clients predict + stream their transform; the server re-validates and corrects (server-authoritative).
     this.onMessage("move", (client, data: any) => {
       if (this.state.matchPhase !== "playing") return; // ignore stray moves in lobby/results
       const p = this.state.players.get(client.sessionId);
       if (!p || p.status !== "active" || !data) return; // frozen/incapacitated players don't self-move
 
-      p.x = clamp(num(data.x, p.x), -WORLD_HALF, WORLD_HALF);
-      p.y = clamp(num(data.y, p.y), -20, 60);
-      p.z = clamp(num(data.z, p.z), -WORLD_HALF, WORLD_HALF);
-      p.ry = num(data.ry, p.ry);
+      this.applyMove(client.sessionId, p, data); // bounds + speed gate + collision + terrain feet
+      p.ry = num(data.ry, p.ry); // camera aim is trusted (standard for FPS netcode)
       if (typeof data.flashlightOn === "boolean") p.flashlightOn = data.flashlightOn;
       p.battery = clamp(num(data.battery, p.battery), 0, 100);
       p.stamina = clamp(num(data.stamina, p.stamina), 0, 100);
@@ -103,6 +114,25 @@ export class ForestRoom extends Room<GameState> {
       flag.inView = !!data.inView;
       this.filmFlags.set(client.sessionId, flag);
       p.filming = flag.recording && p.role !== "bigfoot";
+    });
+
+    // Bigfoot fast-travels between cave mouths (validated server-side; replaces the old client self-teleport).
+    this.onMessage("caveTravel", (client, data: any) => {
+      if (this.state.matchPhase !== "playing") return;
+      const p = this.state.players.get(client.sessionId);
+      if (!p || p.role !== "bigfoot" || p.status !== "active" || !data) return;
+      const dest = Number(data.index);
+      if (!Number.isInteger(dest) || dest < 0 || dest >= CAVES.length) return;
+      const here = this.nearestCaveIndex(p.x, p.z); // must be standing in *some* mouth
+      if (here < 0 || here === dest) return;
+      if (this.elapsed < (this.caveReadyAt.get(client.sessionId) ?? 0)) return; // cooldown
+      this.caveReadyAt.set(client.sessionId, this.elapsed + CAVE.travelCooldown);
+      const c = CAVES[dest];
+      const dl = Math.hypot(c.x, c.z) || 1;
+      p.x = c.x - (c.x / dl) * 8; // emerge 8 m toward map centre (outside the boulder horseshoe)
+      p.z = c.z - (c.z / dl) * 8;
+      p.y = this.world.getHeight(p.x, p.z);
+      this.lastMoveMs.set(client.sessionId, Date.now()); // reset the speed gate around the jump
     });
 
     // Hunters drop a stakeout ping (from the map or where they stand). One per hunter.
@@ -256,6 +286,8 @@ export class ForestRoom extends Room<GameState> {
     this.slowUntil.delete(sid);
     this.roarReadyAt.delete(sid);
     this.grabbedBy.delete(sid);
+    this.lastMoveMs.delete(sid);
+    this.caveReadyAt.delete(sid);
     this.devRoles.delete(sid);
     // If a leaving Bigfoot was dragging hunters, free them (they stay incapacitated in place).
     for (const [hsid, bsid] of this.grabbedBy) if (bsid === sid) this.grabbedBy.delete(hsid);
@@ -278,11 +310,65 @@ export class ForestRoom extends Room<GameState> {
       p.x = (Math.random() - 0.5) * 8;
       p.z = 18 + (Math.random() - 0.5) * 4;
     }
-    p.y = 0;
+    p.y = this.world.getHeight(p.x, p.z); // feet on the terrain (camp ~0; caves vary)
     p.status = "active";
     p.slowed = false;
     p.filming = false;
     p.filmProgress = 0;
+  }
+
+  // --- Movement validation (server-authoritative) ----------------------------
+
+  /**
+   * Validate + apply a client-sent position. Clamp to world bounds, gate the per-move
+   * displacement against a generous max speed (anti-teleport / speedhack), push out of any
+   * collider the client tried to occupy (anti-phasing), then seat the feet on the terrain.
+   * The corrected result is written to the player; the client reconciles toward it.
+   */
+  private applyMove(sid: string, p: Player, data: any) {
+    let rx = clamp(num(data.x, p.x), -WORLD_HALF, WORLD_HALF);
+    let rz = clamp(num(data.z, p.z), -WORLD_HALF, WORLD_HALF);
+
+    // Max-displacement gate, relative to this player's last accepted position.
+    const now = Date.now();
+    const last = this.lastMoveMs.get(sid) ?? now;
+    const dtSec = Math.min(1, Math.max(0, (now - last) / 1000)); // clamp; a long gap isn't travel budget
+    this.lastMoveMs.set(sid, now);
+    const allowed = this.maxSpeedFor(p) * dtSec + SPEED_GATE_BASE;
+    const dx = rx - p.x;
+    const dz = rz - p.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist > allowed && dist > 1e-6) {
+      const k = allowed / dist; // pull the step back along the requested direction
+      rx = p.x + dx * k;
+      rz = p.z + dz * k;
+    }
+
+    // Push out of any tree / RV / cave boulder / tower the client tried to occupy.
+    const resolved = resolveCollision(this.world.colliders, rx, rz, PLAYER.radius);
+    p.x = resolved.x;
+    p.z = resolved.z;
+
+    // Feet sit on the terrain (allow a small jump arc above, a touch of sampling slop below).
+    const groundY = this.world.getHeight(p.x, p.z);
+    p.y = clamp(num(data.y, groundY), groundY - Y_BELOW_TOL, groundY + Y_ABOVE_TOL);
+  }
+
+  /** Upper-bound movement speed for the gate (role + per-night escalation; generous margin). */
+  private maxSpeedFor(p: Player): number {
+    const roleMul = p.role === "bigfoot" ? PLAYER.bigfootSpeedMul * this.state.bigfootSpeedMul : 1;
+    return PLAYER.sprintSpeed * roleMul * SPEED_GATE_MARGIN;
+  }
+
+  /** Index of a cave whose mouth (x,z) is within, or -1. */
+  private nearestCaveIndex(x: number, z: number): number {
+    const r2 = CAVE.triggerRadius * CAVE.triggerRadius;
+    for (let i = 0; i < CAVES.length; i++) {
+      const dx = CAVES[i].x - x;
+      const dz = CAVES[i].z - z;
+      if (dx * dx + dz * dz <= r2) return i;
+    }
+    return -1;
   }
 
   /** Clear the night clock, footage, clues, pings, and all status timers for a fresh match. */
@@ -305,6 +391,8 @@ export class ForestRoom extends Room<GameState> {
     this.incapUntil.clear();
     this.slowUntil.clear();
     this.grabbedBy.clear();
+    this.lastMoveMs.clear();
+    this.caveReadyAt.clear();
   }
 
   // ---------------------------------------------------------------------------

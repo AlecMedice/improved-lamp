@@ -51,6 +51,12 @@ export const PLAYER = {
   eyeLerp: 12, // how fast eye height eases between standing/crouched
 };
 
+/** Cave fast-travel rules — shared because the server validates `caveTravel` with them. */
+export const CAVE = {
+  triggerRadius: 6, // how close Bigfoot must be to a mouth to use it
+  travelCooldown: 2.0, // seconds between cave jumps
+};
+
 /** Cave-network generation tuning (seed-derived, identical on client + server). */
 export const CAVE_GEN = {
   seedXor: 0xca7e_5eed, // mixes WORLD.seed so caves don't correlate with tree placement

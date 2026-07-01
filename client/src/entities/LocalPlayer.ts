@@ -101,6 +101,20 @@ export class LocalPlayer {
     this.pitch = Math.max(-lim, Math.min(lim, this.pitch));
   }
 
+  /**
+   * Softly ease toward a server-corrected (x,z). Unlike teleportTo this blends rather than
+   * snapping, so a small authoritative correction (collision/speed clamp) is smoothed out.
+   */
+  correctTo(x: number, z: number, ease: number) {
+    this.sim.x += (x - this.sim.x) * ease;
+    this.sim.z += (z - this.sim.z) * ease;
+    this.sim.groundY = this.env.getHeight(this.sim.x, this.sim.z);
+    if (this.sim.grounded) this.sim.feetY = this.sim.groundY;
+    this.position.set(this.sim.x, this.sim.feetY + this.sim.curEye, this.sim.z);
+    this.camera.position.copy(this.position);
+    this.camera.position.y += this.bobY;
+  }
+
   /** Instantly move to a new (x,z) — used by Bigfoot's cave fast-travel. */
   teleportTo(x: number, z: number, yaw?: number) {
     const gy = this.env.getHeight(x, z);

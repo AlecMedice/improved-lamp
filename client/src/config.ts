@@ -3,7 +3,7 @@ import { WORLD, generateCaves } from "../../shared/sim";
 
 // Movement/world sim constants now live in shared/sim so the client and the authoritative
 // server compute identical physics. Re-exported here so existing imports are unchanged.
-export { WORLD, PLAYER } from "../../shared/sim";
+export { WORLD, PLAYER, CAVE } from "../../shared/sim";
 
 /** Colyseus server endpoint. Override with VITE_SERVER_URL at build/dev time. */
 export const SERVER_URL = (import.meta.env.VITE_SERVER_URL as string) || "ws://localhost:2567";
@@ -39,16 +39,11 @@ export const FILM = {
 export const NET = { sendHz: 15 };
 
 /**
- * Cave entrances — Bigfoot's lairs and the nodes of its fast-travel network. Now
- * seed-derived (shared/sim) so the client, every other client, and the server agree on
- * the layout. (Previously each used Math.random() independently, so they all disagreed.)
+ * Cave entrances — Bigfoot's lairs and the nodes of its fast-travel network. Seed-derived
+ * (shared/sim) so the client, every other client, and the server agree on the layout;
+ * the fast-travel rules (`CAVE`) are shared too since the server validates the jump.
  */
 export const CAVES: ReadonlyArray<{ x: number; z: number }> = generateCaves(WORLD.seed);
-
-export const CAVE = {
-  triggerRadius: 6, // how close Bigfoot must be to a mouth to use it
-  travelCooldown: 2.0, // seconds between cave jumps
-};
 
 /** Initial dusk palette. Environment.setTimeOfDay() lerps toward night and dawn. */
 export const DUSK = {
