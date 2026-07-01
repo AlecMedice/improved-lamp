@@ -1,8 +1,10 @@
 /**
  * Canonical sim constants, shared by client and server so movement/collision is
  * computed from one source of truth (no drift → no reconciliation rubber-banding).
- * The client's config.ts re-exports WORLD/PLAYER/ESCALATION from here and adds its
- * own render-only values (colors, MAP, FILM, etc.).
+ * The client's config.ts re-exports WORLD/PLAYER from here and adds its own
+ * render-only values (colors, MAP, FILM, etc.). Per-night escalation is NOT here:
+ * the server owns the ESCALATION table (ForestRoom.ts) and replicates multipliers,
+ * which callers pass into stepPlayer via StepModifiers.
  */
 
 export const WORLD = {
@@ -47,15 +49,6 @@ export const PLAYER = {
   crouchFactor: 0.55, // eye-height multiplier while crouched
   crouchSpeedMul: 0.5, // movement-speed multiplier while crouched
   eyeLerp: 12, // how fast eye height eases between standing/crouched
-};
-
-/**
- * Per-night escalation (driven by the server's nightNumber).
- * Multiplier for night N is `1 + perNight * (N - 1)`, so night 1 is baseline.
- */
-export const ESCALATION = {
-  bigfootSpeedPerNight: 0.08, // +8% Bigfoot move speed each night after the first
-  hunterDrainPerNight: 0.15, // +15% flashlight battery & sprint stamina drain each night
 };
 
 /** Cave-network generation tuning (seed-derived, identical on client + server). */

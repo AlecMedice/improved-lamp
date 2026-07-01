@@ -3,7 +3,8 @@ import { GameState, Player, Clue, Ping } from "./schema/GameState";
 import { WORLD, generateCaves } from "../../../shared/sim";
 
 // --- Night / match structure ---
-const NIGHT_SECONDS = 300; // one night runs 8pm -> 8am in this many real seconds
+// One night runs 8pm -> 8am in this many real seconds. Overridable via env for quick test matches.
+const NIGHT_SECONDS = Number(process.env.NIGHT_SECONDS) || 300;
 const TOTAL_NIGHTS = 3; // Bigfoot wins by surviving this many nights
 const WORLD_HALF = 400;
 
@@ -24,11 +25,21 @@ const FILM_DECAY = 0.5; // how fast an interrupted clip drains (fraction/sec)
 
 // --- Bigfoot offense (roar -> grab -> drag) tuning ---
 const ROAR_RADIUS = 25; // hunters within this of Bigfoot freeze in fear
-const ROAR_COOLDOWN = 25; // seconds between roars
-const FREEZE_SECONDS = 30; // how long a roared hunter is frozen in place
+const ROAR_COOLDOWN = 25; // seconds between roars (night-1 baseline; scaled by escalation)
+const FREEZE_SECONDS = 30; // how long a roared hunter is frozen in place (baseline)
 const GRAB_RADIUS = 3.5; // how close Bigfoot must be to grab a frozen hunter
 const INCAP_SECONDS = 60; // how long a grabbed hunter is incapacitated (and draggable)
 const SLOW_SECONDS = 30; // movement-slow window after recovering from incapacitation
+
+// --- Per-night escalation -------------------------------------------------------------------
+// Each night the forest grows bolder. Indexed by nightNumber-1 (clamped to the last entry).
+// Multipliers against the baselines above; tune freely. `speed/battery/stamina` are replicated
+// to clients (they own that math in v1); `roarCd/freeze/clueLife` are enforced server-side.
+const ESCALATION = [
+  /* Night 1 */ { speed: 1.0, battery: 1.0, stamina: 1.0, roarCd: 1.0, freeze: 1.0, clueLife: 1.0 },
+  /* Night 2 */ { speed: 1.1, battery: 1.25, stamina: 1.15, roarCd: 0.85, freeze: 1.1, clueLife: 0.8 },
+  /* Night 3 */ { speed: 1.22, battery: 1.55, stamina: 1.3, roarCd: 0.7, freeze: 1.2, clueLife: 0.65 },
+];
 
 /** timeOfDay threshold -> phase name. First threshold the time is *below* wins. */
 const PHASES: Array<[number, string]> = [
@@ -108,14 +119,18 @@ export class ForestRoom extends Room<GameState> {
       const bf = this.state.players.get(client.sessionId);
       if (!bf || bf.role !== "bigfoot") return;
       if (this.elapsed < (this.roarReadyAt.get(client.sessionId) ?? 0)) return;
-      this.roarReadyAt.set(client.sessionId, this.elapsed + ROAR_COOLDOWN);
+      const e = this.esc();
+      this.roarReadyAt.set(client.sessionId, this.elapsed + ROAR_COOLDOWN * e.roarCd);
       this.state.players.forEach((h, sid) => {
         if (h.role === "bigfoot" || h.status !== "active") return;
         if (withinRange(h, bf, ROAR_RADIUS)) {
           h.status = "frozen";
-          this.frozenUntil.set(sid, this.elapsed + FREEZE_SECONDS);
+          this.frozenUntil.set(sid, this.elapsed + FREEZE_SECONDS * e.freeze);
         }
       });
+      // Diegetic: every client hears the roar from Bigfoot's real position (carries beyond
+      // the freeze radius). The roaring client suppresses its own echo locally.
+      this.broadcast("roar", { x: bf.x, z: bf.z, by: client.sessionId });
     });
 
     // Bigfoot grabs (left-click): grab the nearest frozen hunter, or drop the one being dragged.
@@ -294,6 +309,11 @@ export class ForestRoom extends Room<GameState> {
 
   // ---------------------------------------------------------------------------
 
+  /** This night's escalation multipliers (nightNumber-1, clamped to the last entry). */
+  private esc() {
+    return ESCALATION[Math.min(this.state.nightNumber, ESCALATION.length) - 1];
+  }
+
   private update(dtMs: number) {
     if (this.state.matchPhase !== "playing") return; // no clock in lobby/results
     const dt = dtMs / 1000;
@@ -313,6 +333,13 @@ export class ForestRoom extends Room<GameState> {
         nightsComplete = true;
       }
     }
+
+    // Publish this night's escalation so clients apply the same multipliers we do.
+    const e = this.esc();
+    this.state.bigfootSpeedMul = e.speed;
+    this.state.batteryDrainMul = e.battery;
+    this.state.staminaDrainMul = e.stamina;
+    this.state.roarCooldownSec = ROAR_COOLDOWN * e.roarCd;
 
     const bigfoots: Array<{ sid: string; p: Player }> = [];
     const hunters: Array<{ sid: string; p: Player }> = [];
@@ -416,11 +443,12 @@ export class ForestRoom extends Room<GameState> {
   }
 
   private expireClues() {
+    const lifetime = CLUE_LIFETIME * this.esc().clueLife; // trail goes cold sooner on later nights
     for (let i = this.state.clues.length - 1; i >= 0; i--) {
       const c = this.state.clues[i];
       if (!c) continue;
       const born = this.clueAge.get(c.id) ?? this.elapsed;
-      if (this.elapsed - born > CLUE_LIFETIME) {
+      if (this.elapsed - born > lifetime) {
         this.state.clues.splice(i, 1);
         this.clueAge.delete(c.id);
       }

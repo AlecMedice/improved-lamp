@@ -3,7 +3,7 @@ import { WORLD, generateCaves } from "../../shared/sim";
 
 // Movement/world sim constants now live in shared/sim so the client and the authoritative
 // server compute identical physics. Re-exported here so existing imports are unchanged.
-export { WORLD, PLAYER, ESCALATION } from "../../shared/sim";
+export { WORLD, PLAYER } from "../../shared/sim";
 
 /** Colyseus server endpoint. Override with VITE_SERVER_URL at build/dev time. */
 export const SERVER_URL = (import.meta.env.VITE_SERVER_URL as string) || "ws://localhost:2567";
@@ -16,6 +16,11 @@ export const TOTAL_NIGHTS = 3;
 export const ABILITY = {
   roarCooldown: 25, // seconds between roars (UI gate, mirrors server)
 };
+
+/**
+ * Per-night escalation lives on the server (the `ESCALATION` table in `ForestRoom.ts`),
+ * which replicates the multipliers to clients — single source of truth. See GameState.
+ */
 
 /** Map readout tuning for the clue trail (the "in-contact" gating). */
 export const MAP = {

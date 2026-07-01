@@ -28,7 +28,7 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 - ✅ Jump (`Space`, gravity + ballistic feetY, networked) + auto‑step/vault over small rises + stamina + sprint
 - ✅ Day‑night cycle driving sky/fog/ambient over the match (`timeOfDay`)
 - ✅ Landmarks: base camp (campfire + **RV**), **cave entrances**, **creek**, **trailhead sign**, **lookout tower**, **lake**, **fallen logs** (asymmetric: slow hunters, not Bigfoot), bushes + shore rocks, terrain vertex coloring
-- ✅ Audio bed: wind (gusting brown‑noise loop), creek (proximity‑driven), footsteps, Bigfoot footsteps (hunters hear within range), flashlight click
+- ✅ Audio (`core/AudioEngine.ts`): gusting wind + proximity‑driven creek beds, **positional** footsteps (own + remote, true 3D), flashlight click — see Phase 5 for the full cue set
 
 **Goal:** the forest *feels* like a place you don't want to be alone in. **← done.**
 
@@ -68,17 +68,19 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 - ✅ **3-night structure** — each night 8pm→8am, daylight skipped, fade between nights
 - ✅ Win/loss resolution + results screen (3 videos → hunters; survive 3 nights → Bigfoot)
 - ✅ HUD: battery, stamina (with exhaustion), footage, night + clock, viewfinder, status banner, roar cooldown
-- ⬜ Escalation buffs per night (faster Bigfoot, faster drain); tutorial
+- ✅ **Escalation buffs per night** — server `ESCALATION` table (faster Bigfoot, faster battery/stamina drain, shorter roar cooldown, longer freeze, faster‑cooling trail; replicated to clients) + role‑specific tutorial hints
 
 **Goal:** a full match has a beginning, middle, and a winner. **← core of the vertical slice is in.**
 
 ---
 
-## Phase 5 — Audio, UI & polish ⬜
-- ⬜ Spatial audio (footsteps, roars, heartbeat proximity)
+## Phase 5 — Audio, UI & polish 🟡
+- ✅ Spatial audio (footsteps, roars, heartbeat proximity) — true 3D positional (THREE.AudioListener);
+  diegetic roars (server broadcast), branch‑snaps, remote footsteps; procedural synthesis with
+  optional sample overrides (hybrid; see `client/public/audio/`)
 - ⬜ Post‑processing pass (bloom, vignette, film grain) tuned per phase
 - ⬜ Menus, settings, key rebinding, gamma calibration
-- ⬜ Tutorial during dusk briefing
+- 🟡 Tutorial *(role‑specific start‑of‑match hints done; dusk‑briefing version pending)*
 
 ## Phase 6 — Art pass & performance ⬜
 - ⬜ Authored low‑poly models + rigs/animations (searchers, Bigfoot)

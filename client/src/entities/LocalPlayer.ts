@@ -2,8 +2,8 @@ import * as THREE from "three";
 import { PLAYER } from "../config";
 import { Input } from "../core/Input";
 import { Environment } from "../world/Environment";
-import { AudioManager } from "../core/Audio";
-import { stepPlayer, type PlayerSimState, type MoveInput, type StepResult, type World } from "../../../shared/sim";
+import { AudioEngine } from "../core/AudioEngine";
+import { stepPlayer, type PlayerSimState, type MoveInput, type StepResult, type StepModifiers, type World } from "../../../shared/sim";
 
 /**
  * First-person controller + flashlight for the player at this keyboard. Movement physics now
@@ -16,20 +16,24 @@ export class LocalPlayer {
   readonly position = new THREE.Vector3(); // eye position (derived from sim each frame)
   readonly isBigfoot: boolean;
   externalSpeedMul = 1; // set by Game (e.g. 0.75 while slowed after incapacitation)
-  night = 1; // current night (set by Game) — drives per-night escalation
+
+  // Per-night escalation (set by Game from server-replicated multipliers; 1 = night-1 baseline).
+  nightSpeedMul = 1; // Bigfoot grows faster on later nights (hunters stay 1)
+  batteryDrainMul = 1; // flashlight drains faster on later nights
+  staminaDrainMul = 1; // sprinting tires you faster on later nights
 
   /** Authoritative-shaped physics state, advanced by the shared stepPlayer. */
   readonly sim: PlayerSimState;
 
   private env: Environment;
   private world: World;
-  private audio?: AudioManager;
+  private audio?: AudioEngine;
   private pitch = 0; // look pitch (yaw lives in sim.yaw); camera-only
   private bobPhase = 0;
   private bobY = 0;
   private stepTimer = 0;
 
-  constructor(camera: THREE.PerspectiveCamera, env: Environment, role: string, spawn: { x: number; z: number; yaw?: number }, audio?: AudioManager) {
+  constructor(camera: THREE.PerspectiveCamera, env: Environment, role: string, spawn: { x: number; z: number; yaw?: number }, audio?: AudioEngine) {
     this.camera = camera;
     this.env = env;
     this.world = env.simWorld;
@@ -53,7 +57,6 @@ export class LocalPlayer {
       flashlightOn: false,
       isBigfoot: this.isBigfoot,
       eyeHeight,
-      night: 1,
     };
     this.position.set(spawn.x, gy + eyeHeight, spawn.z);
 
@@ -128,9 +131,14 @@ export class LocalPlayer {
   }
 
   update(dt: number, input: Input) {
-    this.sim.night = this.night;
     const cmd = this.buildInput(input, dt);
-    const res = stepPlayer(this.sim, cmd, this.world, this.externalSpeedMul);
+    // Compose the sim modifiers from the incapacitation slow + server-replicated escalation.
+    const mods: StepModifiers = {
+      speedMul: this.externalSpeedMul * this.nightSpeedMul,
+      batteryDrainMul: this.batteryDrainMul,
+      staminaDrainMul: this.staminaDrainMul,
+    };
+    const res = stepPlayer(this.sim, cmd, this.world, mods);
     this.applyPresentation(dt, cmd, res);
   }
 
@@ -157,7 +165,7 @@ export class LocalPlayer {
       if (res.moving && this.sim.grounded) {
         this.stepTimer -= dt;
         if (this.stepTimer <= 0) {
-          this.audio.playFootstep(res.sprinting);
+          this.audio.playFootstep(res.sprinting, this.isBigfoot);
           this.stepTimer = res.sprinting
             ? PLAYER.stepIntervalSprint
             : PLAYER.stepIntervalWalk * (cmd.crouch ? 1.6 : 1);

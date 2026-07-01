@@ -5,11 +5,11 @@ import { ClueField } from "../world/ClueField";
 import { PingField } from "../world/PingField";
 import { LocalPlayer } from "../entities/LocalPlayer";
 import { Input } from "./Input";
-import { Network, SelfInfo } from "./Network";
+import { Network, SelfInfo, EscalationInfo } from "./Network";
 import { Room } from "colyseus.js";
 import { HUD } from "../ui/HUD";
 import { MapView } from "../ui/MapView";
-import { AudioManager } from "./Audio";
+import { AudioEngine } from "./AudioEngine";
 
 /** Wires renderer + world + player + input + networking into one loop. */
 export class Game {
@@ -35,14 +35,15 @@ export class Game {
   private ended = false;
   private caveCooldown = 0;
   private roarCooldown = 0;
+  private roarCooldownSec = ABILITY.roarCooldown; // effective, from server escalation
   private night = 1;
   private totalNights = 3;
 
-  private audio: AudioManager;
+  private audio: AudioEngine;
 
-  // Hunter-side Bigfoot footstep tracking: compare server positions frame-to-frame.
-  private bfPrevPos: { x: number; z: number } | null = null;
-  private bfStepTimer = 0;
+  // Audio bookkeeping.
+  private prevStatus = "active"; // detect freeze/incap transitions for stings
+  private prevFootage = 0; // detect a banked video for the capture ding
 
   // reused scratch vectors (avoid per-frame allocation)
   private fwd = new THREE.Vector3();
@@ -62,12 +63,16 @@ export class Game {
     this.camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 900);
     this.scene.add(this.camera); // so the flashlight (a child) renders
 
+    // Audio: the listener rides the camera so positional cues pan/fall off correctly.
+    this.audio = new AudioEngine(this.scene);
+    this.camera.add(this.audio.listener);
+
     this.env = new Environment(this.scene);
+    this.audio.groundSampler = (x, z) => this.env.getHeight(x, z);
     this.map.setBakedMap(this.env.generateMapCanvas(600, 400));
     this.clues = new ClueField(this.scene, this.env);
     // Online: use the server-assigned spawn. Offline/solo: pick one locally.
     const spawn = spawnFor(role, room);
-    this.audio = new AudioManager();
     this.player = new LocalPlayer(this.camera, this.env, role, spawn, this.audio);
 
     if (this.isBigfoot) {
@@ -81,17 +86,23 @@ export class Game {
     if (!this.isBigfoot) this.input.onPress("KeyF", () => this.player.toggleFlashlight());
     this.map.onSelectCave = (i) => this.travelToCave(i);
 
-    this.net = new Network(this.scene, role, name, room);
+    this.net = new Network(this.scene, role, name, room, this.audio);
     this.net.onStatus = (s) => this.hud.setStatus(s);
     this.net.onPhase = (_phase, tod) => (this.serverTimeOfDay = tod);
     this.net.onNight = (n, total) => this.onNightChange(n, total);
-    this.net.onFootage = (have, need) => this.hud.setFootage(have, need);
+    this.net.onFootage = (have, need) => this.onFootage(have, need);
     this.net.onSelf = (info) => (this.self = info);
-    this.net.onClueAdd = (c) => this.clues.add(c);
+    this.net.onClueAdd = (c) => {
+      this.clues.add(c);
+      if (c.ctype === "branch") this.audio.playAt("branch_snap", c.x, c.z, { volume: 0.5, refDistance: 14 });
+    };
     this.net.onClueRemove = (id) => this.clues.remove(id);
     this.net.onEnd = (winner) => this.endMatch(winner);
     // Host reset us to the lobby — reload back into the waiting room.
     this.net.onReturnToLobby = () => location.reload();
+    // Another player's roar, from its real position (carries far: big ref distance, low rolloff).
+    this.net.onRoar = (x, z) => this.audio.playAt("roar", x, z, { volume: 0.95, refDistance: 30, rolloff: 0.7 });
+    this.net.onEscalation = (e) => this.applyEscalation(e);
 
     // Bigfoot abilities: right-click roar, left-click grab a frozen hunter.
     if (this.isBigfoot) {
@@ -115,6 +126,7 @@ export class Game {
   }
 
   start() {
+    this.audio.resume(); // called from the start gesture — lifts the autoplay gate
     this.renderer.setAnimationLoop(() => this.frame());
     this.startTutorial();
   }
@@ -177,6 +189,7 @@ export class Game {
     // Creek ambience swells as you near the water (audible within ~30 m).
     const creekDist = this.env.distanceToCreek(this.player.position.x, this.player.position.z);
     this.audio.setCreekProximity(1 - creekDist / 30);
+    this.updateAudio(dt);
 
     this.hud.setStatusBanner(this.ended ? "active" : this.self.status);
     this.hud.setBlackout(incapacitated && !this.ended);
@@ -217,34 +230,6 @@ export class Game {
       this.hud.setFilmProgress(this.self.filmProgress);
     }
 
-    // Bigfoot footstep audio: hunters hear heavy steps when Bigfoot is within MAP.hearRange.
-    // We detect movement by comparing the server-reported position between frames; a delta
-    // larger than 15 m in one frame is a cave teleport and is skipped.
-    if (!this.isBigfoot && !this.ended) {
-      const bfPos = this.net.getBigfootPosition();
-      if (bfPos) {
-        const dx = bfPos.x - this.player.position.x;
-        const dz = bfPos.z - this.player.position.z;
-        const dist = Math.sqrt(dx * dx + dz * dz);
-        if (dist < MAP.hearRange && this.bfPrevPos) {
-          const delta = Math.hypot(bfPos.x - this.bfPrevPos.x, bfPos.z - this.bfPrevPos.z);
-          if (delta > 0.05 && delta < 15) {
-            this.bfStepTimer -= dt;
-            if (this.bfStepTimer <= 0) {
-              // Stereo pan: project Bigfoot's direction onto the hunter's right vector.
-              const yaw = this.player.yawAngle;
-              const pan = (Math.cos(yaw) * dx - Math.sin(yaw) * dz) / dist;
-              this.audio.playBigfootFootstep(dist, pan);
-              this.bfStepTimer = 0.55;
-            }
-          }
-        }
-        this.bfPrevPos = { x: bfPos.x, z: bfPos.z };
-      } else {
-        this.bfPrevPos = null;
-      }
-    }
-
     // Stream our transform + intent to the server at a fixed rate.
     this.sendAccum += dt;
     if (this.sendAccum >= 1 / NET.sendHz) {
@@ -281,24 +266,60 @@ export class Game {
     return this.clues.hasRecentClueWithin(p.x, p.z, MAP.evidenceSight, MAP.clueWindow);
   }
 
+  /** Freeze/incap stings on our own state change + the searcher proximity heartbeat. */
+  private updateAudio(dt: number) {
+    if (this.self.status !== this.prevStatus) {
+      if (this.self.status === "frozen") this.audio.playOnce("freeze_sting", { volume: 0.85 });
+      else if (this.self.status === "incapacitated") this.audio.playOnce("grab_impact", { volume: 0.95 });
+      this.prevStatus = this.self.status;
+    }
+    if (!this.isBigfoot) {
+      let intensity = 0;
+      const bf = this.ended ? null : this.net.getBigfootPosition();
+      if (bf) {
+        const d = Math.hypot(bf.x - this.player.position.x, bf.z - this.player.position.z);
+        intensity = THREE.MathUtils.clamp((40 - d) / 30, 0, 1); // 40m silent -> 10m pounding
+      }
+      this.audio.setHeartbeat(intensity);
+    }
+    this.audio.update(dt);
+  }
+
+  /** Footage tally → HUD, plus a confirmation ding whenever a new video is banked. */
+  private onFootage(have: number, need: number) {
+    if (have > this.prevFootage) this.audio.playOnce("video_captured", { volume: 0.6 });
+    this.prevFootage = have;
+    this.hud.setFootage(have, need);
+  }
+
+  /** Apply the server's per-night escalation to the local player + roar UI. */
+  private applyEscalation(e: EscalationInfo) {
+    this.player.nightSpeedMul = this.isBigfoot ? e.bigfootSpeedMul : 1; // hunters pressured via drain
+    this.player.batteryDrainMul = e.batteryDrainMul;
+    this.player.staminaDrainMul = e.staminaDrainMul;
+    this.roarCooldownSec = e.roarCooldownSec;
+  }
+
   private tryRoar() {
     if (!this.isBigfoot || this.ended || this.map.isOpen || this.roarCooldown > 0) return;
     this.net.sendRoar();
-    this.roarCooldown = ABILITY.roarCooldown;
+    this.audio.playOnce("roar", { volume: 0.9 }); // our own roar, up close
+    this.roarCooldown = this.roarCooldownSec;
   }
 
   private tryGrab() {
     if (!this.isBigfoot || this.ended || this.map.isOpen) return;
     this.net.sendGrab();
+    this.audio.playOnce("grab_impact", { volume: 0.5 }); // the swing
   }
 
   private onNightChange(night: number, total: number) {
     this.totalNights = total;
     if (night !== this.night) {
       this.night = night;
-      this.player.night = night; // drives per-night escalation (speed / drain)
       if (!this.ended) {
         this.hud.fade(() => {}); // brief fade between nights
+        this.audio.playOnce("night_sting", { volume: 0.7 });
         if (night > 1) this.showNightNote(night);
       }
     }
@@ -350,6 +371,7 @@ export class Game {
     // Fade to black, hop at the darkest point, fade back in at the new cave.
     // Face away from the destination cave (into the forest) on emergence.
     const exitYaw = Math.atan2(dest.x, dest.z);
+    this.audio.playOnce("cave_whoosh", { volume: 0.6 });
     this.hud.fade(() => this.player.teleportTo(dest.x - (dest.x / dl) * 8, dest.z - (dest.z / dl) * 8, exitYaw));
   }
 
@@ -357,6 +379,7 @@ export class Game {
   private dropPing(x?: number, z?: number) {
     if (this.isBigfoot || this.ended || this.self.status !== "active") return;
     this.net.sendPing(x ?? this.player.position.x, z ?? this.player.position.z);
+    this.audio.playOnce("ping_drop", { volume: 0.5 });
   }
 
   private toggleMap() {
@@ -384,6 +407,8 @@ export class Game {
     this.map.close();
     document.exitPointerLock();
     const youWon = winner === (this.isBigfoot ? "bigfoot" : "hunters");
+    this.audio.setHeartbeat(0);
+    this.audio.playOnce(youWon ? "victory" : "defeat", { volume: 0.7 });
     const title = winner === "hunters" ? "The footage is secured" : "The forest keeps its secret";
     const body =
       winner === "hunters"

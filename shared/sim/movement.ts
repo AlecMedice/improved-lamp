@@ -1,4 +1,4 @@
-import { PLAYER, ESCALATION } from "./constants";
+import { PLAYER } from "./constants";
 import { clamp, lerp } from "./math";
 import { resolveCollision, logOverlap, lakeDepth } from "./collision";
 import type { World } from "./index";
@@ -19,7 +19,6 @@ export type PlayerSimState = {
   flashlightOn: boolean;
   isBigfoot: boolean;
   eyeHeight: number; // standing eye height for this role
-  night: number; // current night — drives per-night escalation
 };
 
 /** One frame of movement intent. This is exactly what the client streams to the server. */
@@ -39,12 +38,22 @@ export type MoveInput = {
 export type StepResult = { moving: boolean; sprinting: boolean };
 
 /**
- * Advance one player by a single input. Pure w.r.t. (state, input, world, externalSpeedMul);
+ * External multipliers applied to this step. The sim owns no escalation table — the server's
+ * ESCALATION (ForestRoom.ts) is the single source of truth, replicated to clients; both sides
+ * compose these from it (plus the post-incapacitation slow) and pass them in.
+ */
+export type StepModifiers = {
+  speedMul: number; // slow factor * per-night Bigfoot speed escalation (1 = baseline)
+  batteryDrainMul: number; // per-night flashlight drain escalation
+  staminaDrainMul: number; // per-night sprint drain escalation
+};
+
+/**
+ * Advance one player by a single input. Pure w.r.t. (state, input, world, mods);
  * mutates `st` in place (callers clone when they need history). Ported line-for-line from the
  * old LocalPlayer.update physics so client prediction and server authority agree bit-for-bit.
- * `externalSpeedMul` is the slow factor (1, or PLAYER.slowFactor while slowed).
  */
-export function stepPlayer(st: PlayerSimState, input: MoveInput, world: World, externalSpeedMul: number): StepResult {
+export function stepPlayer(st: PlayerSimState, input: MoveInput, world: World, mods: StepModifiers): StepResult {
   const dt = input.dt;
   st.yaw = input.yaw;
 
@@ -63,10 +72,8 @@ export function stepPlayer(st: PlayerSimState, input: MoveInput, world: World, e
   const crouching = input.crouch;
   const moving = wx * wx + wz * wz > 0;
   const sprinting = moving && input.sprint && !st.exhausted && !crouching;
-  let speed = (sprinting ? PLAYER.sprintSpeed : PLAYER.walkSpeed) * (st.isBigfoot ? PLAYER.bigfootSpeedMul : 1) * externalSpeedMul;
+  let speed = (sprinting ? PLAYER.sprintSpeed : PLAYER.walkSpeed) * (st.isBigfoot ? PLAYER.bigfootSpeedMul : 1) * mods.speedMul;
   if (crouching) speed *= PLAYER.crouchSpeedMul;
-  // Escalation: Bigfoot grows faster each night.
-  if (st.isBigfoot) speed *= 1 + ESCALATION.bigfootSpeedPerNight * (st.night - 1);
 
   // Terrain obstacles: fallen logs slow hunters only; lake slows everyone (less so Bigfoot).
   if (!st.isBigfoot) {
@@ -132,18 +139,16 @@ export function stepPlayer(st: PlayerSimState, input: MoveInput, world: World, e
   const targetEye = crouching ? st.eyeHeight * PLAYER.crouchFactor : st.eyeHeight;
   st.curEye += (targetEye - st.curEye) * Math.min(1, dt * PLAYER.eyeLerp);
 
-  // Escalation: gear drains faster each night (battery + sprint stamina).
-  const drainEsc = 1 + ESCALATION.hunterDrainPerNight * (st.night - 1);
-
-  // Resources. Hitting 0 stamina exhausts you: no sprinting until it recovers past a threshold.
+  // Resources (drains scaled by the server-driven per-night escalation multipliers).
+  // Hitting 0 stamina exhausts you: no sprinting until it recovers past a threshold.
   st.stamina = sprinting
-    ? Math.max(0, st.stamina - PLAYER.staminaDrainPerSec * drainEsc * dt)
+    ? Math.max(0, st.stamina - PLAYER.staminaDrainPerSec * mods.staminaDrainMul * dt)
     : Math.min(100, st.stamina + PLAYER.staminaRegenPerSec * dt);
   if (st.stamina <= 0) st.exhausted = true;
   else if (st.exhausted && st.stamina >= PLAYER.staminaRecover) st.exhausted = false;
 
   if (st.flashlightOn) {
-    st.battery = Math.max(0, st.battery - PLAYER.batteryDrainPerSec * drainEsc * dt);
+    st.battery = Math.max(0, st.battery - PLAYER.batteryDrainPerSec * mods.batteryDrainMul * dt);
     if (st.battery <= 0) st.flashlightOn = false;
   }
 

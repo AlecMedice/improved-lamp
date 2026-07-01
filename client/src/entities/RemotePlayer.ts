@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { AudioEngine } from "../core/AudioEngine";
 
 /** A networked other player — a smooth low-poly avatar that interpolates toward server state. */
 export class RemotePlayer {
@@ -12,8 +13,15 @@ export class RemotePlayer {
   private statusIcon?: THREE.Mesh; // floats above a frozen/incapacitated hunter
   private statusMat?: THREE.MeshBasicMaterial;
 
-  constructor(private scene: THREE.Scene, role: string) {
+  // Positional footsteps: accrue ground distance covered and emit a step each stride.
+  private stepDist = 0;
+  private lastX = 0;
+  private lastZ = 0;
+  private readonly stride: number;
+
+  constructor(private scene: THREE.Scene, role: string, private audio?: AudioEngine) {
     this.isBigfoot = role === "bigfoot";
+    this.stride = this.isBigfoot ? 2.3 : 1.7; // Bigfoot's gait is longer/heavier
     const color = this.isBigfoot ? 0x5b4636 : 0x6a7b8c;
     const h = this.isBigfoot ? 2.6 : 1.8;
 
@@ -89,6 +97,28 @@ export class RemotePlayer {
     let d = this.targetYaw - this.group.rotation.y;
     d = Math.atan2(Math.sin(d), Math.cos(d)); // shortest arc
     this.group.rotation.y += d * k;
+
+    this.tickFootsteps();
+  }
+
+  /** Emit a positional footstep each stride of ground covered (cadence scales with speed). */
+  private tickFootsteps() {
+    if (!this.audio) return;
+    const x = this.group.position.x;
+    const z = this.group.position.z;
+    const moved = Math.hypot(x - this.lastX, z - this.lastZ);
+    this.lastX = x;
+    this.lastZ = z;
+
+    if (moved > 3) return; // a jump this large is a teleport (cave travel / first frame), not a step
+    this.stepDist += moved;
+    if (this.stepDist >= this.stride) {
+      this.stepDist = 0;
+      this.audio.playAt(this.isBigfoot ? "footstep_heavy" : "footstep_soft", x, z, {
+        volume: this.isBigfoot ? 0.7 : 0.4,
+        refDistance: 7,
+      });
+    }
   }
 
   dispose() {
