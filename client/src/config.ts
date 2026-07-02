@@ -17,6 +17,13 @@ export const ABILITY = {
   roarCooldown: 25, // seconds between roars (UI gate, mirrors server)
 };
 
+/** Bigfoot charge — a short forward burst (mirrors the server; the client predicts it). */
+export const CHARGE = {
+  speedMul: 1.9, // burst multiplier over sprint during the window
+  duration: 1.2, // seconds the burst lasts
+  cooldown: 6, // seconds after the burst before another charge (UI gate)
+};
+
 /** Searcher revive (client-side prompt + progress bar; the server is authoritative on completion). */
 export const REVIVE = {
   radius: 3.5, // how close to a downed teammate you must stand (mirrors server REVIVE_RADIUS)

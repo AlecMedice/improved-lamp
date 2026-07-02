@@ -246,6 +246,9 @@ export class Network {
   sendGrab() {
     this.room?.send("grab");
   }
+  sendCharge() {
+    this.room?.send("charge");
+  }
 
   sendMove(p: MovePayload) {
     this.room?.send("move", p);

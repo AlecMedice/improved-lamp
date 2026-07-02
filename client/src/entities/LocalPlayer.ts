@@ -19,6 +19,8 @@ export class LocalPlayer {
   readonly isBigfoot: boolean;
   externalSpeedMul = 1; // set by Game (e.g. 0.75 while slowed after incapacitation)
 
+  chargeMul = 1; // Bigfoot charge burst (1 = not charging; set by Game while a charge window is open)
+
   // Per-night escalation (set by Game from server-replicated multipliers; 1 = night-1 baseline).
   nightSpeedMul = 1; // Bigfoot grows faster on later nights (hunters stay 1)
   batteryDrainMul = 1; // flashlight drains faster on later nights
@@ -165,7 +167,7 @@ export class LocalPlayer {
     const cmd = this.buildInput(input, dt);
     // Compose the sim modifiers from the incapacitation slow + server-replicated escalation.
     const mods: StepModifiers = {
-      speedMul: this.externalSpeedMul * this.nightSpeedMul,
+      speedMul: this.externalSpeedMul * this.nightSpeedMul * this.chargeMul,
       batteryDrainMul: this.batteryDrainMul,
       staminaDrainMul: this.staminaDrainMul,
     };

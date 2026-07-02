@@ -31,6 +31,11 @@ const GRAB_RADIUS = 3.5; // how close Bigfoot must be to grab a frozen hunter
 const INCAP_SECONDS = 60; // how long a grabbed hunter is incapacitated (and draggable)
 const SLOW_SECONDS = 30; // movement-slow window after recovering from incapacitation
 
+// --- Bigfoot charge (a short forward burst to close distance) ---
+const CHARGE_SPEED_MUL = 1.9; // burst multiplier over sprint speed during the window
+const CHARGE_DURATION = 1.2; // seconds the burst lasts
+const CHARGE_COOLDOWN = 6; // seconds after the burst ends before another charge
+
 // --- Searcher defense (revive a downed teammate) ---
 const REVIVE_RADIUS = 3.5; // how close an active hunter must stand to revive an incapacitated one
 const REVIVE_SECONDS = 4; // seconds of holding the revive before the teammate is freed
@@ -108,6 +113,8 @@ export class ForestRoom extends Room<GameState> {
   private reviveProgress = new Map<string, number>(); // incap target sid -> seconds of revive accrued
   private dazzleFill = new Map<string, number>(); // bigfoot sid -> seconds of sustained flashlight on it
   private dazzledUntil = new Map<string, number>(); // bigfoot sid -> elapsed when the dazzle wears off
+  private chargingUntil = new Map<string, number>(); // bigfoot sid -> elapsed while a charge burst is active
+  private chargeReadyAt = new Map<string, number>(); // bigfoot sid -> elapsed when the next charge is ready
   private devRoles = new Map<string, string>(); // sid -> "bigfoot"|"searcher" (dev URL param override)
 
   onCreate() {
@@ -224,6 +231,15 @@ export class ForestRoom extends Room<GameState> {
       this.state.videosCaptured = 0; // all the team's footage is erased
     });
 
+    // Bigfoot charges: opens a short speed-gate window so a forward burst isn't clamped as a speedhack.
+    this.onMessage("charge", (client) => {
+      const bf = this.state.players.get(client.sessionId);
+      if (!bf || bf.role !== "bigfoot" || bf.status !== "active") return;
+      if (this.elapsed < (this.chargeReadyAt.get(client.sessionId) ?? 0)) return; // cooldown
+      this.chargingUntil.set(client.sessionId, this.elapsed + CHARGE_DURATION);
+      this.chargeReadyAt.set(client.sessionId, this.elapsed + CHARGE_DURATION + CHARGE_COOLDOWN);
+    });
+
     // Host starts the match: assign roles (one random Bigfoot if 2+), spawn, begin night 1.
     this.onMessage("startMatch", (client) => {
       if (client.sessionId !== this.state.hostId || this.state.matchPhase !== "lobby") return;
@@ -313,6 +329,8 @@ export class ForestRoom extends Room<GameState> {
     this.reviveProgress.delete(sid);
     this.dazzleFill.delete(sid);
     this.dazzledUntil.delete(sid);
+    this.chargingUntil.delete(sid);
+    this.chargeReadyAt.delete(sid);
     this.lastMoveMs.delete(sid);
     this.caveReadyAt.delete(sid);
     this.devRoles.delete(sid);
@@ -363,7 +381,7 @@ export class ForestRoom extends Room<GameState> {
     const last = this.lastMoveMs.get(sid) ?? now;
     const dtSec = Math.min(1, Math.max(0, (now - last) / 1000)); // clamp; a long gap isn't travel budget
     this.lastMoveMs.set(sid, now);
-    const allowed = this.maxSpeedFor(p) * dtSec + SPEED_GATE_BASE;
+    const allowed = this.maxSpeedFor(sid, p) * dtSec + SPEED_GATE_BASE;
     const dx = rx - p.x;
     const dz = rz - p.z;
     const dist = Math.hypot(dx, dz);
@@ -383,10 +401,11 @@ export class ForestRoom extends Room<GameState> {
     p.y = clamp(num(data.y, groundY), groundY - Y_BELOW_TOL, groundY + Y_ABOVE_TOL);
   }
 
-  /** Upper-bound movement speed for the gate (role + per-night escalation; generous margin). */
-  private maxSpeedFor(p: Player): number {
+  /** Upper-bound movement speed for the gate (role + per-night escalation + charge burst; generous margin). */
+  private maxSpeedFor(sid: string, p: Player): number {
     const roleMul = p.role === "bigfoot" ? PLAYER.bigfootSpeedMul * this.state.bigfootSpeedMul : 1;
-    return PLAYER.sprintSpeed * roleMul * SPEED_GATE_MARGIN;
+    const chargeMul = this.elapsed < (this.chargingUntil.get(sid) ?? 0) ? CHARGE_SPEED_MUL : 1;
+    return PLAYER.sprintSpeed * roleMul * chargeMul * SPEED_GATE_MARGIN;
   }
 
   /** Index of a cave whose mouth (x,z) is within, or -1. */
@@ -424,6 +443,8 @@ export class ForestRoom extends Room<GameState> {
     this.reviveProgress.clear();
     this.dazzleFill.clear();
     this.dazzledUntil.clear();
+    this.chargingUntil.clear();
+    this.chargeReadyAt.clear();
     this.lastMoveMs.clear();
     this.caveReadyAt.clear();
   }

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { NET, FILM, NIGHT_SECONDS, CAVES, CAVE, ABILITY, REVIVE, MAP, PLAYER, BIGFOOT_VISION } from "../config";
+import { NET, FILM, NIGHT_SECONDS, CAVES, CAVE, ABILITY, CHARGE, REVIVE, MAP, PLAYER, BIGFOOT_VISION } from "../config";
 import { Environment } from "../world/Environment";
 import { ClueField } from "../world/ClueField";
 import { PingField } from "../world/PingField";
@@ -44,6 +44,8 @@ export class Game {
   private traveling = false; // suspends local control + move-sends during a cave hop
   private roarCooldown = 0;
   private roarCooldownSec = ABILITY.roarCooldown; // effective, from server escalation
+  private chargeTimer = 0; // remaining seconds of an active charge burst (drives chargeMul)
+  private chargeCooldown = 0; // remaining seconds until the next charge is ready
   private reviveProgress = 0; // 0..1 local estimate of the teammate revive being held (server-authoritative)
   private reviveTickTimer = 0; // spacing for the revive channel cue while holding
   private reviveWasFull = false; // guards the one-shot success cue
@@ -118,10 +120,11 @@ export class Game {
     this.net.onRoar = (x, z) => this.audio.playAt("roar", x, z, { volume: 0.95, refDistance: 30, rolloff: 0.7 });
     this.net.onEscalation = (e) => this.applyEscalation(e);
 
-    // Bigfoot abilities: right-click roar, left-click grab a frozen hunter.
+    // Bigfoot abilities: right-click roar, left-click grab a frozen hunter, Shift to charge.
     if (this.isBigfoot) {
       this.input.onMousePress(2, () => this.tryRoar());
       this.input.onMousePress(0, () => this.tryGrab());
+      this.input.onPress("ShiftLeft", () => this.tryCharge());
     }
 
     // Hunters: stakeout pings (Q to mark where you stand, or click the map).
@@ -210,6 +213,13 @@ export class Game {
     this.hud.setStatusBanner(this.ended ? "active" : this.self.status);
     this.hud.setBlackout(incapacitated && !this.ended);
 
+    // Bigfoot: charge burst timing (drives the sim speed multiplier + UI).
+    if (this.isBigfoot) {
+      this.chargeTimer = Math.max(0, this.chargeTimer - dt);
+      this.chargeCooldown = Math.max(0, this.chargeCooldown - dt);
+      this.player.chargeMul = this.chargeTimer > 0 ? CHARGE.speedMul : 1;
+    }
+
     // Bigfoot: ability readout + cave-travel prompt.
     if (this.isBigfoot && !this.ended) {
       this.roarCooldown = Math.max(0, this.roarCooldown - dt);
@@ -220,7 +230,8 @@ export class Game {
       } else {
         const roarText = this.roarCooldown > 0 ? `Roar: ${Math.ceil(this.roarCooldown)}s` : "Roar ready (right-click)";
         const leapText = this.player.stamina >= PLAYER.leapStaminaCost ? "Leap ready (space)" : "Leap: low stamina";
-        this.hud.setAbility(`${roarText} · ${leapText}`);
+        const chargeText = this.chargeTimer > 0 ? "Charging!" : this.chargeCooldown > 0 ? `Charge: ${Math.ceil(this.chargeCooldown)}s` : "Charge ready (shift)";
+        this.hud.setAbility(`${roarText} · ${leapText} · ${chargeText}`);
       }
       this.caveCooldown = Math.max(0, this.caveCooldown - dt);
       const caveReady = this.caveCooldown === 0 && this.nearestCaveIndex() >= 0;
@@ -387,6 +398,14 @@ export class Game {
     if (!this.isBigfoot || this.ended || this.map.isOpen || this.self.dazzled) return;
     this.net.sendGrab();
     this.audio.playOnce("grab_impact", { volume: 0.5 }); // the swing
+  }
+
+  private tryCharge() {
+    if (!this.isBigfoot || this.ended || this.map.isOpen || this.chargeCooldown > 0) return;
+    this.net.sendCharge(); // server opens the speed-gate window; we predict the burst locally
+    this.chargeTimer = CHARGE.duration;
+    this.chargeCooldown = CHARGE.duration + CHARGE.cooldown;
+    this.audio.playOnce("cave_whoosh", { volume: 0.5 }); // a lunging whoosh
   }
 
   private onNightChange(night: number, total: number) {
