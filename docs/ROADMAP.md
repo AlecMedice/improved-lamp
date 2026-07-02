@@ -48,10 +48,11 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 
 ---
 
-## Phase 3 — Asymmetry & abilities 🟢
-- 🟡 Two playable roles with distinct cameras/speed/models *(distinct speed, height, night‑vision, avatars + Bigfoot eye‑shine done; rigged models pending)*
+## Phase 3 — Asymmetry & abilities ✅
+- 🟡 Two playable roles with distinct cameras/speed/models *(distinct speed, height, night‑vision, avatars + Bigfoot eye‑shine done; rigged models pending — Phase 6)*
 - ✅ Bigfoot **roar** (AoE freeze) → **grab** frozen hunter → **incapacitate + drag + erase footage**; recover slowed
-- ✅ Bigfoot **leap** (`Space`) — stamina‑gated vertical bound for traversal / gap‑closing *(charge + surface‑climb + full senses overlay still ⬜)*
+- ✅ Bigfoot mobility kit — **leap** (`Space`, stamina‑gated bound), **charge** (`Shift`, forward burst dash on a cooldown), **surface‑climb** (`Space` vs a structure: scale the tower/RV/boulders and stand on top)
+- ✅ Bigfoot **senses overlay** (`V`) — predator vision revealing hunters (and its own scent trail) through the forest
 - ✅ Bigfoot leaves a trackable trail (footprints + broken branches) — *the clue framework*
 - ✅ Bigfoot **cave fast-travel** network (spawn at a cave; pick the destination from the map)
 - ✅ **Map** (`M`) for both roles — position/heading, camp, caves; hunters also see teammates + recent clue trail

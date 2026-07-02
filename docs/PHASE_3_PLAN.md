@@ -1,8 +1,9 @@
 # Phase 3 — Asymmetry & Abilities (branch `july_26`)
 
 > Implementation plan, mirrored into the repo so it travels with the branch (cross-machine handoff).
-> Progress: **All increments shipped** — A (Bigfoot vision), B (leap), C (revives), D (dazzle), E (log vault).
-> Each landed as its own commit, typechecked + smoke-tested. See notes on B/E below for how the final
+> Progress: **Phase 3 complete.** Increments A (Bigfoot vision), B (leap), C (revives), D (dazzle), E (log
+> vault), plus the follow-up Bigfoot kit — **charge, surface-climb, senses overlay** (see the end of this
+> doc). Each landed as its own commit, typechecked + smoke-tested. Notes on B/E/climb record how the final
 > implementation refined the original sketch against the actual sim.
 
 ## Context
@@ -157,9 +158,20 @@ stamina cost; confirm no reconciliation snap-back near trees (colliders excluded
 3. Manual two-tab pass: Bigfoot's limited vision vs a hunter's longer flashlight; leap traversal; a hunter
    reviving a downed teammate; dazzling Bigfoot to deny a roar; vaulting a log.
 
-## Out of scope (this branch)
-Rigged/animated models (art, Phase 6); Bigfoot charge & full surface-climbing; post-processing/senses *overlay*
-rendering (kept to a light source, not a shader pass); escalation-table integration of the new abilities.
+## Follow-up increments — ✅ SHIPPED (the deferred Bigfoot kit landed after A–E)
+- **Charge** (`Shift`): a discrete server-tracked speed-gate window (mirrors the roar cooldown) so a
+  forward burst dash isn't clamped; client-predicted via `chargeMul` in `StepModifiers`. `CHARGE_*` in
+  `ForestRoom.ts` / `CHARGE` in `config.ts`.
+- **Surface-climb** (`Space` vs a structure): colliders gained an optional `climbH` (tower/RV/boulders);
+  collision is climb-aware (solid from the side, walkable on top) via `groundHeightAt`/`climbSupport`; a
+  `climb` `MoveInput` flag scales the surface (stamina-gated, regen suspended) with a ledge-fall on step-off.
+  Server `applyMove` mirrors it for Bigfoot only (hunters stay 2D-solid — no feet-y spoof into structures).
+- **Senses overlay** (`V`): a Bigfoot-only, depthTest-off silhouette on hunter avatars + scent halos on
+  recent clues, composited in the existing single render pass (no EffectComposer). `SENSES` in `config.ts`.
+
+## Out of scope (still deferred)
+Rigged/animated models (art, Phase 6); post-processing (bloom/vignette/film-grain shader pass);
+escalation-table integration of the new abilities.
 
 ---
 _Note: nights were lengthened 300s→600s (5→10 min) as a separate tuning change on this branch; the server's

@@ -64,8 +64,12 @@ Client → server (`Network.send*`):
 - `ping` `{x,z}` — hunters only (stakeout marker).
 - `roar` — Bigfoot: AoE freeze *(rejected while dazzled)*. `Space` = leap (stamina-gated bound).
 - `grab` — Bigfoot: grab nearest frozen hunter / drop the dragged one *(rejected while dazzled)*.
+- `charge` — Bigfoot (`Shift`): opens a server-tracked speed-gate window (cooldown) so a forward burst
+  dash isn't clamped as a speedhack. No move-payload field; the burst is client-predicted via `chargeMul`.
 - `caveTravel` `{index}` — Bigfoot: validated cave fast‑travel (must stand in a mouth; cooldown).
 - `startMatch` / `returnToLobby` — host only (lobby lifecycle).
+- *(no RPC)* **surface-climb** (`Space` vs a structure) rides the existing `move` feet-y; **senses overlay**
+  (`V`) is a client-only Bigfoot render toggle. Neither adds a message.
 
 Server → client (broadcast, not state):
 - `roar` `{x, z, by}` — fired on every roar so all clients can play it as **positional audio**
@@ -94,6 +98,10 @@ Server state (`GameState`, replicated):
 - **Bigfoot offense:** RMB **roar** freezes hunters within ~25m for 30s → LMB **grab** a
   frozen hunter → incapacitate 60s (fade out, drag them, **erase the team's footage**) →
   they recover, 25% slower for 30s. Not permanent elimination. `Space` = **leap** (stamina-gated bound).
+- **Bigfoot mobility/senses:** `Shift` = **charge** (a short forward burst dash on a cooldown, past the
+  normal speed gate); `Space` against the **tower / RV / cave boulders** = **surface-climb** (scale the
+  side, stamina-gated, and stand on top; step off to drop); `V` = **senses overlay** (predator vision —
+  hunters and Bigfoot's own recent scent trail glow through the forest).
 - **Searcher counterplay:** hold `E` near a downed teammate to **revive** them (~4s) before the incap
   expires; keep a **flashlight** trained on Bigfoot (~1.2s, range+cone+LOS) to **dazzle** it — its
   roar/grab lock and its sight cone cuts for ~3s (a deterrent, doesn't free a grabbed hunter); `Space`
@@ -161,9 +169,9 @@ Shared (`shared/sim/`) — dependency‑free deterministic sim, imported by both
 - `.gitignore` covers `node_modules/` and `dist/`; lockfiles are committed.
 
 ## Not done yet (see ROADMAP)
-Bigfoot charge/surface‑climb + full senses overlay; rigged/animated models (Phase 6);
-post‑processing (bloom/vignette); deploy; full input‑replay movement prediction (Phase 2.3 stretch —
-server authority + correction already shipped). (Done: audio — procedural + diegetic; per‑night
-escalation; lobby/lifecycle + reconnection; **server‑authoritative movement + reconciliation +
-shared deterministic world**; **Phase 3 asymmetry — Bigfoot leap + limited‑range vision, searcher
-revive/dazzle/vault**.) Lock the vertical slice before piling on Phase 5+.
+Rigged/animated models (Phase 6); post‑processing (bloom/vignette/film grain); menus/settings/rebinding;
+deploy; full input‑replay movement prediction (Phase 2.3 stretch — server authority + correction already
+shipped). (Done: audio — procedural + diegetic; per‑night escalation; lobby/lifecycle + reconnection;
+**server‑authoritative movement + reconciliation + shared deterministic world**; **Phase 3 asymmetry
+complete — Bigfoot leap/charge/surface‑climb + limited‑range vision + senses overlay, searcher
+revive/dazzle/vault**.) **Phase 3 is done** — lock the slice before piling on Phase 5+.
