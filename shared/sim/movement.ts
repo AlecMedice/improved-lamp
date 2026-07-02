@@ -29,6 +29,7 @@ export type MoveInput = {
   d: boolean;
   yaw: number;
   jump: boolean;
+  leap: boolean; // Bigfoot-only: stamina-gated vertical bound (client sets it only for Bigfoot)
   sprint: boolean;
   crouch: boolean;
   dt: number;
@@ -118,8 +119,13 @@ export function stepPlayer(st: PlayerSimState, input: MoveInput, world: World, m
     }
   }
 
-  // Vertical: jump + gravity. feetY is the true feet height; >= groundY while airborne.
-  if (st.grounded && input.jump && !crouching) {
+  // Vertical: leap (Bigfoot) / jump + gravity. feetY is the true feet height; >= groundY while airborne.
+  // Leap is a taller, stamina-gated bound; it takes precedence over a normal jump for Bigfoot.
+  if (st.grounded && !crouching && st.isBigfoot && input.leap && st.stamina >= PLAYER.leapStaminaCost) {
+    st.vy = PLAYER.leapSpeed;
+    st.grounded = false;
+    st.stamina -= PLAYER.leapStaminaCost;
+  } else if (st.grounded && input.jump && !crouching) {
     st.vy = PLAYER.jumpSpeed;
     st.grounded = false;
   }

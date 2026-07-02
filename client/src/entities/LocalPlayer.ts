@@ -143,13 +143,16 @@ export class LocalPlayer {
 
   /** Build the movement command from the keyboard — also the payload streamed to the server. */
   buildInput(input: Input, dt: number): MoveInput {
+    const space = input.isDown("Space");
     return {
       w: input.isDown("KeyW"),
       s: input.isDown("KeyS"),
       a: input.isDown("KeyA"),
       d: input.isDown("KeyD"),
       yaw: this.sim.yaw,
-      jump: input.isDown("Space"),
+      // Space is a leap for Bigfoot (stamina-gated bound) and a normal jump for hunters.
+      jump: !this.isBigfoot && space,
+      leap: this.isBigfoot && space,
       sprint: input.isDown("ShiftLeft"),
       crouch: input.isDown("ControlLeft") || input.isDown("ControlRight"),
       dt,

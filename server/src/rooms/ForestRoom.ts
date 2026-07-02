@@ -63,7 +63,7 @@ const CAVES = generateCaves(WORLD.seed);
 const SPEED_GATE_MARGIN = 1.6; // generous headroom over sprint speed (diagonal + downhill + jitter)
 const SPEED_GATE_BASE = 2.0; // metres of always-allowed slack per move (covers bursts / first move)
 const Y_BELOW_TOL = 1.0; // how far below terrain a feet-y may sit (sampling slop) before clamping
-const Y_ABOVE_TOL = 3.0; // how far above terrain a feet-y may sit (jump arc ~0.85 m + headroom)
+const Y_ABOVE_TOL = 3.75; // how far above terrain a feet-y may sit (covers Bigfoot's leap apex ~2.82 m + headroom)
 
 type FilmFlag = { recording: boolean; inView: boolean };
 

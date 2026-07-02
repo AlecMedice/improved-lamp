@@ -45,6 +45,8 @@ export const PLAYER = {
   lakeHunterFactor: 0.28, // hunter speed multiplier while wading (heavy kit)
   lakeBigfootFactor: 0.72, // Bigfoot speed multiplier while wading (strong, but water impedes)
   jumpSpeed: 5.2, // initial upward velocity on jump (m/s)
+  leapSpeed: 9.5, // Bigfoot's leap: initial upward velocity (m/s), well above a hunter's jump
+  leapStaminaCost: 30, // stamina spent per leap (gates spamming)
   gravity: 16, // downward acceleration while airborne (m/s^2)
   crouchFactor: 0.55, // eye-height multiplier while crouched
   crouchSpeedMul: 0.5, // movement-speed multiplier while crouched

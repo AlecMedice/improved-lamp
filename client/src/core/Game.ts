@@ -210,7 +210,9 @@ export class Game {
     // Bigfoot: ability readout + cave-travel prompt.
     if (this.isBigfoot && !this.ended) {
       this.roarCooldown = Math.max(0, this.roarCooldown - dt);
-      this.hud.setAbility(this.roarCooldown > 0 ? `Roar: ${Math.ceil(this.roarCooldown)}s` : "Roar ready (right-click)");
+      const roarText = this.roarCooldown > 0 ? `Roar: ${Math.ceil(this.roarCooldown)}s` : "Roar ready (right-click)";
+      const leapText = this.player.stamina >= PLAYER.leapStaminaCost ? "Leap ready (space)" : "Leap: low stamina";
+      this.hud.setAbility(`${roarText} · ${leapText}`);
       this.caveCooldown = Math.max(0, this.caveCooldown - dt);
       const caveReady = this.caveCooldown === 0 && this.nearestCaveIndex() >= 0;
       this.hud.setPrompt(caveReady && !this.map.isOpen ? "Press M — choose a cave to travel to" : null);
