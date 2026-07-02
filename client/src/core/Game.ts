@@ -38,7 +38,7 @@ export class Game {
   private sendAccum = 0;
   private timeOfDay = 0;
   private serverTimeOfDay: number | null = null;
-  private self: SelfInfo = { status: "active", filmProgress: 0, role: "searcher", slowed: false };
+  private self: SelfInfo = { status: "active", filmProgress: 0, role: "searcher", slowed: false, dazzled: false };
   private ended = false;
   private caveCooldown = 0;
   private traveling = false; // suspends local control + move-sends during a cave hop
@@ -213,9 +213,15 @@ export class Game {
     // Bigfoot: ability readout + cave-travel prompt.
     if (this.isBigfoot && !this.ended) {
       this.roarCooldown = Math.max(0, this.roarCooldown - dt);
-      const roarText = this.roarCooldown > 0 ? `Roar: ${Math.ceil(this.roarCooldown)}s` : "Roar ready (right-click)";
-      const leapText = this.player.stamina >= PLAYER.leapStaminaCost ? "Leap ready (space)" : "Leap: low stamina";
-      this.hud.setAbility(`${roarText} · ${leapText}`);
+      // A searcher's sustained flashlight blinds Bigfoot: cut the sight cone and lock roar/grab.
+      if (this.player.visionLight) this.player.visionLight.intensity = this.self.dazzled ? 0 : BIGFOOT_VISION.intensity;
+      if (this.self.dazzled) {
+        this.hud.setAbility("DAZZLED — blinded by a flashlight, can't roar or grab");
+      } else {
+        const roarText = this.roarCooldown > 0 ? `Roar: ${Math.ceil(this.roarCooldown)}s` : "Roar ready (right-click)";
+        const leapText = this.player.stamina >= PLAYER.leapStaminaCost ? "Leap ready (space)" : "Leap: low stamina";
+        this.hud.setAbility(`${roarText} · ${leapText}`);
+      }
       this.caveCooldown = Math.max(0, this.caveCooldown - dt);
       const caveReady = this.caveCooldown === 0 && this.nearestCaveIndex() >= 0;
       this.hud.setPrompt(caveReady && !this.map.isOpen ? "Press M — choose a cave to travel to" : null);
@@ -272,7 +278,11 @@ export class Game {
         this.reviveProgress = Math.max(0, this.reviveProgress - dt * 2); // bleed off when not holding
         this.reviveTickTimer = 0;
         this.reviveWasFull = false;
-        this.hud.setPrompt(target ? "Hold E to revive teammate" : null);
+        // Prompt priority: an in-range revive, else a hint that our flashlight is dazzling Bigfoot.
+        const dazzling = !locked && this.player.isFlashlightOn && this.computeBigfootInView();
+        this.hud.setPrompt(
+          target ? "Hold E to revive teammate" : dazzling ? "Blinding Bigfoot — hold the light on it" : null
+        );
       }
       this.hud.setReviveProgress(this.reviveProgress);
     }
@@ -367,14 +377,14 @@ export class Game {
   }
 
   private tryRoar() {
-    if (!this.isBigfoot || this.ended || this.map.isOpen || this.roarCooldown > 0) return;
+    if (!this.isBigfoot || this.ended || this.map.isOpen || this.roarCooldown > 0 || this.self.dazzled) return;
     this.net.sendRoar();
     this.audio.playOnce("roar", { volume: 0.9 }); // our own roar, up close
     this.roarCooldown = this.roarCooldownSec;
   }
 
   private tryGrab() {
-    if (!this.isBigfoot || this.ended || this.map.isOpen) return;
+    if (!this.isBigfoot || this.ended || this.map.isOpen || this.self.dazzled) return;
     this.net.sendGrab();
     this.audio.playOnce("grab_impact", { volume: 0.5 }); // the swing
   }

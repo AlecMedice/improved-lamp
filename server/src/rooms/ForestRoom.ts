@@ -1,6 +1,6 @@
 import { Room, Client } from "@colyseus/core";
 import { GameState, Player, Clue, Ping } from "./schema/GameState";
-import { WORLD, PLAYER, CAVE, generateCaves, makeWorld, resolveCollision } from "../../../shared/sim";
+import { WORLD, PLAYER, CAVE, generateCaves, makeWorld, resolveCollision, lineBlocked } from "../../../shared/sim";
 
 // --- Night / match structure ---
 // One night runs 8pm -> 8am in this many real seconds. Overridable via env for quick test matches.
@@ -35,6 +35,13 @@ const SLOW_SECONDS = 30; // movement-slow window after recovering from incapacit
 const REVIVE_RADIUS = 3.5; // how close an active hunter must stand to revive an incapacitated one
 const REVIVE_SECONDS = 4; // seconds of holding the revive before the teammate is freed
 const REVIVE_DECAY = 2; // progress bleeds off this many x real-time when nobody is reviving
+
+// --- Searcher defense (dazzle Bigfoot with a sustained flashlight beam) ---
+const DAZZLE_RANGE = 40; // max distance the beam deters from (< a flashlight's 60 m reach)
+const DAZZLE_AIM_COS = Math.cos(0.38); // beam must be centred within ~22 deg of Bigfoot
+const DAZZLE_FILL_SECONDS = 1.2; // sustained on-target time before Bigfoot is dazzled
+const DAZZLE_SECONDS = 3; // how long the dazzle (sight-cut + roar/grab lock) lingers after the beam
+const DAZZLE_DECAY = 2; // fill bleeds off this many x real-time once the beam leaves
 
 // --- Per-night escalation -------------------------------------------------------------------
 // Each night the forest grows bolder. Indexed by nightNumber-1 (clamped to the last entry).
@@ -99,6 +106,8 @@ export class ForestRoom extends Room<GameState> {
   private grabbedBy = new Map<string, string>(); // hunter sid -> bigfoot sid currently dragging
   private reviveIntent = new Map<string, string>(); // reviver sid -> the incap teammate sid they're reviving
   private reviveProgress = new Map<string, number>(); // incap target sid -> seconds of revive accrued
+  private dazzleFill = new Map<string, number>(); // bigfoot sid -> seconds of sustained flashlight on it
+  private dazzledUntil = new Map<string, number>(); // bigfoot sid -> elapsed when the dazzle wears off
   private devRoles = new Map<string, string>(); // sid -> "bigfoot"|"searcher" (dev URL param override)
 
   onCreate() {
@@ -158,6 +167,7 @@ export class ForestRoom extends Room<GameState> {
 
     // Bigfoot roars: freezes every active hunter within ROAR_RADIUS for FREEZE_SECONDS.
     this.onMessage("roar", (client) => {
+      if (this.elapsed < (this.dazzledUntil.get(client.sessionId) ?? 0)) return; // blinded — can't roar
       const bf = this.state.players.get(client.sessionId);
       if (!bf || bf.role !== "bigfoot") return;
       if (this.elapsed < (this.roarReadyAt.get(client.sessionId) ?? 0)) return;
@@ -177,6 +187,7 @@ export class ForestRoom extends Room<GameState> {
 
     // Bigfoot grabs (left-click): grab the nearest frozen hunter, or drop the one being dragged.
     this.onMessage("grab", (client) => {
+      if (this.elapsed < (this.dazzledUntil.get(client.sessionId) ?? 0)) return; // blinded — can't grab
       const bf = this.state.players.get(client.sessionId);
       if (!bf || bf.role !== "bigfoot") return;
 
@@ -300,6 +311,8 @@ export class ForestRoom extends Room<GameState> {
     this.grabbedBy.delete(sid);
     this.reviveIntent.delete(sid);
     this.reviveProgress.delete(sid);
+    this.dazzleFill.delete(sid);
+    this.dazzledUntil.delete(sid);
     this.lastMoveMs.delete(sid);
     this.caveReadyAt.delete(sid);
     this.devRoles.delete(sid);
@@ -409,6 +422,8 @@ export class ForestRoom extends Room<GameState> {
     this.grabbedBy.clear();
     this.reviveIntent.clear();
     this.reviveProgress.clear();
+    this.dazzleFill.clear();
+    this.dazzledUntil.clear();
     this.lastMoveMs.clear();
     this.caveReadyAt.clear();
   }
@@ -459,6 +474,7 @@ export class ForestRoom extends Room<GameState> {
     this.expirePings();
     this.updateRevives(dt);
     this.updateStatuses();
+    this.updateDazzle(dt, hunters, bigfoots);
     this.updateFilming(dt, hunters, bigfoots);
     this.evaluateWin(hunters, nightsComplete);
   }
@@ -502,6 +518,40 @@ export class ForestRoom extends Room<GameState> {
       const flag = revivedThisTick.has(sid);
       if (p.beingRevived !== flag) p.beingRevived = flag;
     });
+  }
+
+  /**
+   * A searcher who keeps a lit flashlight trained on Bigfoot (range + cone + line-of-sight) charges a
+   * "dazzle": once sustained it blinds Bigfoot for a few seconds — its roar/grab are locked and its
+   * client cuts the sight cone. A deterrent, not a stun-lock: it never frees an already-grabbed hunter.
+   */
+  private updateDazzle(dt: number, hunters: Array<{ sid: string; p: Player }>, bigfoots: Array<{ sid: string; p: Player }>) {
+    for (const { sid: bfSid, p: bf } of bigfoots) {
+      let aimed = false;
+      for (const { p: h } of hunters) {
+        if (h.status !== "active" || !h.flashlightOn) continue;
+        const dx = bf.x - h.x;
+        const dz = bf.z - h.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist > DAZZLE_RANGE || dist < 1e-3) continue;
+        // Beam forward from the hunter's yaw (matches the sim's -sin/-cos convention).
+        const dot = (dx / dist) * -Math.sin(h.ry) + (dz / dist) * -Math.cos(h.ry);
+        if (dot < DAZZLE_AIM_COS) continue; // Bigfoot isn't centred in the beam
+        if (lineBlocked(this.world.colliders, h, bf)) continue; // a tree/rock blocks the light
+        aimed = true;
+        break;
+      }
+
+      const fill = aimed
+        ? Math.min(DAZZLE_FILL_SECONDS, (this.dazzleFill.get(bfSid) ?? 0) + dt)
+        : Math.max(0, (this.dazzleFill.get(bfSid) ?? 0) - dt * DAZZLE_DECAY);
+      this.dazzleFill.set(bfSid, fill);
+      // Sustained aim keeps refreshing the dazzle window, so it lingers DAZZLE_SECONDS after the beam leaves.
+      if (fill >= DAZZLE_FILL_SECONDS) this.dazzledUntil.set(bfSid, this.elapsed + DAZZLE_SECONDS);
+
+      const dazzled = this.elapsed < (this.dazzledUntil.get(bfSid) ?? 0);
+      if (bf.dazzled !== dazzled) bf.dazzled = dazzled;
+    }
   }
 
   /** Tick freeze/incapacitation/slow timers and drag incapacitated hunters along. */

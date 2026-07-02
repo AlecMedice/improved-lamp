@@ -12,7 +12,7 @@ type MovePayload = {
   reviving: boolean; reviveTarget: string; // hunter reviving a downed teammate (held action)
 };
 
-export type SelfInfo = { status: string; filmProgress: number; role: string; slowed: boolean };
+export type SelfInfo = { status: string; filmProgress: number; role: string; slowed: boolean; dazzled: boolean };
 
 /** Per-night escalation multipliers, server-authoritative (see GameState). */
 export type EscalationInfo = {
@@ -122,6 +122,7 @@ export class Network {
             filmProgress: player.filmProgress,
             role: player.role,
             slowed: player.slowed,
+            dazzled: !!player.dazzled,
           });
         applySelf();
         player.onChange(applySelf);
