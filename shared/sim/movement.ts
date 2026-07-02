@@ -30,6 +30,7 @@ export type MoveInput = {
   yaw: number;
   jump: boolean;
   leap: boolean; // Bigfoot-only: stamina-gated vertical bound (client sets it only for Bigfoot)
+  vault: boolean; // searcher-only: hop over a fallen log (client sets it only for hunters)
   sprint: boolean;
   crouch: boolean;
   dt: number;
@@ -77,9 +78,19 @@ export function stepPlayer(st: PlayerSimState, input: MoveInput, world: World, m
   if (crouching) speed *= PLAYER.crouchSpeedMul;
 
   // Terrain obstacles: fallen logs slow hunters only; lake slows everyone (less so Bigfoot).
+  // A hunter can VAULT a log — a stamina-gated hop that clambers over it instead of wading (slowed).
+  // While airborne over the log (a vault in progress) the slow doesn't apply.
   if (!st.isBigfoot) {
     const logOvl = logOverlap(world.fallenLogs, st.x, st.z, PLAYER.radius);
-    if (logOvl > 0) speed *= lerp(1, PLAYER.logSlowFactor, logOvl);
+    if (logOvl > 0 && st.grounded) {
+      if (input.vault && st.stamina >= PLAYER.vaultStaminaCost) {
+        st.vy = PLAYER.vaultHopSpeed;
+        st.grounded = false;
+        st.stamina -= PLAYER.vaultStaminaCost;
+      } else {
+        speed *= lerp(1, PLAYER.logSlowFactor, logOvl);
+      }
+    }
   }
   const lakeDep = lakeDepth(st.x, st.z);
   if (lakeDep > 0) {

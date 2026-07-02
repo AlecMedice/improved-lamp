@@ -42,6 +42,8 @@ export const PLAYER = {
   stepIntervalSprint: 0.32, // seconds between footstep sounds while sprinting
   stepHeight: 0.75, // max terrain rise auto-stepped over when a collider blocks (m)
   logSlowFactor: 0.35, // hunter speed multiplier when clambering over a fallen log
+  vaultHopSpeed: 4.6, // upward velocity when a hunter vaults a fallen log (a clamber, < jumpSpeed)
+  vaultStaminaCost: 12, // stamina spent to vault a log (negates its slow instead of wading over it)
   lakeHunterFactor: 0.28, // hunter speed multiplier while wading (heavy kit)
   lakeBigfootFactor: 0.72, // Bigfoot speed multiplier while wading (strong, but water impedes)
   jumpSpeed: 5.2, // initial upward velocity on jump (m/s)

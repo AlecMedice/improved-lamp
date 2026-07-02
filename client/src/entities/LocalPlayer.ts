@@ -150,9 +150,11 @@ export class LocalPlayer {
       a: input.isDown("KeyA"),
       d: input.isDown("KeyD"),
       yaw: this.sim.yaw,
-      // Space is a leap for Bigfoot (stamina-gated bound) and a normal jump for hunters.
+      // Space is a leap for Bigfoot (stamina-gated bound) and a normal jump for hunters; for hunters
+      // it also engages a vault when standing on a fallen log (the sim picks vault over jump there).
       jump: !this.isBigfoot && space,
       leap: this.isBigfoot && space,
+      vault: !this.isBigfoot && space,
       sprint: input.isDown("ShiftLeft"),
       crouch: input.isDown("ControlLeft") || input.isDown("ControlRight"),
       dt,
