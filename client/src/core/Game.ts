@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { NET, FILM, NIGHT_SECONDS, CAVES, CAVE, ABILITY, MAP, PLAYER } from "../config";
+import { NET, FILM, NIGHT_SECONDS, CAVES, CAVE, ABILITY, MAP, PLAYER, BIGFOOT_VISION } from "../config";
 import { Environment } from "../world/Environment";
 import { ClueField } from "../world/ClueField";
 import { PingField } from "../world/PingField";
@@ -65,8 +65,10 @@ export class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    // Bigfoot sees better in the dark (its own render only — scenes are per-client).
-    this.renderer.toneMappingExposure = this.isBigfoot ? 1.7 : 1.15;
+    // Per-client render (scenes don't leak). Bigfoot no longer gets a blanket brightness buff —
+    // its night sight is the dim short-range vision cone (see LocalPlayer); exposure stays near
+    // the searcher's so the far scene goes dark beyond that cone.
+    this.renderer.toneMappingExposure = this.isBigfoot ? BIGFOOT_VISION.exposure : 1.15;
 
     this.camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 900);
     this.scene.add(this.camera); // so the flashlight (a child) renders
@@ -84,8 +86,9 @@ export class Game {
     this.player = new LocalPlayer(this.camera, this.env, role, spawn, this.audio);
 
     if (this.isBigfoot) {
-      // A constant dim floor so Bigfoot can navigate once the night turns black.
-      this.scene.add(new THREE.HemisphereLight(0x34405e, 0x10131c, 0.5));
+      // A very faint floor so Bigfoot isn't in pitch black outside its vision cone — but low
+      // enough that distance still falls to darkness (the cone is the real sight now).
+      this.scene.add(new THREE.HemisphereLight(0x34405e, 0x10131c, 0.12));
     }
 
     this.input = new Input(canvas);

@@ -18,6 +18,21 @@ export const ABILITY = {
 };
 
 /**
+ * Bigfoot's night sight. It has no flashlight, so instead of the old always-on brightness buff
+ * it gets a dim, short-range vision cone riding the camera — deliberately weaker and shorter than
+ * a searcher's flashlight (range 60, intensity 140): Bigfoot sees a near bubble and loses the far
+ * scene to darkness. `exposure` replaces the old per-role tone-mapping so distance actually goes
+ * dark. Tuned by eye (project convention). See LocalPlayer (the light) + Game (exposure).
+ */
+export const BIGFOOT_VISION = {
+  range: 22, // metres the sight reaches (< flashlight's 60)
+  intensity: 55, // beam brightness (< flashlight's 140)
+  angle: 0.95, // wide, soft cone (creature eyes, not a torch)
+  penumbra: 0.7, // soft edge
+  exposure: 1.2, // tone-mapping exposure (~ the searcher's 1.15; was 1.7 always-on)
+};
+
+/**
  * Per-night escalation lives on the server (the `ESCALATION` table in `ForestRoom.ts`),
  * which replicates the multipliers to clients — single source of truth. See GameState.
  */

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { PLAYER } from "../config";
+import { PLAYER, BIGFOOT_VISION } from "../config";
 import { Input } from "../core/Input";
 import { Environment } from "../world/Environment";
 import { AudioEngine } from "../core/AudioEngine";
@@ -13,6 +13,8 @@ import { stepPlayer, type PlayerSimState, type MoveInput, type StepResult, type 
 export class LocalPlayer {
   readonly camera: THREE.PerspectiveCamera;
   readonly flashlight: THREE.SpotLight;
+  /** Bigfoot's dim short-range night sight (rides the camera; undefined for hunters). */
+  readonly visionLight?: THREE.SpotLight;
   readonly position = new THREE.Vector3(); // eye position (derived from sim each frame)
   readonly isBigfoot: boolean;
   externalSpeedMul = 1; // set by Game (e.g. 0.75 while slowed after incapacitation)
@@ -65,6 +67,16 @@ export class LocalPlayer {
     this.flashlight.position.set(0, 0, 0);
     this.flashlight.target.position.set(0, 0, -1);
     camera.add(this.flashlight, this.flashlight.target);
+
+    // Bigfoot has no flashlight; instead a dim, short-range sight cone rides the camera so it can
+    // see a near bubble but loses the far scene to darkness (weaker/shorter than a flashlight).
+    if (this.isBigfoot) {
+      const v = BIGFOOT_VISION;
+      this.visionLight = new THREE.SpotLight(0xcfe0ff, v.intensity, v.range, v.angle, v.penumbra, 1.2);
+      this.visionLight.position.set(0, 0, 0);
+      this.visionLight.target.position.set(0, 0, -1);
+      camera.add(this.visionLight, this.visionLight.target);
+    }
   }
 
   get isFlashlightOn() {
