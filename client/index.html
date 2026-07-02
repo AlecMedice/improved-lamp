@@ -57,6 +57,7 @@
       #film-bar { position: absolute; bottom: 16%; left: 50%; transform: translateX(-50%);
         width: 240px; height: 8px; border-radius: 6px; background: rgba(255,255,255,.18); overflow: hidden; }
       #film-fill { display: block; height: 100%; width: 0%; background: var(--red); transition: width .1s linear; }
+      #revive-fill { display: block; height: 100%; width: 0%; background: #5fe08a; transition: width .1s linear; }
 
       /* Status banner (frozen / incapacitated) */
       #status-banner { position: fixed; top: 14%; left: 50%; transform: translateX(-50%);
@@ -130,6 +131,7 @@
         <div class="pill"><span class="label">Flashlight</span><div class="bar"><i id="battery-fill"></i></div></div>
         <div class="pill"><span class="label">Stamina</span><div class="bar"><i id="stamina-fill"></i></div></div>
         <div class="pill" id="film-pill"><span class="label">Clip</span><div class="bar"><i id="film-fill"></i></div></div>
+        <div class="pill" id="revive-pill" style="display:none"><span class="label">Revive</span><div class="bar"><i id="revive-fill"></i></div></div>
       </div>
       <div id="objective"></div>
       <div id="prompt"></div>

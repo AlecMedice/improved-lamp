@@ -9,6 +9,7 @@ type MovePayload = {
   x: number; y: number; z: number; ry: number;
   flashlightOn: boolean; battery: number; stamina: number;
   recording: boolean; inView: boolean;
+  reviving: boolean; reviveTarget: string; // hunter reviving a downed teammate (held action)
 };
 
 export type SelfInfo = { status: string; filmProgress: number; role: string; slowed: boolean };
@@ -133,6 +134,7 @@ export class Network {
         rp.setTarget(player.x, player.y, player.z, player.ry, player.flashlightOn);
         rp.setFilming(player.filming);
         rp.setStatus(player.status);
+        rp.setBeingRevived(!!player.beingRevived);
       };
       apply();
       player.onChange(apply);
@@ -187,6 +189,26 @@ export class Network {
   getSelfPosition(): { x: number; z: number } | null {
     const p = (this.room?.state as any)?.players?.get(this.room?.sessionId);
     return p ? { x: p.x, z: p.z } : null;
+  }
+
+  /** Nearest incapacitated teammate within `radius` of (x,z) — the local hunter's revive target. */
+  getIncapTeammate(x: number, z: number, radius: number): { sid: string; x: number; z: number } | null {
+    const players = (this.room?.state as any)?.players;
+    if (!players) return null;
+    const selfSid = this.room?.sessionId;
+    let best: { sid: string; x: number; z: number } | null = null;
+    let bestD = radius * radius;
+    players.forEach((p: any, sid: string) => {
+      if (sid === selfSid || p.role === "bigfoot" || p.status !== "incapacitated") return;
+      const dx = p.x - x;
+      const dz = p.z - z;
+      const d = dx * dx + dz * dz;
+      if (d <= bestD) {
+        bestD = d;
+        best = { sid, x: p.x, z: p.z };
+      }
+    });
+    return best;
   }
 
   /** World position of the (remote) Bigfoot, or null if none / Bigfoot is local. */

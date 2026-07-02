@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { NET, FILM, NIGHT_SECONDS, CAVES, CAVE, ABILITY, MAP, PLAYER, BIGFOOT_VISION } from "../config";
+import { NET, FILM, NIGHT_SECONDS, CAVES, CAVE, ABILITY, REVIVE, MAP, PLAYER, BIGFOOT_VISION } from "../config";
 import { Environment } from "../world/Environment";
 import { ClueField } from "../world/ClueField";
 import { PingField } from "../world/PingField";
@@ -44,6 +44,9 @@ export class Game {
   private traveling = false; // suspends local control + move-sends during a cave hop
   private roarCooldown = 0;
   private roarCooldownSec = ABILITY.roarCooldown; // effective, from server escalation
+  private reviveProgress = 0; // 0..1 local estimate of the teammate revive being held (server-authoritative)
+  private reviveTickTimer = 0; // spacing for the revive channel cue while holding
+  private reviveWasFull = false; // guards the one-shot success cue
   private night = 1;
   private totalNights = 3;
 
@@ -236,6 +239,9 @@ export class Game {
     // Filming (hunters only): hold right mouse to record; Bigfoot in frame builds footage.
     let recording = false;
     let inView = false;
+    // Revive (hunters only): hold E near a downed teammate to free them (server-authoritative).
+    let reviving = false;
+    let reviveTarget = "";
     if (!this.isBigfoot) {
       if (!locked) {
         recording = this.input.isMouseDown(2);
@@ -243,6 +249,32 @@ export class Game {
       }
       this.hud.setRecording(recording, inView); // recording=false hides the viewfinder
       this.hud.setFilmProgress(this.self.filmProgress);
+
+      const target = !locked
+        ? this.net.getIncapTeammate(this.player.position.x, this.player.position.z, REVIVE.radius)
+        : null;
+      const holdingE = target !== null && this.input.isDown("KeyE");
+      if (holdingE) {
+        reviving = true;
+        reviveTarget = target!.sid;
+        this.reviveProgress = Math.min(1, this.reviveProgress + dt / REVIVE.seconds);
+        this.reviveTickTimer -= dt;
+        if (this.reviveTickTimer <= 0) {
+          this.audio.playOnce("revive_channel", { volume: 0.5 });
+          this.reviveTickTimer = 0.22;
+        }
+        if (this.reviveProgress >= 1 && !this.reviveWasFull) {
+          this.audio.playOnce("revive_success", { volume: 0.5 });
+          this.reviveWasFull = true;
+        }
+        this.hud.setPrompt("Reviving teammate…");
+      } else {
+        this.reviveProgress = Math.max(0, this.reviveProgress - dt * 2); // bleed off when not holding
+        this.reviveTickTimer = 0;
+        this.reviveWasFull = false;
+        this.hud.setPrompt(target ? "Hold E to revive teammate" : null);
+      }
+      this.hud.setReviveProgress(this.reviveProgress);
     }
 
     // Stream our transform + intent to the server at a fixed rate.
@@ -260,6 +292,8 @@ export class Game {
           stamina: this.player.stamina,
           recording,
           inView,
+          reviving,
+          reviveTarget,
         });
       }
     }

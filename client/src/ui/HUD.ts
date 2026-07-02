@@ -31,8 +31,19 @@ export class HUD {
     this.el("objective").textContent = bigfoot
       ? "Survive 3 nights. Right-click ROAR to freeze hunters, left-click GRAB a frozen one."
       : "Film Bigfoot 3 times to win — track its footprints, and don't get caught.";
-    if (bigfoot) this.el("film-pill").style.display = "none";
-    else this.el("ability").style.display = "none";
+    if (bigfoot) {
+      this.el("film-pill").style.display = "none";
+      this.el("revive-pill").style.display = "none";
+    } else {
+      this.el("ability").style.display = "none";
+    }
+  }
+
+  /** Revive progress bar (0..1) shown while the local hunter is reviving a teammate; hidden at 0. */
+  setReviveProgress(p: number) {
+    const pill = this.el("revive-pill");
+    pill.style.display = p > 0 ? "" : "none";
+    this.el("revive-fill").style.width = `${Math.round(p * 100)}%`;
   }
 
   /** Bigfoot's ability readout (roar cooldown). Pass null to clear. */

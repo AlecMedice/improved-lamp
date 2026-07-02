@@ -31,6 +31,11 @@ const GRAB_RADIUS = 3.5; // how close Bigfoot must be to grab a frozen hunter
 const INCAP_SECONDS = 60; // how long a grabbed hunter is incapacitated (and draggable)
 const SLOW_SECONDS = 30; // movement-slow window after recovering from incapacitation
 
+// --- Searcher defense (revive a downed teammate) ---
+const REVIVE_RADIUS = 3.5; // how close an active hunter must stand to revive an incapacitated one
+const REVIVE_SECONDS = 4; // seconds of holding the revive before the teammate is freed
+const REVIVE_DECAY = 2; // progress bleeds off this many x real-time when nobody is reviving
+
 // --- Per-night escalation -------------------------------------------------------------------
 // Each night the forest grows bolder. Indexed by nightNumber-1 (clamped to the last entry).
 // Multipliers against the baselines above; tune freely. `speed/battery/stamina` are replicated
@@ -92,6 +97,8 @@ export class ForestRoom extends Room<GameState> {
   private incapUntil = new Map<string, number>(); // hunter sid -> elapsed when incapacitation ends
   private slowUntil = new Map<string, number>(); // hunter sid -> elapsed when slow ends
   private grabbedBy = new Map<string, string>(); // hunter sid -> bigfoot sid currently dragging
+  private reviveIntent = new Map<string, string>(); // reviver sid -> the incap teammate sid they're reviving
+  private reviveProgress = new Map<string, number>(); // incap target sid -> seconds of revive accrued
   private devRoles = new Map<string, string>(); // sid -> "bigfoot"|"searcher" (dev URL param override)
 
   onCreate() {
@@ -114,6 +121,11 @@ export class ForestRoom extends Room<GameState> {
       flag.inView = !!data.inView;
       this.filmFlags.set(client.sessionId, flag);
       p.filming = flag.recording && p.role !== "bigfoot";
+
+      // Held-action revive intent (validated in updateRevives, like filming — no separate RPC).
+      const reviveTarget = typeof data.reviveTarget === "string" ? data.reviveTarget : "";
+      if (data.reviving && reviveTarget && p.role !== "bigfoot") this.reviveIntent.set(client.sessionId, reviveTarget);
+      else this.reviveIntent.delete(client.sessionId);
     });
 
     // Bigfoot fast-travels between cave mouths (validated server-side; replaces the old client self-teleport).
@@ -286,11 +298,15 @@ export class ForestRoom extends Room<GameState> {
     this.slowUntil.delete(sid);
     this.roarReadyAt.delete(sid);
     this.grabbedBy.delete(sid);
+    this.reviveIntent.delete(sid);
+    this.reviveProgress.delete(sid);
     this.lastMoveMs.delete(sid);
     this.caveReadyAt.delete(sid);
     this.devRoles.delete(sid);
     // If a leaving Bigfoot was dragging hunters, free them (they stay incapacitated in place).
     for (const [hsid, bsid] of this.grabbedBy) if (bsid === sid) this.grabbedBy.delete(hsid);
+    // Drop any revive intent aimed at the leaver (their target vanished).
+    for (const [rsid, tsid] of this.reviveIntent) if (tsid === sid) this.reviveIntent.delete(rsid);
     // Hand the host role to any remaining player.
     if (this.state.hostId === sid) {
       const next = this.state.players.keys().next();
@@ -391,6 +407,8 @@ export class ForestRoom extends Room<GameState> {
     this.incapUntil.clear();
     this.slowUntil.clear();
     this.grabbedBy.clear();
+    this.reviveIntent.clear();
+    this.reviveProgress.clear();
     this.lastMoveMs.clear();
     this.caveReadyAt.clear();
   }
@@ -439,9 +457,51 @@ export class ForestRoom extends Room<GameState> {
     this.dropClues(bigfoots);
     this.expireClues();
     this.expirePings();
+    this.updateRevives(dt);
     this.updateStatuses();
     this.updateFilming(dt, hunters, bigfoots);
     this.evaluateWin(hunters, nightsComplete);
+  }
+
+  /**
+   * Accumulate revive progress from active hunters holding the revive on a downed teammate in range.
+   * On completion the target returns to `active` (post-incap slowed), interrupting Bigfoot's drag and
+   * footage pressure. Progress decays when nobody is actively reviving; `beingRevived` is replicated.
+   */
+  private updateRevives(dt: number) {
+    const revivedThisTick = new Set<string>();
+
+    for (const [reviverSid, targetSid] of this.reviveIntent) {
+      const reviver = this.state.players.get(reviverSid);
+      const target = this.state.players.get(targetSid);
+      if (!reviver || reviver.role === "bigfoot" || reviver.status !== "active") continue;
+      if (!target || target.status !== "incapacitated") continue;
+      if (dist2(reviver, target) > REVIVE_RADIUS * REVIVE_RADIUS) continue;
+
+      const prog = (this.reviveProgress.get(targetSid) ?? 0) + dt;
+      revivedThisTick.add(targetSid);
+      if (prog >= REVIVE_SECONDS) {
+        target.status = "active"; // freed early — same post-incap recovery as a natural wake-up
+        this.incapUntil.delete(targetSid);
+        this.grabbedBy.delete(targetSid);
+        this.slowUntil.set(targetSid, this.elapsed + SLOW_SECONDS);
+        this.reviveProgress.delete(targetSid);
+      } else {
+        this.reviveProgress.set(targetSid, prog);
+      }
+    }
+
+    // Bleed off progress for anyone no longer being actively revived; publish the in-progress flag.
+    for (const [targetSid, prog] of this.reviveProgress) {
+      if (revivedThisTick.has(targetSid)) continue;
+      const decayed = prog - dt * REVIVE_DECAY;
+      if (decayed <= 0) this.reviveProgress.delete(targetSid);
+      else this.reviveProgress.set(targetSid, decayed);
+    }
+    this.state.players.forEach((p, sid) => {
+      const flag = revivedThisTick.has(sid);
+      if (p.beingRevived !== flag) p.beingRevived = flag;
+    });
   }
 
   /** Tick freeze/incapacitation/slow timers and drag incapacitated hunters along. */

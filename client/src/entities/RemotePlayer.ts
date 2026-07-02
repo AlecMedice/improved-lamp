@@ -20,6 +20,8 @@ export class RemotePlayer {
   private recLight?: THREE.Mesh; // small red marker shown while this hunter records
   private statusIcon?: THREE.Mesh; // floats above a frozen/incapacitated hunter
   private statusMat?: THREE.MeshBasicMaterial;
+  private beingRevived = false; // pulse the incap icon while a teammate is reviving this hunter
+  private pulseT = 0;
 
   // Positional footsteps: accrue ground distance covered and emit a step each stride.
   private stepDist = 0;
@@ -103,9 +105,19 @@ export class RemotePlayer {
     }
   }
 
-  update(_dt: number) {
+  /** A teammate is reviving this downed hunter — pulse the red icon so allies can see the rescue. */
+  setBeingRevived(on: boolean) {
+    this.beingRevived = on;
+    if (!on && this.statusIcon) this.statusIcon.scale.setScalar(1);
+  }
+
+  update(dt: number) {
     this.applyInterpolation();
     this.tickFootsteps();
+    if (this.beingRevived && this.statusIcon) {
+      this.pulseT += dt;
+      this.statusIcon.scale.setScalar(1 + 0.4 * Math.sin(this.pulseT * 10));
+    }
   }
 
   /** Place the avatar at the interpolated position for "now − INTERP_DELAY". */

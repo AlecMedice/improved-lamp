@@ -24,12 +24,14 @@ export type CueName =
   | "night_sting"
   | "victory"
   | "defeat"
+  | "revive_channel"
+  | "revive_success"
   | "heartbeat";
 
 const CUES: CueName[] = [
   "roar", "footstep_soft", "footstep_heavy", "branch_snap", "flashlight_click", "ping_drop",
   "video_captured", "freeze_sting", "grab_impact", "cave_whoosh", "night_sting", "victory",
-  "defeat", "heartbeat",
+  "defeat", "revive_channel", "revive_success", "heartbeat",
 ];
 
 type PlayOpts = { volume?: number; refDistance?: number; rolloff?: number };
@@ -357,6 +359,19 @@ export class AudioEngine {
 
     this.buffers.set("victory", this.arp([523, 659, 784, 1047], 0.18, 5, 0.3));
     this.buffers.set("defeat", this.arp([392, 349, 311, 233], 0.22, 3.5, 0.3));
+
+    // Revive channel: a soft pulsing tick emitted while holding a teammate's revive.
+    this.buffers.set(
+      "revive_channel",
+      this.synth(0.12, (d, sr) => {
+        for (let i = 0; i < d.length; i++) {
+          const t = i / sr;
+          d[i] = Math.sin(2 * Math.PI * 520 * t) * Math.min(1, t / 0.01) * Math.exp(-t * 24) * 0.3;
+        }
+      })
+    );
+    // Revive success: a warm rising triad (your teammate is back up).
+    this.buffers.set("revive_success", this.arp([523, 698, 880], 0.13, 7, 0.32));
 
     // Heartbeat: a low lub-dub.
     this.buffers.set(

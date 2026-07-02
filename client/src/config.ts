@@ -17,6 +17,12 @@ export const ABILITY = {
   roarCooldown: 25, // seconds between roars (UI gate, mirrors server)
 };
 
+/** Searcher revive (client-side prompt + progress bar; the server is authoritative on completion). */
+export const REVIVE = {
+  radius: 3.5, // how close to a downed teammate you must stand (mirrors server REVIVE_RADIUS)
+  seconds: 4, // hold time to free them (mirrors server REVIVE_SECONDS) — drives the local bar
+};
+
 /**
  * Bigfoot's night sight. It has no flashlight, so instead of the old always-on brightness buff
  * it gets a dim, short-range vision cone riding the camera — deliberately weaker and shorter than
