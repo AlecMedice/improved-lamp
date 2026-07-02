@@ -9,6 +9,13 @@ Working list of known issues. Newest first. Remove an entry once it's verified f
 **Severity:** medium (visual / immersion; not a blocker)
 **Role affected:** Bigfoot only
 **First reported:** 2026-06-20
+**Retested:** 2026-07-02 — still reproduces, confirmed by the user after Phase 3A landed
+(Bigfoot's night vision rework: blanket exposure buff replaced with a short-range vision
+cone, and the always-on hemisphere light dimmed 0.5 → 0.12; see `docs/PHASE_3_PLAN.md`).
+That rework touches hypothesis #3 below (raising the hemisphere-light floor) — the floor
+is now *dimmer* than when this bug was filed, so if anything boulder silhouettes should
+crush to black more easily now, not less. Worth re-running the bisect (hypothesis #1)
+under the new lighting before assuming the old hypotheses still rank the same.
 
 ### Symptom
 When playing as Bigfoot (notably right after spawn at a cave, and when looking up
