@@ -24,6 +24,14 @@ export const CHARGE = {
   cooldown: 6, // seconds after the burst before another charge (UI gate)
 };
 
+/** Bigfoot senses overlay ("V") — predator vision that reveals prey + scent through the forest. */
+export const SENSES = {
+  range: 60, // hunters within this of Bigfoot glow through trees (0 = unlimited)
+  hunterColor: 0xff5a6e, // warm silhouette for prey
+  hunterOpacity: 0.5,
+  scentColor: 0x8fe3ff, // cool marker on Bigfoot's own recent trail
+};
+
 /** Searcher revive (client-side prompt + progress bar; the server is authoritative on completion). */
 export const REVIVE = {
   radius: 3.5, // how close to a downed teammate you must stand (mirrors server REVIVE_RADIUS)

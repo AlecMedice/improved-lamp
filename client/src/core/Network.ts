@@ -217,6 +217,19 @@ export class Network {
     return this.bigfoot ? this.bigfoot.group.position.clone() : null;
   }
 
+  /**
+   * Bigfoot senses overlay: reveal each hunter's silhouette when within `range` of (ox,oz).
+   * `on=false` clears them all. No-op unless the local player is Bigfoot (only Bigfoot calls it).
+   */
+  refreshSenses(on: boolean, ox: number, oz: number, range: number) {
+    const r2 = range * range;
+    for (const rp of this.remotes.values()) {
+      if (rp.isBigfoot) continue;
+      const inRange = range <= 0 || (rp.group.position.x - ox) ** 2 + (rp.group.position.z - oz) ** 2 <= r2;
+      rp.setSensed(on && inRange);
+    }
+  }
+
   /** Flat (x,z) of remote searchers — teammates shown on the hunters' map. */
   getRemoteSearchers(): Array<{ x: number; z: number }> {
     const out: Array<{ x: number; z: number }> = [];

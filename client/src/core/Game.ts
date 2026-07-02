@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { NET, FILM, NIGHT_SECONDS, CAVES, CAVE, ABILITY, CHARGE, REVIVE, MAP, PLAYER, BIGFOOT_VISION } from "../config";
+import { NET, FILM, NIGHT_SECONDS, CAVES, CAVE, ABILITY, CHARGE, REVIVE, MAP, PLAYER, BIGFOOT_VISION, SENSES } from "../config";
 import { Environment } from "../world/Environment";
 import { ClueField } from "../world/ClueField";
 import { PingField } from "../world/PingField";
@@ -46,6 +46,7 @@ export class Game {
   private roarCooldownSec = ABILITY.roarCooldown; // effective, from server escalation
   private chargeTimer = 0; // remaining seconds of an active charge burst (drives chargeMul)
   private chargeCooldown = 0; // remaining seconds until the next charge is ready
+  private sensesOn = false; // Bigfoot predator-vision overlay (toggle with V)
   private reviveProgress = 0; // 0..1 local estimate of the teammate revive being held (server-authoritative)
   private reviveTickTimer = 0; // spacing for the revive channel cue while holding
   private reviveWasFull = false; // guards the one-shot success cue
@@ -125,6 +126,7 @@ export class Game {
       this.input.onMousePress(2, () => this.tryRoar());
       this.input.onMousePress(0, () => this.tryGrab());
       this.input.onPress("ShiftLeft", () => this.tryCharge());
+      this.input.onPress("KeyV", () => this.toggleSenses());
     }
 
     // Hunters: stakeout pings (Q to mark where you stand, or click the map).
@@ -213,11 +215,12 @@ export class Game {
     this.hud.setStatusBanner(this.ended ? "active" : this.self.status);
     this.hud.setBlackout(incapacitated && !this.ended);
 
-    // Bigfoot: charge burst timing (drives the sim speed multiplier + UI).
+    // Bigfoot: charge burst timing (drives the sim speed multiplier + UI) + senses overlay.
     if (this.isBigfoot) {
       this.chargeTimer = Math.max(0, this.chargeTimer - dt);
       this.chargeCooldown = Math.max(0, this.chargeCooldown - dt);
       this.player.chargeMul = this.chargeTimer > 0 ? CHARGE.speedMul : 1;
+      this.net.refreshSenses(this.sensesOn, this.player.position.x, this.player.position.z, SENSES.range);
     }
 
     // Bigfoot: ability readout + cave-travel prompt.
@@ -406,6 +409,14 @@ export class Game {
     this.chargeTimer = CHARGE.duration;
     this.chargeCooldown = CHARGE.duration + CHARGE.cooldown;
     this.audio.playOnce("cave_whoosh", { volume: 0.5 }); // a lunging whoosh
+  }
+
+  private toggleSenses() {
+    if (!this.isBigfoot) return;
+    this.sensesOn = !this.sensesOn;
+    this.clues.setSensed(this.sensesOn); // scent trail (Bigfoot's own recent tracks, through walls)
+    this.audio.playOnce("flashlight_click", { volume: 0.35 });
+    this.hud.setTutorial(this.sensesOn ? "SENSES ON — prey & scent revealed (V)" : null);
   }
 
   private onNightChange(night: number, total: number) {
