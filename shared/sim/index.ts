@@ -22,17 +22,20 @@ export type World = {
   caves: readonly Cave[];
   getHeight: HeightFn;
   colliders: Collider[];
+  climbables: Collider[]; // the subset of colliders with a `climbH` (structures Bigfoot can scale/perch on)
   fallenLogs: FallenLog[];
 };
 
 /** Build the full deterministic world for a seed (terrain + caves + colliders + logs). */
 export function makeWorld(seed: number): World {
   const caves = generateCaves(seed);
+  const colliders = buildColliders(seed, caves);
   return {
     seed,
     caves,
     getHeight: makeTerrain(seed),
-    colliders: buildColliders(seed, caves),
+    colliders,
+    climbables: colliders.filter((c) => c.climbH !== undefined),
     fallenLogs: FALLEN_LOGS,
   };
 }

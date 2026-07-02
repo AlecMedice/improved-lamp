@@ -91,6 +91,7 @@ export class Environment {
       caves: CAVES,
       getHeight: this.height,
       colliders: this.colliders,
+      climbables: this.colliders.filter((c) => c.climbH !== undefined),
       fallenLogs: this.fallenLogs,
     });
   }

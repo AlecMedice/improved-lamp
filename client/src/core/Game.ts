@@ -4,6 +4,7 @@ import { Environment } from "../world/Environment";
 import { ClueField } from "../world/ClueField";
 import { PingField } from "../world/PingField";
 import { LocalPlayer } from "../entities/LocalPlayer";
+import { climbSupport } from "../../../shared/sim";
 import { Input } from "./Input";
 import { Network, SelfInfo, EscalationInfo } from "./Network";
 import { Room } from "colyseus.js";
@@ -238,7 +239,15 @@ export class Game {
       }
       this.caveCooldown = Math.max(0, this.caveCooldown - dt);
       const caveReady = this.caveCooldown === 0 && this.nearestCaveIndex() >= 0;
-      this.hud.setPrompt(caveReady && !this.map.isOpen ? "Press M — choose a cave to travel to" : null);
+      // Prompt priority: cave fast-travel, else a hint when stood against a climbable structure.
+      const w = this.env.simWorld;
+      const near = climbSupport(w.climbables, w.getHeight,
+        this.player.position.x, this.player.position.z, PLAYER.radius, PLAYER.climbReach);
+      this.hud.setPrompt(
+        caveReady && !this.map.isOpen ? "Press M — choose a cave to travel to"
+          : near && !this.map.isOpen ? "Hold Space to climb"
+            : null
+      );
     }
 
     // Live map refresh while open.

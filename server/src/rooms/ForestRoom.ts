@@ -1,6 +1,6 @@
 import { Room, Client } from "@colyseus/core";
 import { GameState, Player, Clue, Ping } from "./schema/GameState";
-import { WORLD, PLAYER, CAVE, generateCaves, makeWorld, resolveCollision, lineBlocked } from "../../../shared/sim";
+import { WORLD, PLAYER, CAVE, generateCaves, makeWorld, resolveCollision, lineBlocked, climbSupport } from "../../../shared/sim";
 
 // --- Night / match structure ---
 // One night runs 8pm -> 8am in this many real seconds. Overridable via env for quick test matches.
@@ -391,14 +391,26 @@ export class ForestRoom extends Room<GameState> {
       rz = p.z + dz * k;
     }
 
-    // Push out of any tree / RV / cave boulder / tower the client tried to occupy.
-    const resolved = resolveCollision(this.world.colliders, rx, rz, PLAYER.radius);
+    // Push out of any tree / RV / cave boulder / tower the client tried to occupy. Climb-aware for
+    // Bigfoot only: at/above a climbable's top it isn't pushed out (standing on it, not through it).
+    // Hunters are always pushed out (2D), so a spoofed feet-y can't slip a hunter inside a structure.
+    const claimedY = num(data.y, p.y);
+    const bigfoot = p.role === "bigfoot";
+    const resolved = bigfoot
+      ? resolveCollision(this.world.colliders, rx, rz, PLAYER.radius, claimedY, this.world.getHeight)
+      : resolveCollision(this.world.colliders, rx, rz, PLAYER.radius);
     p.x = resolved.x;
     p.z = resolved.z;
 
     // Feet sit on the terrain (allow a small jump arc above, a touch of sampling slop below).
+    // When Bigfoot is scaling/perched on a climbable, raise the accepted feet ceiling to its top.
     const groundY = this.world.getHeight(p.x, p.z);
-    p.y = clamp(num(data.y, groundY), groundY - Y_BELOW_TOL, groundY + Y_ABOVE_TOL);
+    const support = bigfoot
+      ? climbSupport(this.world.climbables, this.world.getHeight, p.x, p.z, PLAYER.radius, PLAYER.climbReach)
+      : null;
+    const floor = (support && support.over ? support.top : groundY) - Y_BELOW_TOL; // perched -> stand on top
+    const ceil = (support ? support.top : groundY) + Y_ABOVE_TOL; // scaling/perched -> allow the height
+    p.y = clamp(claimedY, floor, ceil);
   }
 
   /** Upper-bound movement speed for the gate (role + per-night escalation + charge burst; generous margin). */
