@@ -9,7 +9,7 @@ export { WORLD, PLAYER, CAVE } from "../../shared/sim";
 export const SERVER_URL = (import.meta.env.VITE_SERVER_URL as string) || "ws://localhost:2567";
 
 /** One night runs 8pm -> 8am in this many seconds; Bigfoot wins by surviving TOTAL_NIGHTS. Mirrors the server. */
-export const NIGHT_SECONDS = 300;
+export const NIGHT_SECONDS = 600;
 export const TOTAL_NIGHTS = 3;
 
 /** Bigfoot offense (client-side cooldown/feedback; the server is authoritative). */

@@ -129,7 +129,7 @@ Shared (`shared/sim/`) — dependency‑free deterministic sim, imported by both
 - `constants.ts` — `WORLD` / `PLAYER` movement tunables (client `config.ts` re‑exports these).
 
 ## Tuning
-- **Server constants** (top of `ForestRoom.ts`): `NIGHT_SECONDS` (300, overridable via the
+- **Server constants** (top of `ForestRoom.ts`): `NIGHT_SECONDS` (600, overridable via the
   `NIGHT_SECONDS` env var for quick test matches), `TOTAL_NIGHTS` (3),
   `ROAR_RADIUS/ROAR_COOLDOWN/FREEZE_SECONDS`, `GRAB_RADIUS/INCAP_SECONDS/SLOW_SECONDS`,
   `FILM_RANGE/FILM_SECONDS`, `CLUE_LIFETIME/STRIDE/BRANCH_CHANCE`, `PING_LIFETIME`, `CAVES`,

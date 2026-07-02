@@ -4,7 +4,7 @@ import { WORLD, PLAYER, CAVE, generateCaves, makeWorld, resolveCollision } from 
 
 // --- Night / match structure ---
 // One night runs 8pm -> 8am in this many real seconds. Overridable via env for quick test matches.
-const NIGHT_SECONDS = Number(process.env.NIGHT_SECONDS) || 300;
+const NIGHT_SECONDS = Number(process.env.NIGHT_SECONDS) || 600;
 const TOTAL_NIGHTS = 3; // Bigfoot wins by surviving this many nights
 const WORLD_HALF = WORLD.size / 2; // ±400 on x/z
 
