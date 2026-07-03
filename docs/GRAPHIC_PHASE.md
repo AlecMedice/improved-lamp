@@ -21,7 +21,9 @@ When generating assets for this phase, adhere strictly to the following constrai
 **Goal:** Upgrade the tracking and mapping mechanics from basic shapes to an immersive UI.
 **Prompt for Claude:** > "Generate a clean, SVG-based topographic map interface with a subtle CRT monitor glow effect. Include CSS animations for a sweeping radar line and fading circular pings to represent tracking data. The design should look like a handheld tracking device used in a horror survival game."
 
-### 2. HUD Icon Sets (`HUD.ts` & `ClueField.ts`)
+### 2. HUD Icon Sets (`HUD.ts` & `ClueField.ts`) — ✅ SHIPPED
+_Inline white-line SVG icons on the HUD pills (`client/index.html`): flashlight + **segmented** battery,
+hiking boot (stamina), film-camera (clip), magnifier (footage). Structural strokes, CSS drop-shadow._
 **Goal:** Provide clear, atmospheric player feedback for survival mechanics.
 **Prompt for Claude:** > "Create a minimalist, white-line SVG HUD icon set for an indie horror game. Include the following specific icons: 
 > 1. A flashlight with a segmented battery indicator.
@@ -40,7 +42,10 @@ When generating assets for this phase, adhere strictly to the following constrai
 > 2. A massive, hulking Bigfoot-style cryptid.
 > The SVGs should be appropriately scaled relative to one another to serve as exact reference sheets and 2D bounding-box stand-ins for a game engine."
 
-### 5. Camera Overlays & Lighting Masks
+### 5. Camera Overlays & Lighting Masks — ✅ SHIPPED
+_Screen-space DOM/CSS layers in `client/index.html` (below the HUD): always-on dark **vignette**, a
+flashlight **beam mask** (bright centre → black periphery, toggled with the light via `HUD.setBeam`),
+and a procedural **dirt-on-lens** grime (SVG `feTurbulence`, faint always, brighter while lit)._
 **Goal:** Obscure placeholder textures and heighten tension using screen-space effects.
 **Prompt for Claude:** > "Generate a set of SVG and CSS-based screen overlays for a horror game. Include:
 > 1. A dark vignette edge effect.

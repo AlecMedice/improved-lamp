@@ -333,6 +333,7 @@ export class Game {
 
     this.hud.setBattery(this.player.battery);
     this.hud.setStamina(this.player.stamina);
+    this.hud.setBeam(!this.isBigfoot && this.player.isFlashlightOn); // beam mask + lens grime while lit
     this.renderer.render(this.scene, this.camera);
   }
 
