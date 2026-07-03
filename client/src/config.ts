@@ -75,6 +75,20 @@ export const FILM = {
 export const NET = { sendHz: 15 };
 
 /**
+ * Post-processing (EffectComposer): bloom makes bright sources glow (flashlight highlights, Bigfoot
+ * eye-shine, campfire, rec lights), plus a shader vignette + subtle moving film grain. `vignetteNight`
+ * is added to the base vignette deep in the night ("tuned per phase"). Tuned by eye.
+ */
+export const POST = {
+  bloomStrength: 0.62, // overall glow intensity
+  bloomRadius: 0.5, // glow spread
+  bloomThreshold: 0.62, // only pixels brighter than this bloom (keeps the dark night un-blown)
+  vignette: 1.15, // edge-darkening scale (higher = tighter)
+  vignetteNight: 0.35, // extra vignette added at midnight/witching
+  grain: 0.035, // moving film-grain amount (subtle sensor noise, not heavy static)
+};
+
+/**
  * Cave entrances — Bigfoot's lairs and the nodes of its fast-travel network. Seed-derived
  * (shared/sim) so the client, every other client, and the server agree on the layout;
  * the fast-travel rules (`CAVE`) are shared too since the server validates the jump.

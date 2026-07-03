@@ -81,7 +81,8 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 - ✅ Spatial audio (footsteps, roars, heartbeat proximity) — true 3D positional (THREE.AudioListener);
   diegetic roars (server broadcast), branch‑snaps, remote footsteps; procedural synthesis with
   optional sample overrides (hybrid; see `client/public/audio/`)
-- ⬜ Post‑processing pass (bloom, vignette, film grain) tuned per phase
+- ✅ Post‑processing pass — `EffectComposer` (bloom on flashlight/eye‑shine/campfire/rec lights + shader
+  vignette + subtle moving film grain); vignette tightens toward midnight (per‑phase). Tunables in `config.POST`
 - ⬜ Menus, settings, key rebinding, gamma calibration
 - 🟡 Tutorial *(role‑specific start‑of‑match hints done; dusk‑briefing version pending)*
 

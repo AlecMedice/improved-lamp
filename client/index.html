@@ -19,10 +19,9 @@
       #blackout { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none;
         transition: opacity .6s ease; z-index: 11; }
 
-      /* Camera / screen-space overlays (below the HUD by DOM order; above the canvas). */
-      #vignette, #beam, #lens-dirt { position: fixed; inset: 0; pointer-events: none; }
-      /* Always-on dark edge vignette — pulls the eye to centre, hides the world edges. */
-      #vignette { background: radial-gradient(ellipse 78% 68% at 50% 47%, transparent 54%, rgba(0,0,0,.55) 100%); }
+      /* Camera / screen-space overlays (below the HUD by DOM order; above the canvas).
+         The dark edge vignette now lives in the post-processing pass (Game.ts), not here. */
+      #beam, #lens-dirt { position: fixed; inset: 0; pointer-events: none; }
       /* Harsh flashlight beam mask: bright centre, black periphery. Shown only while the light is on. */
       #beam { opacity: 0; transition: opacity .28s ease;
         background: radial-gradient(circle 46vh at 50% 53%, transparent 0%, transparent 26%, rgba(0,0,0,.74) 90%); }
@@ -142,8 +141,7 @@
     <div id="fade"></div>
     <div id="blackout"></div>
 
-    <!-- Camera / lighting overlays: vignette (always), flashlight beam mask + lens grime (while lit). -->
-    <div id="vignette"></div>
+    <!-- Camera / lighting overlays: flashlight beam mask + lens grime (while lit). Vignette is in post. -->
     <div id="beam"></div>
     <div id="lens-dirt">
       <svg xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">

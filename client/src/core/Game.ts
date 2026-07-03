@@ -1,5 +1,27 @@
 import * as THREE from "three";
-import { NET, FILM, NIGHT_SECONDS, CAVES, CAVE, ABILITY, CHARGE, REVIVE, MAP, PLAYER, BIGFOOT_VISION, SENSES } from "../config";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { NET, FILM, NIGHT_SECONDS, CAVES, CAVE, ABILITY, CHARGE, REVIVE, MAP, PLAYER, BIGFOOT_VISION, SENSES, POST } from "../config";
+
+/** Screen-space vignette + moving film grain, composited after bloom (replaces the old CSS vignette). */
+const VignetteGrainShader = {
+  uniforms: { tDiffuse: { value: null }, time: { value: 0 }, vignette: { value: POST.vignette }, grain: { value: POST.grain } },
+  vertexShader: /* glsl */ `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse; uniform float time; uniform float vignette; uniform float grain; varying vec2 vUv;
+    float hash(vec2 p){ p = fract(p * vec2(123.34, 345.45)); p += dot(p, p + 34.345); return fract(p.x * p.y); }
+    void main(){
+      vec4 c = texture2D(tDiffuse, vUv);
+      float r = length(vUv - 0.5);
+      float vig = smoothstep(0.85, 0.30, r * vignette); // 1 at centre -> 0 at the edges
+      c.rgb *= mix(0.32, 1.0, vig);
+      c.rgb += (hash(vUv * vec2(1920.0, 1080.0) + time) - 0.5) * grain; // subtle moving grain
+      gl_FragColor = c;
+    }`,
+};
 import { Environment } from "../world/Environment";
 import { ClueField } from "../world/ClueField";
 import { PingField } from "../world/PingField";
@@ -22,6 +44,8 @@ const RECONCILE_EASE = 8; // ease rate (× dt) when blending out a correction
 /** Wires renderer + world + player + input + networking into one loop. */
 export class Game {
   private renderer: THREE.WebGLRenderer;
+  private composer!: EffectComposer; // post-processing chain (bloom + vignette/grain)
+  private fxPass!: ShaderPass; // the vignette/grain pass (time + per-phase vignette uniforms)
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
   private clock = new THREE.Clock();
@@ -79,6 +103,18 @@ export class Game {
 
     this.camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 900);
     this.scene.add(this.camera); // so the flashlight (a child) renders
+
+    // Post-processing: scene -> bloom (bright sources glow) -> vignette/grain -> tone-mapping output.
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    const bloom = new UnrealBloomPass(
+      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      POST.bloomStrength, POST.bloomRadius, POST.bloomThreshold
+    );
+    this.composer.addPass(bloom);
+    this.fxPass = new ShaderPass(VignetteGrainShader);
+    this.composer.addPass(this.fxPass);
+    this.composer.addPass(new OutputPass()); // applies renderer tone mapping + sRGB at the end
 
     // Audio: the listener rides the camera so positional cues pan/fall off correctly.
     this.audio = new AudioEngine(this.scene);
@@ -334,7 +370,12 @@ export class Game {
     this.hud.setBattery(this.player.battery);
     this.hud.setStamina(this.player.stamina);
     this.hud.setBeam(!this.isBigfoot && this.player.isFlashlightOn); // beam mask + lens grime while lit
-    this.renderer.render(this.scene, this.camera);
+
+    // Drive the post FX: moving grain + a vignette that tightens toward the dead of night.
+    this.fxPass.uniforms.time.value = t;
+    const nightDepth = Math.sin(Math.min(1, this.timeOfDay) * Math.PI); // 0 at dusk/dawn, 1 at midnight
+    this.fxPass.uniforms.vignette.value = POST.vignette + POST.vignetteNight * nightDepth;
+    this.composer.render();
   }
 
   /**
@@ -544,6 +585,7 @@ export class Game {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.composer.setSize(window.innerWidth, window.innerHeight);
   }
 }
 
