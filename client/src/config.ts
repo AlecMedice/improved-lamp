@@ -17,6 +17,27 @@ export const ABILITY = {
   roarCooldown: 25, // seconds between roars (UI gate, mirrors server)
 };
 
+/** Bigfoot charge — a short forward burst (mirrors the server; the client predicts it). */
+export const CHARGE = {
+  speedMul: 1.9, // burst multiplier over sprint during the window
+  duration: 1.2, // seconds the burst lasts
+  cooldown: 6, // seconds after the burst before another charge (UI gate)
+};
+
+/** Bigfoot senses overlay ("V") — predator vision that reveals prey + scent through the forest. */
+export const SENSES = {
+  range: 60, // hunters within this of Bigfoot glow through trees (0 = unlimited)
+  hunterColor: 0xff5a6e, // warm silhouette for prey
+  hunterOpacity: 0.5,
+  scentColor: 0x8fe3ff, // cool marker on Bigfoot's own recent trail
+};
+
+/** Searcher revive (client-side prompt + progress bar; the server is authoritative on completion). */
+export const REVIVE = {
+  radius: 3.5, // how close to a downed teammate you must stand (mirrors server REVIVE_RADIUS)
+  seconds: 4, // hold time to free them (mirrors server REVIVE_SECONDS) — drives the local bar
+};
+
 /**
  * Bigfoot's night sight. It has no flashlight, so instead of the old always-on brightness buff
  * it gets a dim, short-range vision cone riding the camera — deliberately weaker and shorter than

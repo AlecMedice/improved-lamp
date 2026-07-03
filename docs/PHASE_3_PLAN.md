@@ -1,7 +1,10 @@
 # Phase 3 — Asymmetry & Abilities (branch `july_26`)
 
 > Implementation plan, mirrored into the repo so it travels with the branch (cross-machine handoff).
-> Progress: **Increment A shipped** (Bigfoot limited-range vision). B–E + docs/verification pending.
+> Progress: **Phase 3 complete.** Increments A (Bigfoot vision), B (leap), C (revives), D (dazzle), E (log
+> vault), plus the follow-up Bigfoot kit — **charge, surface-climb, senses overlay** (see the end of this
+> doc). Each landed as its own commit, typechecked + smoke-tested. Notes on B/E/climb record how the final
+> implementation refined the original sketch against the actual sim.
 
 ## Context
 The vertical slice (Phases 0–2, most of 3–4) is shipped and `main` is a clean single-branch baseline.
@@ -58,8 +61,10 @@ Turned the blunt brightness buff into a short, dim sight cone that dies with dis
   near-field glow remains, no runtime errors. **Open follow-up:** cone reach/brightness is a by-eye tune best
   judged with interactive mouse-look (headless preview has no pointer lock) — all knobs live in `BIGFOOT_VISION`.
 
-## Increment B — Bigfoot leap
+## Increment B — Bigfoot leap — ✅ SHIPPED
 A stamina-gated vertical bound (Space, for Bigfoot) for traversal + gap-closing.
+_As built: `leapSpeed 9.5` / `leapStaminaCost 30`; `Y_ABOVE_TOL` raised 3.0→3.75; the sim's vertical
+block takes leap over a normal jump for Bigfoot. Role split lives in `buildInput` (the sim stays general)._
 
 - **`shared/sim/constants.ts`:** `PLAYER.leapSpeed` (~9.5, vs `jumpSpeed` 5.2) and `PLAYER.leapStaminaCost` (~30).
 - **`shared/sim/movement.ts`:** add `leap: boolean` to `MoveInput`; in the vertical block, if
@@ -74,8 +79,10 @@ A stamina-gated vertical bound (Space, for Bigfoot) for traversal + gap-closing.
 **Verify:** headless — as Bigfoot, send the leap arc; assert server accepts the raised feetY (no snap-back) and
 stamina drains. In-client: leap clears a fallen log / small rise cleanly.
 
-## Increment C — Searcher revives
+## Increment C — Searcher revives — ✅ SHIPPED
 Free a downed teammate before the 60 s incap expires (interrupts Bigfoot's drag + footage pressure).
+_As built: `REVIVE_RADIUS 3.5` / `REVIVE_SECONDS 4`; `updateRevives()` + `reviveIntent`/`reviveProgress`
+maps; replicated `Player.beingRevived` drives the remote icon pulse; `revive_channel`/`revive_success` cues._
 
 - **`server/src/rooms/ForestRoom.ts`:** `REVIVE_RADIUS` (~3.5) and `REVIVE_SECONDS` (~4). Track
   `reviveProgress: Map<targetSid, seconds>`. Follow the **filming pattern** (held action via the move stream,
@@ -93,8 +100,10 @@ Free a downed teammate before the 60 s incap expires (interrupts Bigfoot's drag 
 **Verify:** headless — bigfoot roars+grabs a 2nd hunter; a 3rd holds the revive flags in range; assert the target
 returns to `active` (slowed) before `INCAP_SECONDS` and `grabbedBy` clears.
 
-## Increment D — Searcher flashlight "dazzle"
+## Increment D — Searcher flashlight "dazzle" — ✅ SHIPPED
 Sustained flashlight-on-Bigfoot deters it: shrinks its (now short) vision briefly and blocks roar/grab.
+_As built: `DAZZLE_RANGE 40`, ~22° cone, `DAZZLE_FILL_SECONDS 1.2`, `DAZZLE_SECONDS 3`; `updateDazzle()`
+reuses shared `lineBlocked` for LOS; replicated `Player.dazzled`; roar/grab handlers early-return while dazzled._
 
 - **`server/src/rooms/ForestRoom.ts`:** per tick, for each active hunter with `flashlightOn`, test aim at the
   Bigfoot: `withinRange` (≤ `DAZZLE_RANGE` < 60), a cone check from the hunter's `ry`, and
@@ -112,8 +121,12 @@ Sustained flashlight-on-Bigfoot deters it: shrinks its (now short) vision briefl
 **Verify:** headless — hunter with `flashlightOn` + aim + LOS for the dwell → assert `bigfootDazzled` flips and a
 roar sent in the window is rejected. Negative: broken LOS (behind a tree collider) never dazzles.
 
-## Increment E — Searcher jump/vault
+## Increment E — Searcher jump/vault — ✅ SHIPPED
 Let hunters clamber over fallen logs / small rises instead of only being slowed by them.
+_As built: refined to a **log vault** — in this sim terrain rises never block movement (you walk up any
+slope), so the fallen-log slow is the hunter's real asymmetric obstacle. Vault is a stamina-gated hop
+(`vaultHopSpeed 4.6` / `vaultStaminaCost 12`) in the log-slow block that negates the slow; the planned
+`vaultStepHeight` auto-step raise was dropped as a no-op against the actual terrain model._
 
 - **`shared/sim/constants.ts`:** `PLAYER.vaultStepHeight` (> `stepHeight` 0.75, ~1.3) and `PLAYER.vaultStaminaCost`.
 - **`shared/sim/movement.ts`:** add `vault: boolean` to `MoveInput`; in the **auto-step** block, when a searcher
@@ -145,9 +158,20 @@ stamina cost; confirm no reconciliation snap-back near trees (colliders excluded
 3. Manual two-tab pass: Bigfoot's limited vision vs a hunter's longer flashlight; leap traversal; a hunter
    reviving a downed teammate; dazzling Bigfoot to deny a roar; vaulting a log.
 
-## Out of scope (this branch)
-Rigged/animated models (art, Phase 6); Bigfoot charge & full surface-climbing; post-processing/senses *overlay*
-rendering (kept to a light source, not a shader pass); escalation-table integration of the new abilities.
+## Follow-up increments — ✅ SHIPPED (the deferred Bigfoot kit landed after A–E)
+- **Charge** (`Shift`): a discrete server-tracked speed-gate window (mirrors the roar cooldown) so a
+  forward burst dash isn't clamped; client-predicted via `chargeMul` in `StepModifiers`. `CHARGE_*` in
+  `ForestRoom.ts` / `CHARGE` in `config.ts`.
+- **Surface-climb** (`Space` vs a structure): colliders gained an optional `climbH` (tower/RV/boulders);
+  collision is climb-aware (solid from the side, walkable on top) via `groundHeightAt`/`climbSupport`; a
+  `climb` `MoveInput` flag scales the surface (stamina-gated, regen suspended) with a ledge-fall on step-off.
+  Server `applyMove` mirrors it for Bigfoot only (hunters stay 2D-solid — no feet-y spoof into structures).
+- **Senses overlay** (`V`): a Bigfoot-only, depthTest-off silhouette on hunter avatars + scent halos on
+  recent clues, composited in the existing single render pass (no EffectComposer). `SENSES` in `config.ts`.
+
+## Out of scope (still deferred)
+Rigged/animated models (art, Phase 6); post-processing (bloom/vignette/film-grain shader pass);
+escalation-table integration of the new abilities.
 
 ---
 _Note: nights were lengthened 300s→600s (5→10 min) as a separate tuning change on this branch; the server's

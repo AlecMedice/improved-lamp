@@ -19,6 +19,8 @@ export class LocalPlayer {
   readonly isBigfoot: boolean;
   externalSpeedMul = 1; // set by Game (e.g. 0.75 while slowed after incapacitation)
 
+  chargeMul = 1; // Bigfoot charge burst (1 = not charging; set by Game while a charge window is open)
+
   // Per-night escalation (set by Game from server-replicated multipliers; 1 = night-1 baseline).
   nightSpeedMul = 1; // Bigfoot grows faster on later nights (hunters stay 1)
   batteryDrainMul = 1; // flashlight drains faster on later nights
@@ -143,13 +145,20 @@ export class LocalPlayer {
 
   /** Build the movement command from the keyboard — also the payload streamed to the server. */
   buildInput(input: Input, dt: number): MoveInput {
+    const space = input.isDown("Space");
     return {
       w: input.isDown("KeyW"),
       s: input.isDown("KeyS"),
       a: input.isDown("KeyA"),
       d: input.isDown("KeyD"),
       yaw: this.sim.yaw,
-      jump: input.isDown("Space"),
+      // Space is a leap for Bigfoot (stamina-gated bound) and a normal jump for hunters; for hunters
+      // it also engages a vault when standing on a fallen log, and for Bigfoot a climb when against a
+      // climbable structure (the sim picks vault/climb over jump/leap by context).
+      jump: !this.isBigfoot && space,
+      leap: this.isBigfoot && space,
+      climb: this.isBigfoot && space,
+      vault: !this.isBigfoot && space,
       sprint: input.isDown("ShiftLeft"),
       crouch: input.isDown("ControlLeft") || input.isDown("ControlRight"),
       dt,
@@ -160,7 +169,7 @@ export class LocalPlayer {
     const cmd = this.buildInput(input, dt);
     // Compose the sim modifiers from the incapacitation slow + server-replicated escalation.
     const mods: StepModifiers = {
-      speedMul: this.externalSpeedMul * this.nightSpeedMul,
+      speedMul: this.externalSpeedMul * this.nightSpeedMul * this.chargeMul,
       batteryDrainMul: this.batteryDrainMul,
       staminaDrainMul: this.staminaDrainMul,
     };

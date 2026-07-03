@@ -9,9 +9,10 @@ type MovePayload = {
   x: number; y: number; z: number; ry: number;
   flashlightOn: boolean; battery: number; stamina: number;
   recording: boolean; inView: boolean;
+  reviving: boolean; reviveTarget: string; // hunter reviving a downed teammate (held action)
 };
 
-export type SelfInfo = { status: string; filmProgress: number; role: string; slowed: boolean };
+export type SelfInfo = { status: string; filmProgress: number; role: string; slowed: boolean; dazzled: boolean };
 
 /** Per-night escalation multipliers, server-authoritative (see GameState). */
 export type EscalationInfo = {
@@ -121,6 +122,7 @@ export class Network {
             filmProgress: player.filmProgress,
             role: player.role,
             slowed: player.slowed,
+            dazzled: !!player.dazzled,
           });
         applySelf();
         player.onChange(applySelf);
@@ -133,6 +135,7 @@ export class Network {
         rp.setTarget(player.x, player.y, player.z, player.ry, player.flashlightOn);
         rp.setFilming(player.filming);
         rp.setStatus(player.status);
+        rp.setBeingRevived(!!player.beingRevived);
       };
       apply();
       player.onChange(apply);
@@ -189,9 +192,42 @@ export class Network {
     return p ? { x: p.x, z: p.z } : null;
   }
 
+  /** Nearest incapacitated teammate within `radius` of (x,z) — the local hunter's revive target. */
+  getIncapTeammate(x: number, z: number, radius: number): { sid: string; x: number; z: number } | null {
+    const players = (this.room?.state as any)?.players;
+    if (!players) return null;
+    const selfSid = this.room?.sessionId;
+    let best: { sid: string; x: number; z: number } | null = null;
+    let bestD = radius * radius;
+    players.forEach((p: any, sid: string) => {
+      if (sid === selfSid || p.role === "bigfoot" || p.status !== "incapacitated") return;
+      const dx = p.x - x;
+      const dz = p.z - z;
+      const d = dx * dx + dz * dz;
+      if (d <= bestD) {
+        bestD = d;
+        best = { sid, x: p.x, z: p.z };
+      }
+    });
+    return best;
+  }
+
   /** World position of the (remote) Bigfoot, or null if none / Bigfoot is local. */
   getBigfootPosition(): THREE.Vector3 | null {
     return this.bigfoot ? this.bigfoot.group.position.clone() : null;
+  }
+
+  /**
+   * Bigfoot senses overlay: reveal each hunter's silhouette when within `range` of (ox,oz).
+   * `on=false` clears them all. No-op unless the local player is Bigfoot (only Bigfoot calls it).
+   */
+  refreshSenses(on: boolean, ox: number, oz: number, range: number) {
+    const r2 = range * range;
+    for (const rp of this.remotes.values()) {
+      if (rp.isBigfoot) continue;
+      const inRange = range <= 0 || (rp.group.position.x - ox) ** 2 + (rp.group.position.z - oz) ** 2 <= r2;
+      rp.setSensed(on && inRange);
+    }
   }
 
   /** Flat (x,z) of remote searchers — teammates shown on the hunters' map. */
@@ -222,6 +258,9 @@ export class Network {
   }
   sendGrab() {
     this.room?.send("grab");
+  }
+  sendCharge() {
+    this.room?.send("charge");
   }
 
   sendMove(p: MovePayload) {

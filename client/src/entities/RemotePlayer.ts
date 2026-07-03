@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { AudioEngine } from "../core/AudioEngine";
+import { SENSES } from "../config";
 
 /** A timestamped server snapshot for interpolation. */
 type Snapshot = { t: number; x: number; y: number; z: number; ry: number };
@@ -20,6 +21,9 @@ export class RemotePlayer {
   private recLight?: THREE.Mesh; // small red marker shown while this hunter records
   private statusIcon?: THREE.Mesh; // floats above a frozen/incapacitated hunter
   private statusMat?: THREE.MeshBasicMaterial;
+  private senseSilhouette?: THREE.Group; // depthTest-off glow so the local Bigfoot sees prey through trees
+  private beingRevived = false; // pulse the incap icon while a teammate is reviving this hunter
+  private pulseT = 0;
 
   // Positional footsteps: accrue ground distance covered and emit a step each stride.
   private stepDist = 0;
@@ -65,6 +69,22 @@ export class RemotePlayer {
       this.statusIcon.position.set(0, h + 0.55, 0);
       this.statusIcon.visible = false;
       this.group.add(this.statusIcon);
+
+      // Sense silhouette: a slightly-inflated body/head drawn on top (depthTest off) so the local
+      // Bigfoot's predator vision reveals this hunter through trees. Hidden until senses are on.
+      const senseMat = new THREE.MeshBasicMaterial({
+        color: SENSES.hunterColor, transparent: true, opacity: SENSES.hunterOpacity,
+        depthTest: false, depthWrite: false,
+      });
+      const sBody = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, h - 0.8, 6, 10), senseMat);
+      sBody.position.y = h / 2;
+      const sHead = new THREE.Mesh(new THREE.SphereGeometry(0.34, 12, 10), senseMat);
+      sHead.position.y = h - 0.1;
+      this.senseSilhouette = new THREE.Group();
+      this.senseSilhouette.add(sBody, sHead);
+      this.senseSilhouette.renderOrder = 999; // composite after the scene so it shows through geometry
+      this.senseSilhouette.visible = false;
+      this.group.add(this.senseSilhouette);
     }
 
     this.flashlight = new THREE.SpotLight(0xfff2d6, 0, 50, 0.5, 0.4, 1.5);
@@ -103,9 +123,24 @@ export class RemotePlayer {
     }
   }
 
-  update(_dt: number) {
+  /** Local Bigfoot's senses overlay: reveal this hunter's silhouette through the environment. */
+  setSensed(on: boolean) {
+    if (this.senseSilhouette) this.senseSilhouette.visible = on;
+  }
+
+  /** A teammate is reviving this downed hunter — pulse the red icon so allies can see the rescue. */
+  setBeingRevived(on: boolean) {
+    this.beingRevived = on;
+    if (!on && this.statusIcon) this.statusIcon.scale.setScalar(1);
+  }
+
+  update(dt: number) {
     this.applyInterpolation();
     this.tickFootsteps();
+    if (this.beingRevived && this.statusIcon) {
+      this.pulseT += dt;
+      this.statusIcon.scale.setScalar(1 + 0.4 * Math.sin(this.pulseT * 10));
+    }
   }
 
   /** Place the avatar at the interpolated position for "now − INTERP_DELAY". */

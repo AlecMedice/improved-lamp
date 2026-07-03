@@ -18,6 +18,8 @@ export class Player extends Schema {
 
   @type("string") status = "active"; // "active" | "frozen" | "incapacitated"
   @type("boolean") slowed = false; // 25% movement slow after recovering from incapacitation
+  @type("boolean") beingRevived = false; // an active teammate is currently reviving this incapacitated hunter
+  @type("boolean") dazzled = false; // Bigfoot only: a searcher's sustained flashlight is blinding it (roar/grab locked)
   @type("boolean") filming = false; // hunter is currently recording
   @type("number") filmProgress = 0; // 0..1 of the current video clip
   @type("boolean") connected = true; // false during a reconnection grace period

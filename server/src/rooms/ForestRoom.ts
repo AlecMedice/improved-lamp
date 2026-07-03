@@ -1,6 +1,6 @@
 import { Room, Client } from "@colyseus/core";
 import { GameState, Player, Clue, Ping } from "./schema/GameState";
-import { WORLD, PLAYER, CAVE, generateCaves, makeWorld, resolveCollision } from "../../../shared/sim";
+import { WORLD, PLAYER, CAVE, generateCaves, makeWorld, resolveCollision, lineBlocked, climbSupport } from "../../../shared/sim";
 
 // --- Night / match structure ---
 // One night runs 8pm -> 8am in this many real seconds. Overridable via env for quick test matches.
@@ -30,6 +30,23 @@ const FREEZE_SECONDS = 30; // how long a roared hunter is frozen in place (basel
 const GRAB_RADIUS = 3.5; // how close Bigfoot must be to grab a frozen hunter
 const INCAP_SECONDS = 60; // how long a grabbed hunter is incapacitated (and draggable)
 const SLOW_SECONDS = 30; // movement-slow window after recovering from incapacitation
+
+// --- Bigfoot charge (a short forward burst to close distance) ---
+const CHARGE_SPEED_MUL = 1.9; // burst multiplier over sprint speed during the window
+const CHARGE_DURATION = 1.2; // seconds the burst lasts
+const CHARGE_COOLDOWN = 6; // seconds after the burst ends before another charge
+
+// --- Searcher defense (revive a downed teammate) ---
+const REVIVE_RADIUS = 3.5; // how close an active hunter must stand to revive an incapacitated one
+const REVIVE_SECONDS = 4; // seconds of holding the revive before the teammate is freed
+const REVIVE_DECAY = 2; // progress bleeds off this many x real-time when nobody is reviving
+
+// --- Searcher defense (dazzle Bigfoot with a sustained flashlight beam) ---
+const DAZZLE_RANGE = 40; // max distance the beam deters from (< a flashlight's 60 m reach)
+const DAZZLE_AIM_COS = Math.cos(0.38); // beam must be centred within ~22 deg of Bigfoot
+const DAZZLE_FILL_SECONDS = 1.2; // sustained on-target time before Bigfoot is dazzled
+const DAZZLE_SECONDS = 3; // how long the dazzle (sight-cut + roar/grab lock) lingers after the beam
+const DAZZLE_DECAY = 2; // fill bleeds off this many x real-time once the beam leaves
 
 // --- Per-night escalation -------------------------------------------------------------------
 // Each night the forest grows bolder. Indexed by nightNumber-1 (clamped to the last entry).
@@ -63,7 +80,7 @@ const CAVES = generateCaves(WORLD.seed);
 const SPEED_GATE_MARGIN = 1.6; // generous headroom over sprint speed (diagonal + downhill + jitter)
 const SPEED_GATE_BASE = 2.0; // metres of always-allowed slack per move (covers bursts / first move)
 const Y_BELOW_TOL = 1.0; // how far below terrain a feet-y may sit (sampling slop) before clamping
-const Y_ABOVE_TOL = 3.0; // how far above terrain a feet-y may sit (jump arc ~0.85 m + headroom)
+const Y_ABOVE_TOL = 3.75; // how far above terrain a feet-y may sit (covers Bigfoot's leap apex ~2.82 m + headroom)
 
 type FilmFlag = { recording: boolean; inView: boolean };
 
@@ -92,6 +109,12 @@ export class ForestRoom extends Room<GameState> {
   private incapUntil = new Map<string, number>(); // hunter sid -> elapsed when incapacitation ends
   private slowUntil = new Map<string, number>(); // hunter sid -> elapsed when slow ends
   private grabbedBy = new Map<string, string>(); // hunter sid -> bigfoot sid currently dragging
+  private reviveIntent = new Map<string, string>(); // reviver sid -> the incap teammate sid they're reviving
+  private reviveProgress = new Map<string, number>(); // incap target sid -> seconds of revive accrued
+  private dazzleFill = new Map<string, number>(); // bigfoot sid -> seconds of sustained flashlight on it
+  private dazzledUntil = new Map<string, number>(); // bigfoot sid -> elapsed when the dazzle wears off
+  private chargingUntil = new Map<string, number>(); // bigfoot sid -> elapsed while a charge burst is active
+  private chargeReadyAt = new Map<string, number>(); // bigfoot sid -> elapsed when the next charge is ready
   private devRoles = new Map<string, string>(); // sid -> "bigfoot"|"searcher" (dev URL param override)
 
   onCreate() {
@@ -114,6 +137,11 @@ export class ForestRoom extends Room<GameState> {
       flag.inView = !!data.inView;
       this.filmFlags.set(client.sessionId, flag);
       p.filming = flag.recording && p.role !== "bigfoot";
+
+      // Held-action revive intent (validated in updateRevives, like filming — no separate RPC).
+      const reviveTarget = typeof data.reviveTarget === "string" ? data.reviveTarget : "";
+      if (data.reviving && reviveTarget && p.role !== "bigfoot") this.reviveIntent.set(client.sessionId, reviveTarget);
+      else this.reviveIntent.delete(client.sessionId);
     });
 
     // Bigfoot fast-travels between cave mouths (validated server-side; replaces the old client self-teleport).
@@ -146,6 +174,7 @@ export class ForestRoom extends Room<GameState> {
 
     // Bigfoot roars: freezes every active hunter within ROAR_RADIUS for FREEZE_SECONDS.
     this.onMessage("roar", (client) => {
+      if (this.elapsed < (this.dazzledUntil.get(client.sessionId) ?? 0)) return; // blinded — can't roar
       const bf = this.state.players.get(client.sessionId);
       if (!bf || bf.role !== "bigfoot") return;
       if (this.elapsed < (this.roarReadyAt.get(client.sessionId) ?? 0)) return;
@@ -165,6 +194,7 @@ export class ForestRoom extends Room<GameState> {
 
     // Bigfoot grabs (left-click): grab the nearest frozen hunter, or drop the one being dragged.
     this.onMessage("grab", (client) => {
+      if (this.elapsed < (this.dazzledUntil.get(client.sessionId) ?? 0)) return; // blinded — can't grab
       const bf = this.state.players.get(client.sessionId);
       if (!bf || bf.role !== "bigfoot") return;
 
@@ -199,6 +229,15 @@ export class ForestRoom extends Room<GameState> {
       this.incapUntil.set(best, this.elapsed + INCAP_SECONDS);
       this.grabbedBy.set(best, client.sessionId);
       this.state.videosCaptured = 0; // all the team's footage is erased
+    });
+
+    // Bigfoot charges: opens a short speed-gate window so a forward burst isn't clamped as a speedhack.
+    this.onMessage("charge", (client) => {
+      const bf = this.state.players.get(client.sessionId);
+      if (!bf || bf.role !== "bigfoot" || bf.status !== "active") return;
+      if (this.elapsed < (this.chargeReadyAt.get(client.sessionId) ?? 0)) return; // cooldown
+      this.chargingUntil.set(client.sessionId, this.elapsed + CHARGE_DURATION);
+      this.chargeReadyAt.set(client.sessionId, this.elapsed + CHARGE_DURATION + CHARGE_COOLDOWN);
     });
 
     // Host starts the match: assign roles (one random Bigfoot if 2+), spawn, begin night 1.
@@ -286,11 +325,19 @@ export class ForestRoom extends Room<GameState> {
     this.slowUntil.delete(sid);
     this.roarReadyAt.delete(sid);
     this.grabbedBy.delete(sid);
+    this.reviveIntent.delete(sid);
+    this.reviveProgress.delete(sid);
+    this.dazzleFill.delete(sid);
+    this.dazzledUntil.delete(sid);
+    this.chargingUntil.delete(sid);
+    this.chargeReadyAt.delete(sid);
     this.lastMoveMs.delete(sid);
     this.caveReadyAt.delete(sid);
     this.devRoles.delete(sid);
     // If a leaving Bigfoot was dragging hunters, free them (they stay incapacitated in place).
     for (const [hsid, bsid] of this.grabbedBy) if (bsid === sid) this.grabbedBy.delete(hsid);
+    // Drop any revive intent aimed at the leaver (their target vanished).
+    for (const [rsid, tsid] of this.reviveIntent) if (tsid === sid) this.reviveIntent.delete(rsid);
     // Hand the host role to any remaining player.
     if (this.state.hostId === sid) {
       const next = this.state.players.keys().next();
@@ -334,7 +381,7 @@ export class ForestRoom extends Room<GameState> {
     const last = this.lastMoveMs.get(sid) ?? now;
     const dtSec = Math.min(1, Math.max(0, (now - last) / 1000)); // clamp; a long gap isn't travel budget
     this.lastMoveMs.set(sid, now);
-    const allowed = this.maxSpeedFor(p) * dtSec + SPEED_GATE_BASE;
+    const allowed = this.maxSpeedFor(sid, p) * dtSec + SPEED_GATE_BASE;
     const dx = rx - p.x;
     const dz = rz - p.z;
     const dist = Math.hypot(dx, dz);
@@ -344,20 +391,33 @@ export class ForestRoom extends Room<GameState> {
       rz = p.z + dz * k;
     }
 
-    // Push out of any tree / RV / cave boulder / tower the client tried to occupy.
-    const resolved = resolveCollision(this.world.colliders, rx, rz, PLAYER.radius);
+    // Push out of any tree / RV / cave boulder / tower the client tried to occupy. Climb-aware for
+    // Bigfoot only: at/above a climbable's top it isn't pushed out (standing on it, not through it).
+    // Hunters are always pushed out (2D), so a spoofed feet-y can't slip a hunter inside a structure.
+    const claimedY = num(data.y, p.y);
+    const bigfoot = p.role === "bigfoot";
+    const resolved = bigfoot
+      ? resolveCollision(this.world.colliders, rx, rz, PLAYER.radius, claimedY, this.world.getHeight)
+      : resolveCollision(this.world.colliders, rx, rz, PLAYER.radius);
     p.x = resolved.x;
     p.z = resolved.z;
 
     // Feet sit on the terrain (allow a small jump arc above, a touch of sampling slop below).
+    // When Bigfoot is scaling/perched on a climbable, raise the accepted feet ceiling to its top.
     const groundY = this.world.getHeight(p.x, p.z);
-    p.y = clamp(num(data.y, groundY), groundY - Y_BELOW_TOL, groundY + Y_ABOVE_TOL);
+    const support = bigfoot
+      ? climbSupport(this.world.climbables, this.world.getHeight, p.x, p.z, PLAYER.radius, PLAYER.climbReach)
+      : null;
+    const floor = (support && support.over ? support.top : groundY) - Y_BELOW_TOL; // perched -> stand on top
+    const ceil = (support ? support.top : groundY) + Y_ABOVE_TOL; // scaling/perched -> allow the height
+    p.y = clamp(claimedY, floor, ceil);
   }
 
-  /** Upper-bound movement speed for the gate (role + per-night escalation; generous margin). */
-  private maxSpeedFor(p: Player): number {
+  /** Upper-bound movement speed for the gate (role + per-night escalation + charge burst; generous margin). */
+  private maxSpeedFor(sid: string, p: Player): number {
     const roleMul = p.role === "bigfoot" ? PLAYER.bigfootSpeedMul * this.state.bigfootSpeedMul : 1;
-    return PLAYER.sprintSpeed * roleMul * SPEED_GATE_MARGIN;
+    const chargeMul = this.elapsed < (this.chargingUntil.get(sid) ?? 0) ? CHARGE_SPEED_MUL : 1;
+    return PLAYER.sprintSpeed * roleMul * chargeMul * SPEED_GATE_MARGIN;
   }
 
   /** Index of a cave whose mouth (x,z) is within, or -1. */
@@ -391,6 +451,12 @@ export class ForestRoom extends Room<GameState> {
     this.incapUntil.clear();
     this.slowUntil.clear();
     this.grabbedBy.clear();
+    this.reviveIntent.clear();
+    this.reviveProgress.clear();
+    this.dazzleFill.clear();
+    this.dazzledUntil.clear();
+    this.chargingUntil.clear();
+    this.chargeReadyAt.clear();
     this.lastMoveMs.clear();
     this.caveReadyAt.clear();
   }
@@ -439,9 +505,86 @@ export class ForestRoom extends Room<GameState> {
     this.dropClues(bigfoots);
     this.expireClues();
     this.expirePings();
+    this.updateRevives(dt);
     this.updateStatuses();
+    this.updateDazzle(dt, hunters, bigfoots);
     this.updateFilming(dt, hunters, bigfoots);
     this.evaluateWin(hunters, nightsComplete);
+  }
+
+  /**
+   * Accumulate revive progress from active hunters holding the revive on a downed teammate in range.
+   * On completion the target returns to `active` (post-incap slowed), interrupting Bigfoot's drag and
+   * footage pressure. Progress decays when nobody is actively reviving; `beingRevived` is replicated.
+   */
+  private updateRevives(dt: number) {
+    const revivedThisTick = new Set<string>();
+
+    for (const [reviverSid, targetSid] of this.reviveIntent) {
+      const reviver = this.state.players.get(reviverSid);
+      const target = this.state.players.get(targetSid);
+      if (!reviver || reviver.role === "bigfoot" || reviver.status !== "active") continue;
+      if (!target || target.status !== "incapacitated") continue;
+      if (dist2(reviver, target) > REVIVE_RADIUS * REVIVE_RADIUS) continue;
+
+      const prog = (this.reviveProgress.get(targetSid) ?? 0) + dt;
+      revivedThisTick.add(targetSid);
+      if (prog >= REVIVE_SECONDS) {
+        target.status = "active"; // freed early — same post-incap recovery as a natural wake-up
+        this.incapUntil.delete(targetSid);
+        this.grabbedBy.delete(targetSid);
+        this.slowUntil.set(targetSid, this.elapsed + SLOW_SECONDS);
+        this.reviveProgress.delete(targetSid);
+      } else {
+        this.reviveProgress.set(targetSid, prog);
+      }
+    }
+
+    // Bleed off progress for anyone no longer being actively revived; publish the in-progress flag.
+    for (const [targetSid, prog] of this.reviveProgress) {
+      if (revivedThisTick.has(targetSid)) continue;
+      const decayed = prog - dt * REVIVE_DECAY;
+      if (decayed <= 0) this.reviveProgress.delete(targetSid);
+      else this.reviveProgress.set(targetSid, decayed);
+    }
+    this.state.players.forEach((p, sid) => {
+      const flag = revivedThisTick.has(sid);
+      if (p.beingRevived !== flag) p.beingRevived = flag;
+    });
+  }
+
+  /**
+   * A searcher who keeps a lit flashlight trained on Bigfoot (range + cone + line-of-sight) charges a
+   * "dazzle": once sustained it blinds Bigfoot for a few seconds — its roar/grab are locked and its
+   * client cuts the sight cone. A deterrent, not a stun-lock: it never frees an already-grabbed hunter.
+   */
+  private updateDazzle(dt: number, hunters: Array<{ sid: string; p: Player }>, bigfoots: Array<{ sid: string; p: Player }>) {
+    for (const { sid: bfSid, p: bf } of bigfoots) {
+      let aimed = false;
+      for (const { p: h } of hunters) {
+        if (h.status !== "active" || !h.flashlightOn) continue;
+        const dx = bf.x - h.x;
+        const dz = bf.z - h.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist > DAZZLE_RANGE || dist < 1e-3) continue;
+        // Beam forward from the hunter's yaw (matches the sim's -sin/-cos convention).
+        const dot = (dx / dist) * -Math.sin(h.ry) + (dz / dist) * -Math.cos(h.ry);
+        if (dot < DAZZLE_AIM_COS) continue; // Bigfoot isn't centred in the beam
+        if (lineBlocked(this.world.colliders, h, bf)) continue; // a tree/rock blocks the light
+        aimed = true;
+        break;
+      }
+
+      const fill = aimed
+        ? Math.min(DAZZLE_FILL_SECONDS, (this.dazzleFill.get(bfSid) ?? 0) + dt)
+        : Math.max(0, (this.dazzleFill.get(bfSid) ?? 0) - dt * DAZZLE_DECAY);
+      this.dazzleFill.set(bfSid, fill);
+      // Sustained aim keeps refreshing the dazzle window, so it lingers DAZZLE_SECONDS after the beam leaves.
+      if (fill >= DAZZLE_FILL_SECONDS) this.dazzledUntil.set(bfSid, this.elapsed + DAZZLE_SECONDS);
+
+      const dazzled = this.elapsed < (this.dazzledUntil.get(bfSid) ?? 0);
+      if (bf.dazzled !== dazzled) bf.dazzled = dazzled;
+    }
   }
 
   /** Tick freeze/incapacitation/slow timers and drag incapacitated hunters along. */

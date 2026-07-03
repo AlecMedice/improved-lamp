@@ -2,7 +2,12 @@ import { mulberry32 } from "./rng";
 import { WORLD } from "./constants";
 import type { Cave } from "./caves";
 
-export type Collider = { x: number; z: number; r: number };
+export type Collider = {
+  x: number; z: number; r: number;
+  /** If set, the structure is climbable: solid from the side, walkable on top at this many metres
+   *  above its base terrain (Bigfoot can scale it and perch). Undefined = a plain, un-scalable solid. */
+  climbH?: number;
+};
 export type FallenLog = {
   cx: number; cz: number; // centre
   ax: number; az: number; // unit axis along the trunk (world XZ)
@@ -67,27 +72,28 @@ export function buildColliders(seed: number, caves: readonly Cave[]): Collider[]
     colliders.push({ x, z, r: 0.45 * s });
   }
 
-  // RV — 3 circles along the body, rotated by RV.ry about Y.
+  // RV — 3 circles along the body, rotated by RV.ry about Y. Its flat roof is a low perch.
   const c = Math.cos(RV.ry);
   const s = Math.sin(RV.ry);
   for (const lx of [-2.2, 0, 2.2]) {
-    colliders.push({ x: RV.x + lx * c, z: RV.z + -lx * s, r: 1.6 });
+    colliders.push({ x: RV.x + lx * c, z: RV.z + -lx * s, r: 1.6, climbH: 2.8 });
   }
 
   // Caves — horseshoe of boulders; side + back are solid, the mouth (toward centre) is open.
+  // The boulders are climbable — Bigfoot can perch on them above its lair.
   for (const cave of caves) {
     const dl = Math.hypot(cave.x, cave.z) || 1;
     const dx = -cave.x / dl;
     const dz = -cave.z / dl;
     const px = -dz;
     const pz = dx;
-    colliders.push({ x: cave.x - dx * 3, z: cave.z - dz * 3, r: 1.8 });
-    colliders.push({ x: cave.x + px * 3.0, z: cave.z + pz * 3.0, r: 1.5 });
-    colliders.push({ x: cave.x - px * 3.0, z: cave.z - pz * 3.0, r: 1.5 });
+    colliders.push({ x: cave.x - dx * 3, z: cave.z - dz * 3, r: 1.8, climbH: 2.4 });
+    colliders.push({ x: cave.x + px * 3.0, z: cave.z + pz * 3.0, r: 1.5, climbH: 2.4 });
+    colliders.push({ x: cave.x - px * 3.0, z: cave.z - pz * 3.0, r: 1.5, climbH: 2.4 });
   }
 
-  // Lookout tower.
-  colliders.push({ x: LOOKOUT.x, z: LOOKOUT.z, r: LOOKOUT.r });
+  // Lookout tower — the tallest climb; its render platform sits at ~10 m.
+  colliders.push({ x: LOOKOUT.x, z: LOOKOUT.z, r: LOOKOUT.r, climbH: 9.5 });
 
   return colliders;
 }

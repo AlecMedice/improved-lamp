@@ -1,9 +1,10 @@
 import * as THREE from "three";
-import { NET, FILM, NIGHT_SECONDS, CAVES, CAVE, ABILITY, MAP, PLAYER, BIGFOOT_VISION } from "../config";
+import { NET, FILM, NIGHT_SECONDS, CAVES, CAVE, ABILITY, CHARGE, REVIVE, MAP, PLAYER, BIGFOOT_VISION, SENSES } from "../config";
 import { Environment } from "../world/Environment";
 import { ClueField } from "../world/ClueField";
 import { PingField } from "../world/PingField";
 import { LocalPlayer } from "../entities/LocalPlayer";
+import { climbSupport } from "../../../shared/sim";
 import { Input } from "./Input";
 import { Network, SelfInfo, EscalationInfo } from "./Network";
 import { Room } from "colyseus.js";
@@ -38,12 +39,18 @@ export class Game {
   private sendAccum = 0;
   private timeOfDay = 0;
   private serverTimeOfDay: number | null = null;
-  private self: SelfInfo = { status: "active", filmProgress: 0, role: "searcher", slowed: false };
+  private self: SelfInfo = { status: "active", filmProgress: 0, role: "searcher", slowed: false, dazzled: false };
   private ended = false;
   private caveCooldown = 0;
   private traveling = false; // suspends local control + move-sends during a cave hop
   private roarCooldown = 0;
   private roarCooldownSec = ABILITY.roarCooldown; // effective, from server escalation
+  private chargeTimer = 0; // remaining seconds of an active charge burst (drives chargeMul)
+  private chargeCooldown = 0; // remaining seconds until the next charge is ready
+  private sensesOn = false; // Bigfoot predator-vision overlay (toggle with V)
+  private reviveProgress = 0; // 0..1 local estimate of the teammate revive being held (server-authoritative)
+  private reviveTickTimer = 0; // spacing for the revive channel cue while holding
+  private reviveWasFull = false; // guards the one-shot success cue
   private night = 1;
   private totalNights = 3;
 
@@ -115,10 +122,12 @@ export class Game {
     this.net.onRoar = (x, z) => this.audio.playAt("roar", x, z, { volume: 0.95, refDistance: 30, rolloff: 0.7 });
     this.net.onEscalation = (e) => this.applyEscalation(e);
 
-    // Bigfoot abilities: right-click roar, left-click grab a frozen hunter.
+    // Bigfoot abilities: right-click roar, left-click grab a frozen hunter, Shift to charge.
     if (this.isBigfoot) {
       this.input.onMousePress(2, () => this.tryRoar());
       this.input.onMousePress(0, () => this.tryGrab());
+      this.input.onPress("ShiftLeft", () => this.tryCharge());
+      this.input.onPress("KeyV", () => this.toggleSenses());
     }
 
     // Hunters: stakeout pings (Q to mark where you stand, or click the map).
@@ -207,13 +216,38 @@ export class Game {
     this.hud.setStatusBanner(this.ended ? "active" : this.self.status);
     this.hud.setBlackout(incapacitated && !this.ended);
 
+    // Bigfoot: charge burst timing (drives the sim speed multiplier + UI) + senses overlay.
+    if (this.isBigfoot) {
+      this.chargeTimer = Math.max(0, this.chargeTimer - dt);
+      this.chargeCooldown = Math.max(0, this.chargeCooldown - dt);
+      this.player.chargeMul = this.chargeTimer > 0 ? CHARGE.speedMul : 1;
+      this.net.refreshSenses(this.sensesOn, this.player.position.x, this.player.position.z, SENSES.range);
+    }
+
     // Bigfoot: ability readout + cave-travel prompt.
     if (this.isBigfoot && !this.ended) {
       this.roarCooldown = Math.max(0, this.roarCooldown - dt);
-      this.hud.setAbility(this.roarCooldown > 0 ? `Roar: ${Math.ceil(this.roarCooldown)}s` : "Roar ready (right-click)");
+      // A searcher's sustained flashlight blinds Bigfoot: cut the sight cone and lock roar/grab.
+      if (this.player.visionLight) this.player.visionLight.intensity = this.self.dazzled ? 0 : BIGFOOT_VISION.intensity;
+      if (this.self.dazzled) {
+        this.hud.setAbility("DAZZLED — blinded by a flashlight, can't roar or grab");
+      } else {
+        const roarText = this.roarCooldown > 0 ? `Roar: ${Math.ceil(this.roarCooldown)}s` : "Roar ready (right-click)";
+        const leapText = this.player.stamina >= PLAYER.leapStaminaCost ? "Leap ready (space)" : "Leap: low stamina";
+        const chargeText = this.chargeTimer > 0 ? "Charging!" : this.chargeCooldown > 0 ? `Charge: ${Math.ceil(this.chargeCooldown)}s` : "Charge ready (shift)";
+        this.hud.setAbility(`${roarText} · ${leapText} · ${chargeText}`);
+      }
       this.caveCooldown = Math.max(0, this.caveCooldown - dt);
       const caveReady = this.caveCooldown === 0 && this.nearestCaveIndex() >= 0;
-      this.hud.setPrompt(caveReady && !this.map.isOpen ? "Press M — choose a cave to travel to" : null);
+      // Prompt priority: cave fast-travel, else a hint when stood against a climbable structure.
+      const w = this.env.simWorld;
+      const near = climbSupport(w.climbables, w.getHeight,
+        this.player.position.x, this.player.position.z, PLAYER.radius, PLAYER.climbReach);
+      this.hud.setPrompt(
+        caveReady && !this.map.isOpen ? "Press M — choose a cave to travel to"
+          : near && !this.map.isOpen ? "Hold Space to climb"
+            : null
+      );
     }
 
     // Live map refresh while open.
@@ -234,6 +268,9 @@ export class Game {
     // Filming (hunters only): hold right mouse to record; Bigfoot in frame builds footage.
     let recording = false;
     let inView = false;
+    // Revive (hunters only): hold E near a downed teammate to free them (server-authoritative).
+    let reviving = false;
+    let reviveTarget = "";
     if (!this.isBigfoot) {
       if (!locked) {
         recording = this.input.isMouseDown(2);
@@ -241,6 +278,36 @@ export class Game {
       }
       this.hud.setRecording(recording, inView); // recording=false hides the viewfinder
       this.hud.setFilmProgress(this.self.filmProgress);
+
+      const target = !locked
+        ? this.net.getIncapTeammate(this.player.position.x, this.player.position.z, REVIVE.radius)
+        : null;
+      const holdingE = target !== null && this.input.isDown("KeyE");
+      if (holdingE) {
+        reviving = true;
+        reviveTarget = target!.sid;
+        this.reviveProgress = Math.min(1, this.reviveProgress + dt / REVIVE.seconds);
+        this.reviveTickTimer -= dt;
+        if (this.reviveTickTimer <= 0) {
+          this.audio.playOnce("revive_channel", { volume: 0.5 });
+          this.reviveTickTimer = 0.22;
+        }
+        if (this.reviveProgress >= 1 && !this.reviveWasFull) {
+          this.audio.playOnce("revive_success", { volume: 0.5 });
+          this.reviveWasFull = true;
+        }
+        this.hud.setPrompt("Reviving teammate…");
+      } else {
+        this.reviveProgress = Math.max(0, this.reviveProgress - dt * 2); // bleed off when not holding
+        this.reviveTickTimer = 0;
+        this.reviveWasFull = false;
+        // Prompt priority: an in-range revive, else a hint that our flashlight is dazzling Bigfoot.
+        const dazzling = !locked && this.player.isFlashlightOn && this.computeBigfootInView();
+        this.hud.setPrompt(
+          target ? "Hold E to revive teammate" : dazzling ? "Blinding Bigfoot — hold the light on it" : null
+        );
+      }
+      this.hud.setReviveProgress(this.reviveProgress);
     }
 
     // Stream our transform + intent to the server at a fixed rate.
@@ -258,6 +325,8 @@ export class Game {
           stamina: this.player.stamina,
           recording,
           inView,
+          reviving,
+          reviveTarget,
         });
       }
     }
@@ -331,16 +400,32 @@ export class Game {
   }
 
   private tryRoar() {
-    if (!this.isBigfoot || this.ended || this.map.isOpen || this.roarCooldown > 0) return;
+    if (!this.isBigfoot || this.ended || this.map.isOpen || this.roarCooldown > 0 || this.self.dazzled) return;
     this.net.sendRoar();
     this.audio.playOnce("roar", { volume: 0.9 }); // our own roar, up close
     this.roarCooldown = this.roarCooldownSec;
   }
 
   private tryGrab() {
-    if (!this.isBigfoot || this.ended || this.map.isOpen) return;
+    if (!this.isBigfoot || this.ended || this.map.isOpen || this.self.dazzled) return;
     this.net.sendGrab();
     this.audio.playOnce("grab_impact", { volume: 0.5 }); // the swing
+  }
+
+  private tryCharge() {
+    if (!this.isBigfoot || this.ended || this.map.isOpen || this.chargeCooldown > 0) return;
+    this.net.sendCharge(); // server opens the speed-gate window; we predict the burst locally
+    this.chargeTimer = CHARGE.duration;
+    this.chargeCooldown = CHARGE.duration + CHARGE.cooldown;
+    this.audio.playOnce("cave_whoosh", { volume: 0.5 }); // a lunging whoosh
+  }
+
+  private toggleSenses() {
+    if (!this.isBigfoot) return;
+    this.sensesOn = !this.sensesOn;
+    this.clues.setSensed(this.sensesOn); // scent trail (Bigfoot's own recent tracks, through walls)
+    this.audio.playOnce("flashlight_click", { volume: 0.35 });
+    this.hud.setTutorial(this.sensesOn ? "SENSES ON — prey & scent revealed (V)" : null);
   }
 
   private onNightChange(night: number, total: number) {

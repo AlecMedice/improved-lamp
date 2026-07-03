@@ -48,19 +48,20 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 
 ---
 
-## Phase 3 — Asymmetry & abilities 🟡
-- 🟡 Two playable roles with distinct cameras/speed/models *(distinct speed, height, night‑vision, avatars + Bigfoot eye‑shine done; rigged models pending)*
+## Phase 3 — Asymmetry & abilities ✅
+- 🟡 Two playable roles with distinct cameras/speed/models *(distinct speed, height, night‑vision, avatars + Bigfoot eye‑shine done; rigged models pending — Phase 6)*
 - ✅ Bigfoot **roar** (AoE freeze) → **grab** frozen hunter → **incapacitate + drag + erase footage**; recover slowed
-- ⬜ Bigfoot: charge, leap/climb, full senses overlay
+- ✅ Bigfoot mobility kit — **leap** (`Space`, stamina‑gated bound), **charge** (`Shift`, forward burst dash on a cooldown), **surface‑climb** (`Space` vs a structure: scale the tower/RV/boulders and stand on top)
+- ✅ Bigfoot **senses overlay** (`V`) — predator vision revealing hunters (and its own scent trail) through the forest
 - ✅ Bigfoot leaves a trackable trail (footprints + broken branches) — *the clue framework*
 - ✅ Bigfoot **cave fast-travel** network (spawn at a cave; pick the destination from the map)
 - ✅ **Map** (`M`) for both roles — position/heading, camp, caves; hunters also see teammates + recent clue trail
 - ✅ **Stakeout pings** (`Q`/map-click) — shared hunter markers on the map + world beacons
 - ✅ Fade-to-black transition on Bigfoot cave fast-travel + between nights
 - ✅ Frozen/incapacitated states synced; remote status icons (grab targets)
-- ⬜ Searcher: jump/vault, flashlight stun meter; teammate revives
+- ✅ Searcher **counterplay** — **revive** a downed teammate (`E`), **dazzle** Bigfoot with a sustained flashlight (locks its roar/grab), and **vault** a fallen log (`Space`)
 
-**Goal:** "be the monster vs. survive the monster" is real and fun.
+**Goal:** "be the monster vs. survive the monster" is real and fun. **← both sides now have offense *and* defense.**
 
 ---
 

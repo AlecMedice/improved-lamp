@@ -42,9 +42,16 @@ export const PLAYER = {
   stepIntervalSprint: 0.32, // seconds between footstep sounds while sprinting
   stepHeight: 0.75, // max terrain rise auto-stepped over when a collider blocks (m)
   logSlowFactor: 0.35, // hunter speed multiplier when clambering over a fallen log
+  vaultHopSpeed: 4.6, // upward velocity when a hunter vaults a fallen log (a clamber, < jumpSpeed)
+  vaultStaminaCost: 12, // stamina spent to vault a log (negates its slow instead of wading over it)
+  climbSpeed: 3.6, // Bigfoot's vertical climb rate up a climbable structure (m/s)
+  climbStaminaDrain: 22, // stamina/sec while climbing/clinging (regen is suspended while climbing)
+  climbReach: 0.7, // how far past a structure's edge Bigfoot can grab on to start a climb (m)
   lakeHunterFactor: 0.28, // hunter speed multiplier while wading (heavy kit)
   lakeBigfootFactor: 0.72, // Bigfoot speed multiplier while wading (strong, but water impedes)
   jumpSpeed: 5.2, // initial upward velocity on jump (m/s)
+  leapSpeed: 9.5, // Bigfoot's leap: initial upward velocity (m/s), well above a hunter's jump
+  leapStaminaCost: 30, // stamina spent per leap (gates spamming)
   gravity: 16, // downward acceleration while airborne (m/s^2)
   crouchFactor: 0.55, // eye-height multiplier while crouched
   crouchSpeedMul: 0.5, // movement-speed multiplier while crouched
