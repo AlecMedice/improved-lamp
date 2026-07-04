@@ -112,13 +112,22 @@
         background: rgba(16,16,24,.72); color: #dcdce8; cursor: pointer; pointer-events: auto; z-index: 14;
         display: none; align-items: center; justify-content: center; } /* revealed once in-game */
       #settings-gear:hover { background: rgba(32,32,46,.9); }
-      #settings-overlay { display: none; z-index: 15; }
+      #settings-overlay { display: none; z-index: 15; overflow-y: auto; padding: 24px 0; }
       #settings-overlay .panel { min-width: 360px; gap: 16px; }
       .set-row { display: flex; flex-direction: column; gap: 6px; text-align: left; }
       .set-row .set-head { display: flex; justify-content: space-between; font-size: 13px; }
       .set-row .set-head b { font-weight: 600; opacity: .85; }
       .set-row .set-head span { opacity: .7; font-variant-numeric: tabular-nums; }
       .set-row input[type=range] { width: 100%; accent-color: var(--amber); padding: 0; background: none; border: none; }
+      /* Rebindable controls list (two columns). */
+      #settings-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 22px; max-height: 42vh; overflow-y: auto; }
+      .set-key-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+      .set-key-row span { opacity: .8; }
+      .keybtn { min-width: 78px; padding: 5px 10px; border-radius: 7px; border: 1px solid rgba(255,255,255,.18);
+        background: #14141c; color: #eee; font-size: 12px; font-weight: 600; cursor: pointer; }
+      .keybtn:hover { border-color: var(--amber); }
+      .keybtn.capturing { color: var(--amber); border-color: var(--amber); }
+      .set-sub { font-size: 12px; opacity: .55; text-align: left; }
       kbd { background: #14141c; border: 1px solid rgba(255,255,255,.2); border-bottom-width: 2px;
         border-radius: 5px; padding: 1px 6px; font-size: 11px; }
       #end-overlay { display: none; }
@@ -281,6 +290,12 @@
           <div class="set-head"><b>Mouse sensitivity</b><span id="set-sensitivity-val">1.00×</span></div>
           <input type="range" id="set-sensitivity" />
         </div>
+      </div>
+      <div class="panel" style="min-width:520px">
+        <div class="set-head"><b>Controls</b>
+          <button id="settings-reset-keys" class="btn btn-ghost" style="padding:4px 10px;font-size:12px">Reset to defaults</button></div>
+        <div id="settings-controls"></div>
+        <div class="set-sub">Click a key, then press the new one. Esc cancels.</div>
       </div>
       <button id="settings-resume" class="btn">Resume</button>
     </div>

@@ -32,6 +32,7 @@ import { Network, SelfInfo, EscalationInfo } from "./Network";
 import { Room } from "colyseus.js";
 import { HUD } from "../ui/HUD";
 import { Settings, SettingsData } from "./Settings";
+import { Keybinds } from "./Keybinds";
 import { SettingsMenu } from "../ui/SettingsMenu";
 import { MapView } from "../ui/MapView";
 import { AudioEngine } from "./AudioEngine";
@@ -50,6 +51,7 @@ export class Game {
   private fxPass!: ShaderPass; // the vignette/grain pass (time + per-phase vignette uniforms)
   private baseExposure: number; // role-based tone-mapping exposure; the brightness setting scales this
   private settings = new Settings();
+  private keybinds = new Keybinds();
   private settingsMenu!: SettingsMenu;
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
@@ -140,16 +142,18 @@ export class Game {
       this.scene.add(new THREE.HemisphereLight(0x34405e, 0x10131c, 0.12));
     }
 
-    this.input = new Input(canvas);
+    this.input = new Input(canvas, this.keybinds);
     this.input.setLookHandler((dx, dy) => this.player.look(dx, dy));
-    this.input.onPress("KeyM", () => this.toggleMap());
-    this.input.onPress("Escape", () => this.toggleSettings());
-    if (!this.isBigfoot) this.input.onPress("KeyF", () => this.player.toggleFlashlight());
+    this.input.onAction("map", () => this.toggleMap());
+    this.input.onPress("Escape", () => this.toggleSettings()); // fixed, not rebindable
+    if (!this.isBigfoot) this.input.onAction("flashlight", () => this.player.toggleFlashlight());
     this.map.onSelectCave = (i) => this.travelToCave(i);
 
-    // Settings: live brightness/volume/sensitivity, persisted; Resume re-locks the pointer.
+    // Settings + rebindable controls, persisted; Resume re-locks the pointer.
     this.settingsMenu = new SettingsMenu(
       this.settings,
+      this.keybinds,
+      this.input,
       (d) => this.applySettings(d),
       () => { this.input.allowPointerLock = true; if (!this.ended) this.canvas.requestPointerLock(); }
     );
@@ -173,12 +177,12 @@ export class Game {
     this.net.onRoar = (x, z) => this.audio.playAt("roar", x, z, { volume: 0.95, refDistance: 30, rolloff: 0.7 });
     this.net.onEscalation = (e) => this.applyEscalation(e);
 
-    // Bigfoot abilities: right-click roar, left-click grab a frozen hunter, Shift to charge.
+    // Bigfoot abilities: right-click roar, left-click grab a frozen hunter, sprint-key charge, senses.
     if (this.isBigfoot) {
       this.input.onMousePress(2, () => this.tryRoar());
       this.input.onMousePress(0, () => this.tryGrab());
-      this.input.onPress("ShiftLeft", () => this.tryCharge());
-      this.input.onPress("KeyV", () => this.toggleSenses());
+      this.input.onAction("sprint", () => this.tryCharge());
+      this.input.onAction("senses", () => this.toggleSenses());
     }
 
     // Hunters: stakeout pings (Q to mark where you stand, or click the map).
@@ -186,7 +190,7 @@ export class Game {
       this.pings = new PingField(this.scene, this.env);
       this.net.onPingAdd = (id, x, z) => this.pings!.add(id, x, z);
       this.net.onPingRemove = (id) => this.pings!.remove(id);
-      this.input.onPress("KeyQ", () => this.dropPing());
+      this.input.onAction("ping", () => this.dropPing());
       this.map.onMapClick = (x, z) => this.dropPing(x, z);
     }
     void this.net.connect();
@@ -333,7 +337,7 @@ export class Game {
       const target = !locked
         ? this.net.getIncapTeammate(this.player.position.x, this.player.position.z, REVIVE.radius)
         : null;
-      const holdingE = target !== null && this.input.isDown("KeyE");
+      const holdingE = target !== null && this.input.isActionDown("interact");
       if (holdingE) {
         reviving = true;
         reviveTarget = target!.sid;

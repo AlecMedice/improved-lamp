@@ -1,16 +1,31 @@
-/** Keyboard + pointer-lock mouse input (incl. mouse buttons). Intentionally tiny. */
+import { Keybinds, Action, ACTIONS } from "./Keybinds";
+
+/** Keyboard + pointer-lock mouse input (incl. mouse buttons). Actions resolve through Keybinds. */
 export class Input {
   private keys = new Set<string>();
   private buttons = new Set<number>();
-  private onTap: Record<string, () => void> = {};
+  private onTap: Record<string, () => void> = {}; // raw-code taps (e.g. Escape — not rebindable)
+  private onActionTap: Partial<Record<Action, () => void>> = {};
   private onBtnTap: Record<number, () => void> = {};
   private onLook: (dx: number, dy: number) => void = () => {};
+  private capture: ((code: string) => void) | null = null; // pending rebind capture
   locked = false;
   allowPointerLock = true; // disabled while a menu/map is open
 
-  constructor(private canvas: HTMLElement) {
+  constructor(private canvas: HTMLElement, private keybinds: Keybinds) {
     window.addEventListener("keydown", (e) => {
-      if (!this.keys.has(e.code)) this.onTap[e.code]?.(); // fire once per press
+      // Rebind capture: swallow the next key press and hand it to the UI (Escape cancels).
+      if (this.capture) {
+        const cb = this.capture;
+        this.capture = null;
+        e.preventDefault();
+        cb(e.code === "Escape" ? "" : e.code); // "" = cancelled
+        return;
+      }
+      if (!this.keys.has(e.code)) {
+        this.onTap[e.code]?.(); // fire once per press (raw code)
+        for (const a of ACTIONS) if (this.keybinds.code(a) === e.code) this.onActionTap[a]?.(); // action taps
+      }
       this.keys.add(e.code);
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.code));
@@ -34,15 +49,26 @@ export class Input {
     });
   }
 
+  /** Raw key held (by KeyboardEvent.code). Used for fixed keys like Escape. */
   isDown(code: string): boolean {
     return this.keys.has(code);
+  }
+  /** Is the key bound to `action` currently held? */
+  isActionDown(action: Action): boolean {
+    const code = this.keybinds.code(action);
+    return code !== "" && this.keys.has(code);
   }
   /** Mouse button: 0 = left, 2 = right. */
   isMouseDown(button: number): boolean {
     return this.buttons.has(button);
   }
+  /** Fire once when a fixed raw key goes down (e.g. Escape). */
   onPress(code: string, fn: () => void) {
     this.onTap[code] = fn;
+  }
+  /** Fire once when the key bound to `action` goes down. */
+  onAction(action: Action, fn: () => void) {
+    this.onActionTap[action] = fn;
   }
   /** Fire once when a mouse button goes down (0 = left, 2 = right). */
   onMousePress(button: number, fn: () => void) {
@@ -50,5 +76,9 @@ export class Input {
   }
   setLookHandler(fn: (dx: number, dy: number) => void) {
     this.onLook = fn;
+  }
+  /** Grab the next key press (for rebinding). Escape cancels; the captured key doesn't fire actions. */
+  captureNext(cb: (code: string) => void) {
+    this.capture = cb;
   }
 }

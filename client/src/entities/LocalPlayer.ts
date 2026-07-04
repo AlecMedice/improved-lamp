@@ -146,22 +146,22 @@ export class LocalPlayer {
 
   /** Build the movement command from the keyboard — also the payload streamed to the server. */
   buildInput(input: Input, dt: number): MoveInput {
-    const space = input.isDown("Space");
+    const jumpKey = input.isActionDown("jump");
     return {
-      w: input.isDown("KeyW"),
-      s: input.isDown("KeyS"),
-      a: input.isDown("KeyA"),
-      d: input.isDown("KeyD"),
+      w: input.isActionDown("forward"),
+      s: input.isActionDown("back"),
+      a: input.isActionDown("left"),
+      d: input.isActionDown("right"),
       yaw: this.sim.yaw,
-      // Space is a leap for Bigfoot (stamina-gated bound) and a normal jump for hunters; for hunters
-      // it also engages a vault when standing on a fallen log, and for Bigfoot a climb when against a
-      // climbable structure (the sim picks vault/climb over jump/leap by context).
-      jump: !this.isBigfoot && space,
-      leap: this.isBigfoot && space,
-      climb: this.isBigfoot && space,
-      vault: !this.isBigfoot && space,
-      sprint: input.isDown("ShiftLeft"),
-      crouch: input.isDown("ControlLeft") || input.isDown("ControlRight"),
+      // The jump key is a leap for Bigfoot (stamina-gated bound) and a normal jump for hunters; for
+      // hunters it also engages a vault on a fallen log, and for Bigfoot a climb against a climbable
+      // structure (the sim picks vault/climb over jump/leap by context).
+      jump: !this.isBigfoot && jumpKey,
+      leap: this.isBigfoot && jumpKey,
+      climb: this.isBigfoot && jumpKey,
+      vault: !this.isBigfoot && jumpKey,
+      sprint: input.isActionDown("sprint"),
+      crouch: input.isActionDown("crouch"),
       dt,
     };
   }
