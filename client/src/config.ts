@@ -75,6 +75,37 @@ export const FILM = {
 export const NET = { sendHz: 15 };
 
 /**
+ * Rendering quality / performance budget. `isMobile()` (coarse pointer or a small screen) picks the
+ * cheaper caps. Pixel-ratio cap is the biggest fragment-cost lever; `maxCaveLights` trims the
+ * forward-render light budget (only the nearest cave glows shade the scene).
+ */
+export const QUALITY = {
+  pixelRatioCap: 2, // desktop
+  pixelRatioCapMobile: 1.5, // hi-dpi phones render far fewer fragments at 1.5
+  maxCaveLights: 1, // only the nearest N of the 5 cave glow point-lights stay lit
+};
+
+/** Coarse mobile/low-power heuristic (no UA sniffing): touch-first pointer or a small viewport. */
+export function isMobile(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia?.("(pointer: coarse)").matches || window.innerWidth < 820;
+}
+
+/**
+ * Post-processing (EffectComposer): bloom makes bright sources glow (flashlight highlights, Bigfoot
+ * eye-shine, campfire, rec lights), plus a shader vignette + subtle moving film grain. `vignetteNight`
+ * is added to the base vignette deep in the night ("tuned per phase"). Tuned by eye.
+ */
+export const POST = {
+  bloomStrength: 0.62, // overall glow intensity
+  bloomRadius: 0.5, // glow spread
+  bloomThreshold: 0.62, // only pixels brighter than this bloom (keeps the dark night un-blown)
+  vignette: 1.15, // edge-darkening scale (higher = tighter)
+  vignetteNight: 0.35, // extra vignette added at midnight/witching
+  grain: 0.035, // moving film-grain amount (subtle sensor noise, not heavy static)
+};
+
+/**
  * Cave entrances — Bigfoot's lairs and the nodes of its fast-travel network. Seed-derived
  * (shared/sim) so the client, every other client, and the server agree on the layout;
  * the fast-travel rules (`CAVE`) are shared too since the server validates the jump.

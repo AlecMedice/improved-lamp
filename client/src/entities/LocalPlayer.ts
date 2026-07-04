@@ -18,6 +18,7 @@ export class LocalPlayer {
   readonly position = new THREE.Vector3(); // eye position (derived from sim each frame)
   readonly isBigfoot: boolean;
   externalSpeedMul = 1; // set by Game (e.g. 0.75 while slowed after incapacitation)
+  sensitivityMul = 1; // mouse-look sensitivity multiplier (from the settings menu)
 
   chargeMul = 1; // Bigfoot charge burst (1 = not charging; set by Game while a charge window is open)
 
@@ -109,8 +110,8 @@ export class LocalPlayer {
   }
 
   look(dx: number, dy: number) {
-    this.sim.yaw -= dx * PLAYER.mouseSensitivity;
-    this.pitch -= dy * PLAYER.mouseSensitivity;
+    this.sim.yaw -= dx * PLAYER.mouseSensitivity * this.sensitivityMul;
+    this.pitch -= dy * PLAYER.mouseSensitivity * this.sensitivityMul;
     const lim = Math.PI / 2 - 0.05;
     this.pitch = Math.max(-lim, Math.min(lim, this.pitch));
   }
@@ -145,22 +146,22 @@ export class LocalPlayer {
 
   /** Build the movement command from the keyboard — also the payload streamed to the server. */
   buildInput(input: Input, dt: number): MoveInput {
-    const space = input.isDown("Space");
+    const jumpKey = input.isActionDown("jump");
     return {
-      w: input.isDown("KeyW"),
-      s: input.isDown("KeyS"),
-      a: input.isDown("KeyA"),
-      d: input.isDown("KeyD"),
+      w: input.isActionDown("forward"),
+      s: input.isActionDown("back"),
+      a: input.isActionDown("left"),
+      d: input.isActionDown("right"),
       yaw: this.sim.yaw,
-      // Space is a leap for Bigfoot (stamina-gated bound) and a normal jump for hunters; for hunters
-      // it also engages a vault when standing on a fallen log, and for Bigfoot a climb when against a
-      // climbable structure (the sim picks vault/climb over jump/leap by context).
-      jump: !this.isBigfoot && space,
-      leap: this.isBigfoot && space,
-      climb: this.isBigfoot && space,
-      vault: !this.isBigfoot && space,
-      sprint: input.isDown("ShiftLeft"),
-      crouch: input.isDown("ControlLeft") || input.isDown("ControlRight"),
+      // The jump key is a leap for Bigfoot (stamina-gated bound) and a normal jump for hunters; for
+      // hunters it also engages a vault on a fallen log, and for Bigfoot a climb against a climbable
+      // structure (the sim picks vault/climb over jump/leap by context).
+      jump: !this.isBigfoot && jumpKey,
+      leap: this.isBigfoot && jumpKey,
+      climb: this.isBigfoot && jumpKey,
+      vault: !this.isBigfoot && jumpKey,
+      sprint: input.isActionDown("sprint"),
+      crouch: input.isActionDown("crouch"),
       dt,
     };
   }

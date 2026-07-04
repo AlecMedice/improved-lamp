@@ -1,0 +1,42 @@
+name: CI
+
+# Runs the same gates as CLAUDE.md's "verify your work" section on every PR and on
+# pushes to main: the client typechecks + bundles, and the server typechecks (which
+# also guards shared/ purity, since shared/sim is imported by both sides).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  client:
+    name: client — typecheck + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: npm ci
+      - run: npm run build # tsc --noEmit && vite build
+
+  server:
+    name: server — typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck # tsc --noEmit (also guards shared/ purity)

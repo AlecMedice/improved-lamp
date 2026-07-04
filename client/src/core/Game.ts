@@ -1,14 +1,41 @@
 import * as THREE from "three";
-import { NET, FILM, NIGHT_SECONDS, CAVES, CAVE, ABILITY, CHARGE, REVIVE, MAP, PLAYER, BIGFOOT_VISION, SENSES } from "../config";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { NET, FILM, NIGHT_SECONDS, CAVES, CAVE, ABILITY, CHARGE, REVIVE, MAP, PLAYER, BIGFOOT_VISION, SENSES, POST, QUALITY, isMobile } from "../config";
+
+/** Screen-space vignette + moving film grain, composited after bloom (replaces the old CSS vignette). */
+const VignetteGrainShader = {
+  uniforms: { tDiffuse: { value: null }, time: { value: 0 }, vignette: { value: POST.vignette }, grain: { value: POST.grain } },
+  vertexShader: /* glsl */ `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse; uniform float time; uniform float vignette; uniform float grain; varying vec2 vUv;
+    float hash(vec2 p){ p = fract(p * vec2(123.34, 345.45)); p += dot(p, p + 34.345); return fract(p.x * p.y); }
+    void main(){
+      vec4 c = texture2D(tDiffuse, vUv);
+      float r = length(vUv - 0.5);
+      float vig = smoothstep(0.85, 0.30, r * vignette); // 1 at centre -> 0 at the edges
+      c.rgb *= mix(0.32, 1.0, vig);
+      c.rgb += (hash(vUv * vec2(1920.0, 1080.0) + time) - 0.5) * grain; // subtle moving grain
+      gl_FragColor = c;
+    }`,
+};
 import { Environment } from "../world/Environment";
 import { ClueField } from "../world/ClueField";
 import { PingField } from "../world/PingField";
 import { LocalPlayer } from "../entities/LocalPlayer";
+import { RemotePlayer } from "../entities/RemotePlayer";
 import { climbSupport } from "../../../shared/sim";
 import { Input } from "./Input";
 import { Network, SelfInfo, EscalationInfo } from "./Network";
 import { Room } from "colyseus.js";
 import { HUD } from "../ui/HUD";
+import { Settings, SettingsData } from "./Settings";
+import { Keybinds } from "./Keybinds";
+import { SettingsMenu } from "../ui/SettingsMenu";
+import { Briefing } from "../ui/Briefing";
 import { MapView } from "../ui/MapView";
 import { AudioEngine } from "./AudioEngine";
 
@@ -22,6 +49,18 @@ const RECONCILE_EASE = 8; // ease rate (× dt) when blending out a correction
 /** Wires renderer + world + player + input + networking into one loop. */
 export class Game {
   private renderer: THREE.WebGLRenderer;
+  private composer!: EffectComposer; // post-processing chain (bloom + vignette/grain)
+  private fxPass!: ShaderPass; // the vignette/grain pass (time + per-phase vignette uniforms)
+  private baseExposure: number; // role-based tone-mapping exposure; the brightness setting scales this
+  private settings = new Settings();
+  private keybinds = new Keybinds();
+  private settingsMenu!: SettingsMenu;
+  private briefing = new Briefing();
+  private showPerf = new URLSearchParams(location.search).has("perf");
+  private perfFps = 60;
+  private perfTimer = 0;
+  private previews: RemotePlayer[] = []; // dev-only avatar previews (window.__previewAvatars)
+  private previewT = 0;
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
   private clock = new THREE.Clock();
@@ -68,17 +107,33 @@ export class Game {
     this.isBigfoot = role === "bigfoot";
     this.canvas = canvas;
 
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const mobile = isMobile();
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !mobile, powerPreference: "high-performance" });
+    // Pixel ratio is the biggest fragment-cost lever; cap it (lower on hi-dpi mobile).
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, mobile ? QUALITY.pixelRatioCapMobile : QUALITY.pixelRatioCap));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.info.autoReset = false; // we render several composer passes per frame; reset once/frame
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     // Per-client render (scenes don't leak). Bigfoot no longer gets a blanket brightness buff —
     // its night sight is the dim short-range vision cone (see LocalPlayer); exposure stays near
     // the searcher's so the far scene goes dark beyond that cone.
-    this.renderer.toneMappingExposure = this.isBigfoot ? BIGFOOT_VISION.exposure : 1.15;
+    this.baseExposure = this.isBigfoot ? BIGFOOT_VISION.exposure : 1.15;
+    this.renderer.toneMappingExposure = this.baseExposure;
 
     this.camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 900);
     this.scene.add(this.camera); // so the flashlight (a child) renders
+
+    // Post-processing: scene -> bloom (bright sources glow) -> vignette/grain -> tone-mapping output.
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    const bloom = new UnrealBloomPass(
+      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      POST.bloomStrength, POST.bloomRadius, POST.bloomThreshold
+    );
+    this.composer.addPass(bloom);
+    this.fxPass = new ShaderPass(VignetteGrainShader);
+    this.composer.addPass(this.fxPass);
+    this.composer.addPass(new OutputPass()); // applies renderer tone mapping + sRGB at the end
 
     // Audio: the listener rides the camera so positional cues pan/fall off correctly.
     this.audio = new AudioEngine(this.scene);
@@ -98,11 +153,35 @@ export class Game {
       this.scene.add(new THREE.HemisphereLight(0x34405e, 0x10131c, 0.12));
     }
 
-    this.input = new Input(canvas);
+    this.input = new Input(canvas, this.keybinds);
     this.input.setLookHandler((dx, dy) => this.player.look(dx, dy));
-    this.input.onPress("KeyM", () => this.toggleMap());
-    if (!this.isBigfoot) this.input.onPress("KeyF", () => this.player.toggleFlashlight());
+    this.input.onAction("map", () => this.toggleMap());
+    this.input.onPress("Escape", () => this.toggleSettings()); // fixed, not rebindable
+    if (!this.isBigfoot) this.input.onAction("flashlight", () => this.player.toggleFlashlight());
     this.map.onSelectCave = (i) => this.travelToCave(i);
+
+    // Settings + rebindable controls, persisted; Resume re-locks the pointer.
+    this.settingsMenu = new SettingsMenu(
+      this.settings,
+      this.keybinds,
+      this.input,
+      (d) => this.applySettings(d),
+      () => { this.input.allowPointerLock = true; if (!this.ended) this.canvas.requestPointerLock(); }
+    );
+    this.applySettings(this.settings.data);
+
+    // Perf readout hook (always available for tooling; the on-screen overlay needs ?perf).
+    (window as any).__perf = () => ({
+      fps: Math.round(this.perfFps),
+      draws: this.renderer.info.render.calls,
+      tris: this.renderer.info.render.triangles,
+      caveLights: this.env.litCaveLights,
+      trees: this.env.visibleTrees,
+      pixelRatio: this.renderer.getPixelRatio(),
+    });
+    if (this.showPerf) { const el = document.getElementById("perf"); if (el) el.style.display = "block"; }
+    // Dev-only: drop a hunter + Bigfoot avatar in front of the camera for art/proportion QA.
+    (window as any).__previewAvatars = () => this.spawnPreviewAvatars();
 
     this.net = new Network(this.scene, role, name, room, this.audio);
     this.net.onStatus = (s) => this.hud.setStatus(s);
@@ -122,12 +201,12 @@ export class Game {
     this.net.onRoar = (x, z) => this.audio.playAt("roar", x, z, { volume: 0.95, refDistance: 30, rolloff: 0.7 });
     this.net.onEscalation = (e) => this.applyEscalation(e);
 
-    // Bigfoot abilities: right-click roar, left-click grab a frozen hunter, Shift to charge.
+    // Bigfoot abilities: right-click roar, left-click grab a frozen hunter, sprint-key charge, senses.
     if (this.isBigfoot) {
       this.input.onMousePress(2, () => this.tryRoar());
       this.input.onMousePress(0, () => this.tryGrab());
-      this.input.onPress("ShiftLeft", () => this.tryCharge());
-      this.input.onPress("KeyV", () => this.toggleSenses());
+      this.input.onAction("sprint", () => this.tryCharge());
+      this.input.onAction("senses", () => this.toggleSenses());
     }
 
     // Hunters: stakeout pings (Q to mark where you stand, or click the map).
@@ -135,7 +214,7 @@ export class Game {
       this.pings = new PingField(this.scene, this.env);
       this.net.onPingAdd = (id, x, z) => this.pings!.add(id, x, z);
       this.net.onPingRemove = (id) => this.pings!.remove(id);
-      this.input.onPress("KeyQ", () => this.dropPing());
+      this.input.onAction("ping", () => this.dropPing());
       this.map.onMapClick = (x, z) => this.dropPing(x, z);
     }
     void this.net.connect();
@@ -148,7 +227,11 @@ export class Game {
   start() {
     this.audio.resume(); // called from the start gesture — lifts the autoplay gate
     this.renderer.setAnimationLoop(() => this.frame());
-    this.startTutorial();
+    // Dusk briefing first (any key begins); then the drip of one-line reminders.
+    this.briefing.show(this.isBigfoot, this.keybinds, this.input, () => {
+      if (!this.ended) this.canvas.requestPointerLock();
+      this.startTutorial();
+    });
   }
 
   /** Brief, role-specific control hints shown one at a time at the start of a match. */
@@ -180,13 +263,46 @@ export class Game {
     show();
   }
 
+  /** Dev QA: spawn a hunter + Bigfoot avatar a few metres in front of the camera, facing it. */
+  private spawnPreviewAvatars() {
+    const fwd = new THREE.Vector3();
+    this.camera.getWorldDirection(fwd);
+    fwd.y = 0;
+    fwd.normalize();
+    const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
+    const base = this.camera.position.clone().addScaledVector(fwd, 6);
+    const faceRy = Math.atan2(fwd.x, fwd.z); // turn to look back at the camera (−Z local faces it)
+    for (const [role, off] of [["searcher", -1.4], ["bigfoot", 1.6]] as const) {
+      const rp = new RemotePlayer(this.scene, role);
+      const p = base.clone().addScaledVector(right, off);
+      const y = this.env.getHeight(p.x, p.z);
+      (rp as any).__base = { x: p.x, y, z: p.z, ry: faceRy };
+      rp.setTarget(p.x, y, p.z, faceRy, false);
+      this.previews.push(rp);
+    }
+  }
+
+  /** Rock the preview avatars back and forth so the walk cycle animates in place. */
+  private updatePreviews(dt: number) {
+    if (this.previews.length === 0) return;
+    this.previewT += dt;
+    const sway = Math.sin(this.previewT * 2) * 0.4; // ±0.4 m along each avatar's facing
+    for (const rp of this.previews) {
+      const b = (rp as any).__base as { x: number; y: number; z: number; ry: number };
+      const fx = -Math.sin(b.ry);
+      const fz = -Math.cos(b.ry);
+      rp.setTarget(b.x + fx * sway, b.y, b.z + fz * sway, b.ry, false);
+      rp.update(dt);
+    }
+  }
+
   private frame() {
     const dt = Math.min(0.05, this.clock.getDelta());
     const t = this.clock.elapsedTime;
 
     const incapacitated = this.self.status === "incapacitated";
     const controlsLocked = this.self.status !== "active"; // frozen or incapacitated
-    const locked = this.ended || controlsLocked || this.map.isOpen || this.traveling;
+    const locked = this.ended || controlsLocked || this.map.isOpen || this.traveling || this.settingsMenu.isOpen || this.briefing.isOpen;
 
     this.player.externalSpeedMul = this.self.slowed ? PLAYER.slowFactor : 1;
     if (!locked) {
@@ -205,8 +321,11 @@ export class Game {
     this.hud.setNight(this.night, this.totalNights, this.timeOfDay);
 
     this.env.update(t);
+    this.env.updateLightBudget(this.player.position.x, this.player.position.z, QUALITY.maxCaveLights);
+    this.env.updateForestLOD(this.player.position.x, this.player.position.z);
     this.clues.update(t);
     this.net.update(dt);
+    this.updatePreviews(dt);
 
     // Creek ambience swells as you near the water (audible within ~30 m).
     const creekDist = this.env.distanceToCreek(this.player.position.x, this.player.position.z);
@@ -262,6 +381,7 @@ export class Game {
         others: hunter ? this.net.getRemoteSearchers() : [],
         clues: hunter && this.clueVisionActive() ? this.clues.getRecentDots(MAP.clueWindow) : [],
         pings: hunter ? this.net.getPings() : [],
+        bigfoot: this.isBigfoot,
       });
     }
 
@@ -282,7 +402,7 @@ export class Game {
       const target = !locked
         ? this.net.getIncapTeammate(this.player.position.x, this.player.position.z, REVIVE.radius)
         : null;
-      const holdingE = target !== null && this.input.isDown("KeyE");
+      const holdingE = target !== null && this.input.isActionDown("interact");
       if (holdingE) {
         reviving = true;
         reviveTarget = target!.sid;
@@ -333,7 +453,26 @@ export class Game {
 
     this.hud.setBattery(this.player.battery);
     this.hud.setStamina(this.player.stamina);
-    this.renderer.render(this.scene, this.camera);
+    this.hud.setBeam(!this.isBigfoot && this.player.isFlashlightOn); // beam mask + lens grime while lit
+
+    // Drive the post FX: moving grain + a vignette that tightens toward the dead of night.
+    this.fxPass.uniforms.time.value = t;
+    const nightDepth = Math.sin(Math.min(1, this.timeOfDay) * Math.PI); // 0 at dusk/dawn, 1 at midnight
+    this.fxPass.uniforms.vignette.value = POST.vignette + POST.vignetteNight * nightDepth;
+    this.renderer.info.reset(); // count draws across all composer passes for this frame
+    this.composer.render();
+
+    if (this.showPerf) {
+      this.perfFps += (1 / Math.max(dt, 1e-3) - this.perfFps) * 0.1;
+      this.perfTimer -= dt;
+      if (this.perfTimer <= 0) {
+        this.perfTimer = 0.25;
+        const r = this.renderer.info.render;
+        const el = document.getElementById("perf");
+        if (el) el.textContent =
+          `${Math.round(this.perfFps)} fps\n${r.calls} draws · ${Math.round(r.triangles / 1000)}k tris\ntrees ${this.env.visibleTrees} · cave lights ${this.env.litCaveLights} · dpr ${this.renderer.getPixelRatio()}`;
+      }
+    }
   }
 
   /**
@@ -502,6 +641,26 @@ export class Game {
     this.audio.playOnce("ping_drop", { volume: 0.5 });
   }
 
+  /** Apply the settings live: brightness scales exposure, volume → audio, sensitivity → look. */
+  private applySettings(d: SettingsData) {
+    this.renderer.toneMappingExposure = this.baseExposure * d.brightness;
+    this.audio.setMasterVolume(d.volume);
+    this.player.sensitivityMul = d.sensitivity;
+  }
+
+  /** Open/close the settings overlay. Opening frees the pointer; Resume (onClose) re-locks it. */
+  private toggleSettings() {
+    if (this.ended) return;
+    if (this.map.isOpen) this.closeMap();
+    if (this.settingsMenu.isOpen) {
+      this.settingsMenu.close();
+    } else {
+      this.settingsMenu.open();
+      this.input.allowPointerLock = false;
+      document.exitPointerLock();
+    }
+  }
+
   private toggleMap() {
     if (this.ended) return;
     if (this.map.isOpen) {
@@ -525,6 +684,7 @@ export class Game {
     this.ended = true;
     this.hud.setPrompt(null);
     this.map.close();
+    this.settingsMenu.dispose();
     document.exitPointerLock();
     const youWon = winner === (this.isBigfoot ? "bigfoot" : "hunters");
     this.audio.setHeartbeat(0);
@@ -543,6 +703,7 @@ export class Game {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.composer.setSize(window.innerWidth, window.innerHeight);
   }
 }
 

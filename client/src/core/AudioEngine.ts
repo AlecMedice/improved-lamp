@@ -119,6 +119,11 @@ export class AudioEngine {
     this.playOnce("flashlight_click", { volume: 0.5 });
   }
 
+  /** Master output volume (0..1), driven by the settings menu. */
+  setMasterVolume(v: number) {
+    this.listener.setMasterVolume(Math.max(0, Math.min(1, v)));
+  }
+
   /** Hunters' tension bed: 0 = silent (Bigfoot far), rising to ~1 (Bigfoot on top of you). */
   setHeartbeat(intensity: number) {
     this.hbIntensity = clamp01(intensity);

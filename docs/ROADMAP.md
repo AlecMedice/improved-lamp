@@ -77,18 +77,32 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 
 ---
 
-## Phase 5 — Audio, UI & polish 🟡
+## Phase 5 — Audio, UI & polish ✅
 - ✅ Spatial audio (footsteps, roars, heartbeat proximity) — true 3D positional (THREE.AudioListener);
   diegetic roars (server broadcast), branch‑snaps, remote footsteps; procedural synthesis with
   optional sample overrides (hybrid; see `client/public/audio/`)
-- ⬜ Post‑processing pass (bloom, vignette, film grain) tuned per phase
-- ⬜ Menus, settings, key rebinding, gamma calibration
-- 🟡 Tutorial *(role‑specific start‑of‑match hints done; dusk‑briefing version pending)*
+- ✅ Post‑processing pass — `EffectComposer` (bloom on flashlight/eye‑shine/campfire/rec lights + shader
+  vignette + subtle moving film grain); vignette tightens toward midnight (per‑phase). Tunables in `config.POST`
+- ✅ Settings menu (gear / `Esc`) — **brightness (gamma) calibration** (the "too dark" fix), master
+  volume, mouse sensitivity; live-applied + persisted to `localStorage` (`Settings`/`SettingsMenu`)
+- ✅ Key rebinding — `Input` resolves through a rebindable action map (`Keybinds`); the settings menu
+  has a click‑to‑rebind controls list (+ reset), persisted to `localStorage`
+- ✅ Tutorial — role‑tailored **dusk briefing** at night‑1 start (objective + controls read live from
+  `Keybinds`, so they reflect rebinds; "press any key to begin"), plus the drip of one‑line reminders
 
-## Phase 6 — Art pass & performance ⬜
-- ⬜ Authored low‑poly models + rigs/animations (searchers, Bigfoot)
-- ⬜ Instancing, LODs, shadow budget, mobile‑GPU friendliness
-- ⬜ Map art pass (lighting beats, landmarks for navigation)
+**Goal:** the game looks and plays like a finished build. **← Phase 5 done.**
+
+## Phase 6 — Art pass & performance 🟢
+- 🟡 Authored low‑poly models + rigs/animations — **articulated procedural avatars now replace the
+  capsules: hunters read as a person, Bigfoot as a hunched creature, both with a ground‑locked walk
+  cycle + idle breath and re‑anchored eye‑shine/status icons.** Hand‑authored/skinned meshes still ⬜.
+- ✅ Perf — trees/bushes/rocks `InstancedMesh`, no shadows; forward‑render light‑budget cull (only the
+  nearest cave glow lit), mobile pixel‑ratio + AA scaling (`config.QUALITY`/`isMobile`),
+  `high-performance` context, a `?perf` fps/draw‑call/tree readout, and **forest LOD + distance cull
+  (detailed crown near, single‑cone impostor mid, culled past the fog — ~−40% triangles near camp).**
+- ✅ Map art pass — compass + 100 m grid + labelled landmarks (tower/lake/camp/RV/trailhead), heading
+  triangle, glowing teammates, pulsing pings, breadcrumb clue trail, role‑aware legend; a faint cool
+  moonlight rims silhouettes at deep night.
 
 ## Phase 7 — Live & deploy ⬜
 - ⬜ Deploy server (Colyseus on a host) + static client (CDN)

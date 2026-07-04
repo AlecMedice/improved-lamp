@@ -24,6 +24,13 @@ type SkyStop = {
 
 const col = (hex: string) => new THREE.Color(hex);
 
+// Forest LOD: trees within TREE_NEAR keep the detailed 3-cone crown; farther trees use a single-cone
+// impostor; past TREE_CULL the fog has swallowed them, so they're dropped entirely. The partition is
+// only recomputed once the camera has moved TREE_LOD_STEP metres (cheap, a few times a second).
+const TREE_NEAR = 120;
+const TREE_CULL = 340;
+const TREE_LOD_STEP = 15;
+
 /** dusk(0) -> nightfall -> deep night -> witching -> dawn(1) */
 const SKY_STOPS: SkyStop[] = [
   { t: 0.0, top: col("#2a2740"), bottom: col("#c87b53"), fog: col("#5a4a55"), fogD: 0.012, hemi: 0.6, sun: 1.6, sunCol: col("#ff9d5c") },
@@ -51,6 +58,15 @@ export class Environment {
   // Lake: an ellipse SW of camp, fed visually by the creek (shared so the sim agrees).
   private readonly lake = LAKE;
   private campfire?: THREE.PointLight;
+  private caveLights: THREE.PointLight[] = []; // cave glows; only the nearest few stay lit (perf)
+  // Forest LOD state: one transform per placed tree, split live across trunk / detailed / impostor meshes.
+  private treeMats: THREE.Matrix4[] = [];
+  private treePos: { x: number; z: number }[] = [];
+  private trunkMesh!: THREE.InstancedMesh;
+  private crownHi!: THREE.InstancedMesh; // detailed 3-cone crown (near)
+  private crownLo!: THREE.InstancedMesh; // single-cone impostor (far)
+  private lastLodX = Infinity;
+  private lastLodZ = Infinity;
   private skyMat!: THREE.ShaderMaterial;
   private hemi!: THREE.HemisphereLight;
   private sun!: THREE.DirectionalLight;
@@ -186,6 +202,12 @@ export class Environment {
     this.sun = new THREE.DirectionalLight(DUSK.sun.getHex(), 1.6);
     this.sun.position.set(-80, 28, -60); // low, setting sun
     this.scene.add(this.sun);
+    // Faint, constant cool moonlight from high overhead. It's swamped by the warm sun at dusk/dawn,
+    // but at deep night (sun ~0.16) it puts a cold rim on treetops and avatars so silhouettes read
+    // against the dark — without lifting the overall gloom.
+    const moon = new THREE.DirectionalLight(0x9fb6ff, 0.22);
+    moon.position.set(60, 120, 40);
+    this.scene.add(moon);
   }
 
   private buildTerrain() {
@@ -254,36 +276,74 @@ export class Environment {
 
   private buildForest() {
     const { trunk, foliage } = this.treeGeometry();
+    // Impostor crown: a single cone matching the detailed crown's silhouette (base ~2.4, apex ~8.4).
+    const impostor = new THREE.ConeGeometry(1.9, 6.2, 6);
+    impostor.translate(0, 5.4, 0);
+    impostor.computeVertexNormals();
+
     const trunkMat = new THREE.MeshStandardMaterial({ color: DUSK.trunk, roughness: 1 });
     const folMat = new THREE.MeshStandardMaterial({ color: DUSK.foliage, roughness: 1 });
-    const n = WORLD.treeCount;
-    const trunks = new THREE.InstancedMesh(trunk, trunkMat, n);
-    const crowns = new THREE.InstancedMesh(foliage, folMat, n);
 
+    // Gather every tree transform (same seed/sequence/skip rules as before, so the shared tree
+    // colliders still line up 1:1 with the rendered trunks).
     const rand = mulberry32(WORLD.seed ^ 0x9e3779b9);
-    const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const up = new THREE.Vector3(0, 1, 0);
     const half = WORLD.size / 2 - 6;
-    let placed = 0;
-    for (let i = 0; i < n; i++) {
+    for (let i = 0; i < WORLD.treeCount; i++) {
       const x = (rand() * 2 - 1) * half;
       const z = (rand() * 2 - 1) * half;
       if (Math.sqrt(x * x + z * z) < WORLD.baseCampRadius + 4) continue; // keep clearing open
       if (this.nearCave(x, z, 7)) continue; // keep cave mouths clear
       const s = 0.7 + rand() * 0.9;
       q.setFromAxisAngle(up, rand() * Math.PI * 2);
-      m.compose(new THREE.Vector3(x, this.getHeight(x, z), z), q, new THREE.Vector3(s, s, s));
-      trunks.setMatrixAt(placed, m);
-      crowns.setMatrixAt(placed, m);
-      // Collider for this tree is produced by the shared buildColliders() (same seed/sequence).
-      placed++;
+      const m = new THREE.Matrix4().compose(new THREE.Vector3(x, this.getHeight(x, z), z), q, new THREE.Vector3(s, s, s));
+      this.treeMats.push(m);
+      this.treePos.push({ x, z });
     }
-    trunks.count = placed;
-    crowns.count = placed;
-    trunks.instanceMatrix.needsUpdate = true;
-    crowns.instanceMatrix.needsUpdate = true;
-    this.scene.add(trunks, crowns);
+
+    const cap = this.treeMats.length;
+    this.trunkMesh = new THREE.InstancedMesh(trunk, trunkMat, cap);
+    this.crownHi = new THREE.InstancedMesh(foliage, folMat, cap);
+    this.crownLo = new THREE.InstancedMesh(impostor, folMat, cap);
+    // The forest spans the whole map, so per-mesh frustum culling never fires; skip it (and the
+    // stale-bounding-sphere hazard from a changing instance count).
+    for (const mesh of [this.trunkMesh, this.crownHi, this.crownLo]) mesh.frustumCulled = false;
+    this.scene.add(this.trunkMesh, this.crownHi, this.crownLo);
+    this.updateForestLOD(0, 0, true); // initial partition (camera starts near camp)
+  }
+
+  /**
+   * Split the forest by distance from the camera: detailed crowns near, single-cone impostors in the
+   * mid-field, nothing past the fog line. Only recomputed once the camera has moved TREE_LOD_STEP.
+   */
+  updateForestLOD(camX: number, camZ: number, force = false) {
+    if (!force && (camX - this.lastLodX) ** 2 + (camZ - this.lastLodZ) ** 2 < TREE_LOD_STEP ** 2) return;
+    this.lastLodX = camX;
+    this.lastLodZ = camZ;
+    const near2 = TREE_NEAR * TREE_NEAR;
+    const cull2 = TREE_CULL * TREE_CULL;
+    let tr = 0, hi = 0, lo = 0;
+    for (let i = 0; i < this.treeMats.length; i++) {
+      const p = this.treePos[i];
+      const d2 = (p.x - camX) ** 2 + (p.z - camZ) ** 2;
+      if (d2 >= cull2) continue; // swallowed by fog — draw nothing
+      const m = this.treeMats[i];
+      this.trunkMesh.setMatrixAt(tr++, m);
+      if (d2 < near2) this.crownHi.setMatrixAt(hi++, m);
+      else this.crownLo.setMatrixAt(lo++, m);
+    }
+    this.trunkMesh.count = tr;
+    this.crownHi.count = hi;
+    this.crownLo.count = lo;
+    this.trunkMesh.instanceMatrix.needsUpdate = true;
+    this.crownHi.instanceMatrix.needsUpdate = true;
+    this.crownLo.instanceMatrix.needsUpdate = true;
+  }
+
+  /** Trees currently drawn (any LOD) — for the perf readout. */
+  get visibleTrees(): number {
+    return this.trunkMesh?.count ?? 0;
   }
 
   private nearCave(x: number, z: number, r: number): boolean {
@@ -382,6 +442,7 @@ export class Environment {
       const glow = new THREE.PointLight(0x4a6ab0, 4, 12, 2); // faint depth inside the dark
       glow.position.set(cave.x - dx * 1.5, y + 1.4, cave.z - dz * 1.5);
       g.add(glow);
+      this.caveLights.push(glow);
       this.scene.add(g);
       // Side + back colliders (mouth stays walkable) are produced by the shared buildColliders().
     }
@@ -760,5 +821,23 @@ export class Environment {
     if (this.campfire) {
       this.campfire.intensity = 60 + Math.sin(t * 13) * 8 + Math.sin(t * 23.7) * 5;
     }
+  }
+
+  /**
+   * Trim the forward-render light budget: keep only the `maxOn` cave glows nearest (x,z) lit; an
+   * invisible light is skipped by the renderer entirely. You're never near more than one cave, and
+   * the glow's range is 12 m, so far cave lights only cost fill-rate for nothing.
+   */
+  updateLightBudget(x: number, z: number, maxOn: number) {
+    if (this.caveLights.length <= maxOn) return;
+    const byDist = this.caveLights
+      .map((l) => ({ l, d: (l.position.x - x) ** 2 + (l.position.z - z) ** 2 }))
+      .sort((a, b) => a.d - b.d);
+    byDist.forEach((e, i) => { e.l.visible = i < maxOn; });
+  }
+
+  /** Number of cave glow lights currently lit (for the perf readout). */
+  get litCaveLights(): number {
+    return this.caveLights.reduce((n, l) => n + (l.visible ? 1 : 0), 0);
   }
 }

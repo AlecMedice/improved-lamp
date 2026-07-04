@@ -88,6 +88,12 @@ export class HUD {
     this.el("blackout").style.opacity = on ? "0.92" : "0";
   }
 
+  /** Flashlight beam mask + lens grime — on while a hunter's flashlight is lit. */
+  setBeam(on: boolean) {
+    this.el("beam").classList.toggle("on", on);
+    this.el("lens-dirt").classList.toggle("lit", on);
+  }
+
   /** Contextual action hint (e.g. cave fast-travel). Pass null to hide. */
   setPrompt(text: string | null) {
     const el = this.el("prompt");
