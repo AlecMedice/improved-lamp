@@ -77,7 +77,7 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 
 ---
 
-## Phase 5 — Audio, UI & polish 🟡
+## Phase 5 — Audio, UI & polish ✅
 - ✅ Spatial audio (footsteps, roars, heartbeat proximity) — true 3D positional (THREE.AudioListener);
   diegetic roars (server broadcast), branch‑snaps, remote footsteps; procedural synthesis with
   optional sample overrides (hybrid; see `client/public/audio/`)
@@ -85,8 +85,12 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
   vignette + subtle moving film grain); vignette tightens toward midnight (per‑phase). Tunables in `config.POST`
 - ✅ Settings menu (gear / `Esc`) — **brightness (gamma) calibration** (the "too dark" fix), master
   volume, mouse sensitivity; live-applied + persisted to `localStorage` (`Settings`/`SettingsMenu`)
-- ⬜ Key rebinding (Input keymap layer + UI)
-- 🟡 Tutorial *(role‑specific start‑of‑match hints done; dusk‑briefing version pending)*
+- ✅ Key rebinding — `Input` resolves through a rebindable action map (`Keybinds`); the settings menu
+  has a click‑to‑rebind controls list (+ reset), persisted to `localStorage`
+- ✅ Tutorial — role‑tailored **dusk briefing** at night‑1 start (objective + controls read live from
+  `Keybinds`, so they reflect rebinds; "press any key to begin"), plus the drip of one‑line reminders
+
+**Goal:** the game looks and plays like a finished build. **← Phase 5 done.**
 
 ## Phase 6 — Art pass & performance ⬜
 - ⬜ Authored low‑poly models + rigs/animations (searchers, Bigfoot)

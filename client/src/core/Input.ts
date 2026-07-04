@@ -11,6 +11,7 @@ export class Input {
   private capture: ((code: string) => void) | null = null; // pending rebind capture
   locked = false;
   allowPointerLock = true; // disabled while a menu/map is open
+  suspended = false; // ignore all key input (e.g. while the dusk briefing is up)
 
   constructor(private canvas: HTMLElement, private keybinds: Keybinds) {
     window.addEventListener("keydown", (e) => {
@@ -22,6 +23,7 @@ export class Input {
         cb(e.code === "Escape" ? "" : e.code); // "" = cancelled
         return;
       }
+      if (this.suspended) return; // briefing up — swallow keys (its own listener handles dismiss)
       if (!this.keys.has(e.code)) {
         this.onTap[e.code]?.(); // fire once per press (raw code)
         for (const a of ACTIONS) if (this.keybinds.code(a) === e.code) this.onActionTap[a]?.(); // action taps

@@ -128,6 +128,18 @@
       .keybtn:hover { border-color: var(--amber); }
       .keybtn.capturing { color: var(--amber); border-color: var(--amber); }
       .set-sub { font-size: 12px; opacity: .55; text-align: left; }
+      /* Dusk briefing (once, at night-1 start). */
+      #briefing-overlay { display: none; z-index: 16; }
+      .brief-card { background: rgba(20,20,30,.82); border: 1px solid rgba(255,255,255,.12); border-radius: 16px;
+        padding: 26px 30px; max-width: 560px; display: flex; flex-direction: column; gap: 12px; backdrop-filter: blur(2px); }
+      .brief-kicker { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--amber); opacity: .85; }
+      .brief-card h1 { font-size: 30px; letter-spacing: .04em; }
+      .brief-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 22px; margin-top: 4px; }
+      .brief-row { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; align-items: baseline; }
+      .brief-row span { opacity: .72; }
+      .brief-row b { color: #fff; font-weight: 600; white-space: nowrap; }
+      .brief-foot { font-size: 12px; opacity: .6; margin-top: 8px; }
+      .brief-foot b { color: var(--amber); opacity: .9; }
       kbd { background: #14141c; border: 1px solid rgba(255,255,255,.2); border-bottom-width: 2px;
         border-radius: 5px; padding: 1px 6px; font-size: 11px; }
       #end-overlay { display: none; }
@@ -269,6 +281,9 @@
       <button class="btn" onclick="location.reload()">Play again</button>
       <button id="end-lobby" class="btn" style="display:none">Return to lobby (host)</button>
     </div>
+
+    <!-- Dusk briefing (populated + shown once at match start by Game). -->
+    <div id="briefing-overlay" class="overlay"></div>
 
     <!-- Settings: gear button (top) + pause overlay. Shown in-game; Esc toggles it (see Game). -->
     <button id="settings-gear" title="Settings (Esc)" aria-label="Settings">

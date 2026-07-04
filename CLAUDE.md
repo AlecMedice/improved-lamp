@@ -119,7 +119,9 @@ Client (`client/src/`):
   `THREE.AudioListener` rides the camera; `playOnce`/`playAt` (positional) + wind/creek/heartbeat beds.
   Autoplay‑gated: `resume()` on first gesture (and from `Game.start()`).
 - `core/Lobby.ts` — pre‑match waiting room; hands a joined `Room` to `Game`.
-- `core/Input.ts` — keyboard/mouse, pointer lock; `onPress` (keys), `onMousePress` (buttons).
+- `core/Input.ts` — keyboard/mouse, pointer lock; actions resolve through `Keybinds` (`isActionDown`/
+  `onAction`/`captureNext`), raw `onPress`/`isDown` for fixed keys (Esc). `core/Keybinds.ts` — rebindable
+  action→code map (localStorage). `ui/Briefing.ts` — the night‑1 dusk briefing (controls from `Keybinds`).
 - `entities/LocalPlayer.ts` — presentation for the local player (camera, look, head‑bob, footsteps,
   flashlight visuals) around the shared `stepPlayer` sim; `externalSpeedMul` (slow), per‑night
   `nightSpeedMul`/`batteryDrainMul`/`staminaDrainMul` (composed into `StepModifiers`), `teleportTo`.
@@ -173,10 +175,10 @@ Shared (`shared/sim/`) — dependency‑free deterministic sim, imported by both
 - `.gitignore` covers `node_modules/` and `dist/`; lockfiles are committed.
 
 ## Not done yet (see ROADMAP)
-Rigged/animated models (Phase 6); key rebinding + dusk‑briefing tutorial (rest of Phase 5); deploy;
-full input‑replay movement prediction (Phase 2.3 stretch — server authority + correction already
-shipped). (Done: audio — procedural + diegetic; per‑night escalation; lobby/lifecycle + reconnection;
-**server‑authoritative movement + reconciliation + shared deterministic world**; **Phase 3 asymmetry
-complete — Bigfoot leap/charge/surface‑climb + limited‑range vision + senses overlay, searcher
-revive/dazzle/vault**; **Phase 5 — post‑processing (bloom/vignette/grain) + settings menu with
-brightness/gamma, volume, sensitivity**.)
+Rigged/animated models + art/perf pass (Phase 6); deploy (Phase 7); full input‑replay movement
+prediction (Phase 2.3 stretch — server authority + correction already shipped). (Done: audio —
+procedural + diegetic; per‑night escalation; lobby/lifecycle + reconnection; **server‑authoritative
+movement + reconciliation + shared deterministic world**; **Phase 3 asymmetry complete — Bigfoot
+leap/charge/surface‑climb + limited‑range vision + senses overlay, searcher revive/dazzle/vault**;
+**Phase 5 complete — post‑processing, settings menu (brightness/gamma, volume, sensitivity),
+key rebinding, dusk‑briefing tutorial**.)

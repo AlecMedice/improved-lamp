@@ -34,6 +34,7 @@ import { HUD } from "../ui/HUD";
 import { Settings, SettingsData } from "./Settings";
 import { Keybinds } from "./Keybinds";
 import { SettingsMenu } from "../ui/SettingsMenu";
+import { Briefing } from "../ui/Briefing";
 import { MapView } from "../ui/MapView";
 import { AudioEngine } from "./AudioEngine";
 
@@ -53,6 +54,7 @@ export class Game {
   private settings = new Settings();
   private keybinds = new Keybinds();
   private settingsMenu!: SettingsMenu;
+  private briefing = new Briefing();
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
   private clock = new THREE.Clock();
@@ -203,7 +205,11 @@ export class Game {
   start() {
     this.audio.resume(); // called from the start gesture — lifts the autoplay gate
     this.renderer.setAnimationLoop(() => this.frame());
-    this.startTutorial();
+    // Dusk briefing first (any key begins); then the drip of one-line reminders.
+    this.briefing.show(this.isBigfoot, this.keybinds, this.input, () => {
+      if (!this.ended) this.canvas.requestPointerLock();
+      this.startTutorial();
+    });
   }
 
   /** Brief, role-specific control hints shown one at a time at the start of a match. */
@@ -241,7 +247,7 @@ export class Game {
 
     const incapacitated = this.self.status === "incapacitated";
     const controlsLocked = this.self.status !== "active"; // frozen or incapacitated
-    const locked = this.ended || controlsLocked || this.map.isOpen || this.traveling || this.settingsMenu.isOpen;
+    const locked = this.ended || controlsLocked || this.map.isOpen || this.traveling || this.settingsMenu.isOpen || this.briefing.isOpen;
 
     this.player.externalSpeedMul = this.self.slowed ? PLAYER.slowFactor : 1;
     if (!locked) {
