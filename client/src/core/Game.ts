@@ -176,6 +176,7 @@ export class Game {
       draws: this.renderer.info.render.calls,
       tris: this.renderer.info.render.triangles,
       caveLights: this.env.litCaveLights,
+      trees: this.env.visibleTrees,
       pixelRatio: this.renderer.getPixelRatio(),
     });
     if (this.showPerf) { const el = document.getElementById("perf"); if (el) el.style.display = "block"; }
@@ -321,6 +322,7 @@ export class Game {
 
     this.env.update(t);
     this.env.updateLightBudget(this.player.position.x, this.player.position.z, QUALITY.maxCaveLights);
+    this.env.updateForestLOD(this.player.position.x, this.player.position.z);
     this.clues.update(t);
     this.net.update(dt);
     this.updatePreviews(dt);
@@ -467,7 +469,7 @@ export class Game {
         const r = this.renderer.info.render;
         const el = document.getElementById("perf");
         if (el) el.textContent =
-          `${Math.round(this.perfFps)} fps\n${r.calls} draws · ${Math.round(r.triangles / 1000)}k tris\ncave lights ${this.env.litCaveLights} · dpr ${this.renderer.getPixelRatio()}`;
+          `${Math.round(this.perfFps)} fps\n${r.calls} draws · ${Math.round(r.triangles / 1000)}k tris\ntrees ${this.env.visibleTrees} · cave lights ${this.env.litCaveLights} · dpr ${this.renderer.getPixelRatio()}`;
       }
     }
   }
