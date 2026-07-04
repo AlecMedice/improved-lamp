@@ -202,6 +202,12 @@ export class Environment {
     this.sun = new THREE.DirectionalLight(DUSK.sun.getHex(), 1.6);
     this.sun.position.set(-80, 28, -60); // low, setting sun
     this.scene.add(this.sun);
+    // Faint, constant cool moonlight from high overhead. It's swamped by the warm sun at dusk/dawn,
+    // but at deep night (sun ~0.16) it puts a cold rim on treetops and avatars so silhouettes read
+    // against the dark — without lifting the overall gloom.
+    const moon = new THREE.DirectionalLight(0x9fb6ff, 0.22);
+    moon.position.set(60, 120, 40);
+    this.scene.add(moon);
   }
 
   private buildTerrain() {

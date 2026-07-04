@@ -381,6 +381,7 @@ export class Game {
         others: hunter ? this.net.getRemoteSearchers() : [],
         clues: hunter && this.clueVisionActive() ? this.clues.getRecentDots(MAP.clueWindow) : [],
         pings: hunter ? this.net.getPings() : [],
+        bigfoot: this.isBigfoot,
       });
     }
 
