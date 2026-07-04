@@ -83,7 +83,9 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
   optional sample overrides (hybrid; see `client/public/audio/`)
 - ✅ Post‑processing pass — `EffectComposer` (bloom on flashlight/eye‑shine/campfire/rec lights + shader
   vignette + subtle moving film grain); vignette tightens toward midnight (per‑phase). Tunables in `config.POST`
-- ⬜ Menus, settings, key rebinding, gamma calibration
+- ✅ Settings menu (gear / `Esc`) — **brightness (gamma) calibration** (the "too dark" fix), master
+  volume, mouse sensitivity; live-applied + persisted to `localStorage` (`Settings`/`SettingsMenu`)
+- ⬜ Key rebinding (Input keymap layer + UI)
 - 🟡 Tutorial *(role‑specific start‑of‑match hints done; dusk‑briefing version pending)*
 
 ## Phase 6 — Art pass & performance ⬜

@@ -31,6 +31,8 @@ import { Input } from "./Input";
 import { Network, SelfInfo, EscalationInfo } from "./Network";
 import { Room } from "colyseus.js";
 import { HUD } from "../ui/HUD";
+import { Settings, SettingsData } from "./Settings";
+import { SettingsMenu } from "../ui/SettingsMenu";
 import { MapView } from "../ui/MapView";
 import { AudioEngine } from "./AudioEngine";
 
@@ -46,6 +48,9 @@ export class Game {
   private renderer: THREE.WebGLRenderer;
   private composer!: EffectComposer; // post-processing chain (bloom + vignette/grain)
   private fxPass!: ShaderPass; // the vignette/grain pass (time + per-phase vignette uniforms)
+  private baseExposure: number; // role-based tone-mapping exposure; the brightness setting scales this
+  private settings = new Settings();
+  private settingsMenu!: SettingsMenu;
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
   private clock = new THREE.Clock();
@@ -99,7 +104,8 @@ export class Game {
     // Per-client render (scenes don't leak). Bigfoot no longer gets a blanket brightness buff —
     // its night sight is the dim short-range vision cone (see LocalPlayer); exposure stays near
     // the searcher's so the far scene goes dark beyond that cone.
-    this.renderer.toneMappingExposure = this.isBigfoot ? BIGFOOT_VISION.exposure : 1.15;
+    this.baseExposure = this.isBigfoot ? BIGFOOT_VISION.exposure : 1.15;
+    this.renderer.toneMappingExposure = this.baseExposure;
 
     this.camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 900);
     this.scene.add(this.camera); // so the flashlight (a child) renders
@@ -137,8 +143,17 @@ export class Game {
     this.input = new Input(canvas);
     this.input.setLookHandler((dx, dy) => this.player.look(dx, dy));
     this.input.onPress("KeyM", () => this.toggleMap());
+    this.input.onPress("Escape", () => this.toggleSettings());
     if (!this.isBigfoot) this.input.onPress("KeyF", () => this.player.toggleFlashlight());
     this.map.onSelectCave = (i) => this.travelToCave(i);
+
+    // Settings: live brightness/volume/sensitivity, persisted; Resume re-locks the pointer.
+    this.settingsMenu = new SettingsMenu(
+      this.settings,
+      (d) => this.applySettings(d),
+      () => { this.input.allowPointerLock = true; if (!this.ended) this.canvas.requestPointerLock(); }
+    );
+    this.applySettings(this.settings.data);
 
     this.net = new Network(this.scene, role, name, room, this.audio);
     this.net.onStatus = (s) => this.hud.setStatus(s);
@@ -222,7 +237,7 @@ export class Game {
 
     const incapacitated = this.self.status === "incapacitated";
     const controlsLocked = this.self.status !== "active"; // frozen or incapacitated
-    const locked = this.ended || controlsLocked || this.map.isOpen || this.traveling;
+    const locked = this.ended || controlsLocked || this.map.isOpen || this.traveling || this.settingsMenu.isOpen;
 
     this.player.externalSpeedMul = this.self.slowed ? PLAYER.slowFactor : 1;
     if (!locked) {
@@ -544,6 +559,26 @@ export class Game {
     this.audio.playOnce("ping_drop", { volume: 0.5 });
   }
 
+  /** Apply the settings live: brightness scales exposure, volume → audio, sensitivity → look. */
+  private applySettings(d: SettingsData) {
+    this.renderer.toneMappingExposure = this.baseExposure * d.brightness;
+    this.audio.setMasterVolume(d.volume);
+    this.player.sensitivityMul = d.sensitivity;
+  }
+
+  /** Open/close the settings overlay. Opening frees the pointer; Resume (onClose) re-locks it. */
+  private toggleSettings() {
+    if (this.ended) return;
+    if (this.map.isOpen) this.closeMap();
+    if (this.settingsMenu.isOpen) {
+      this.settingsMenu.close();
+    } else {
+      this.settingsMenu.open();
+      this.input.allowPointerLock = false;
+      document.exitPointerLock();
+    }
+  }
+
   private toggleMap() {
     if (this.ended) return;
     if (this.map.isOpen) {
@@ -567,6 +602,7 @@ export class Game {
     this.ended = true;
     this.hud.setPrompt(null);
     this.map.close();
+    this.settingsMenu.dispose();
     document.exitPointerLock();
     const youWon = winner === (this.isBigfoot ? "bigfoot" : "hunters");
     this.audio.setHeartbeat(0);

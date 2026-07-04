@@ -18,6 +18,7 @@ export class LocalPlayer {
   readonly position = new THREE.Vector3(); // eye position (derived from sim each frame)
   readonly isBigfoot: boolean;
   externalSpeedMul = 1; // set by Game (e.g. 0.75 while slowed after incapacitation)
+  sensitivityMul = 1; // mouse-look sensitivity multiplier (from the settings menu)
 
   chargeMul = 1; // Bigfoot charge burst (1 = not charging; set by Game while a charge window is open)
 
@@ -109,8 +110,8 @@ export class LocalPlayer {
   }
 
   look(dx: number, dy: number) {
-    this.sim.yaw -= dx * PLAYER.mouseSensitivity;
-    this.pitch -= dy * PLAYER.mouseSensitivity;
+    this.sim.yaw -= dx * PLAYER.mouseSensitivity * this.sensitivityMul;
+    this.pitch -= dy * PLAYER.mouseSensitivity * this.sensitivityMul;
     const lim = Math.PI / 2 - 0.05;
     this.pitch = Math.max(-lim, Math.min(lim, this.pitch));
   }
