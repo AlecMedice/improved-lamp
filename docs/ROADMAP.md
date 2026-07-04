@@ -92,12 +92,17 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 
 **Goal:** the game looks and plays like a finished build. **← Phase 5 done.**
 
-## Phase 6 — Art pass & performance 🟡
-- ⬜ Authored low‑poly models + rigs/animations (searchers, Bigfoot)
-- 🟡 Perf — trees/bushes/rocks already `InstancedMesh`, no shadows; **added: forward‑render light‑budget
-  cull (only the nearest cave glow stays lit), mobile pixel‑ratio + AA scaling (`config.QUALITY`/`isMobile`),
-  `high-performance` context, and a `?perf` fps/draw‑call readout.** LODs still ⬜.
-- ⬜ Map art pass (lighting beats, landmarks for navigation)
+## Phase 6 — Art pass & performance 🟢
+- 🟡 Authored low‑poly models + rigs/animations — **articulated procedural avatars now replace the
+  capsules: hunters read as a person, Bigfoot as a hunched creature, both with a ground‑locked walk
+  cycle + idle breath and re‑anchored eye‑shine/status icons.** Hand‑authored/skinned meshes still ⬜.
+- ✅ Perf — trees/bushes/rocks `InstancedMesh`, no shadows; forward‑render light‑budget cull (only the
+  nearest cave glow lit), mobile pixel‑ratio + AA scaling (`config.QUALITY`/`isMobile`),
+  `high-performance` context, a `?perf` fps/draw‑call/tree readout, and **forest LOD + distance cull
+  (detailed crown near, single‑cone impostor mid, culled past the fog — ~−40% triangles near camp).**
+- ✅ Map art pass — compass + 100 m grid + labelled landmarks (tower/lake/camp/RV/trailhead), heading
+  triangle, glowing teammates, pulsing pings, breadcrumb clue trail, role‑aware legend; a faint cool
+  moonlight rims silhouettes at deep night.
 
 ## Phase 7 — Live & deploy ⬜
 - ⬜ Deploy server (Colyseus on a host) + static client (CDN)
