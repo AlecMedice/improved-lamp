@@ -26,6 +26,7 @@ import { Environment } from "../world/Environment";
 import { ClueField } from "../world/ClueField";
 import { PingField } from "../world/PingField";
 import { LocalPlayer } from "../entities/LocalPlayer";
+import { RemotePlayer } from "../entities/RemotePlayer";
 import { climbSupport } from "../../../shared/sim";
 import { Input } from "./Input";
 import { Network, SelfInfo, EscalationInfo } from "./Network";
@@ -58,6 +59,8 @@ export class Game {
   private showPerf = new URLSearchParams(location.search).has("perf");
   private perfFps = 60;
   private perfTimer = 0;
+  private previews: RemotePlayer[] = []; // dev-only avatar previews (window.__previewAvatars)
+  private previewT = 0;
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
   private clock = new THREE.Clock();
@@ -176,6 +179,8 @@ export class Game {
       pixelRatio: this.renderer.getPixelRatio(),
     });
     if (this.showPerf) { const el = document.getElementById("perf"); if (el) el.style.display = "block"; }
+    // Dev-only: drop a hunter + Bigfoot avatar in front of the camera for art/proportion QA.
+    (window as any).__previewAvatars = () => this.spawnPreviewAvatars();
 
     this.net = new Network(this.scene, role, name, room, this.audio);
     this.net.onStatus = (s) => this.hud.setStatus(s);
@@ -257,6 +262,39 @@ export class Game {
     show();
   }
 
+  /** Dev QA: spawn a hunter + Bigfoot avatar a few metres in front of the camera, facing it. */
+  private spawnPreviewAvatars() {
+    const fwd = new THREE.Vector3();
+    this.camera.getWorldDirection(fwd);
+    fwd.y = 0;
+    fwd.normalize();
+    const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
+    const base = this.camera.position.clone().addScaledVector(fwd, 6);
+    const faceRy = Math.atan2(fwd.x, fwd.z); // turn to look back at the camera (−Z local faces it)
+    for (const [role, off] of [["searcher", -1.4], ["bigfoot", 1.6]] as const) {
+      const rp = new RemotePlayer(this.scene, role);
+      const p = base.clone().addScaledVector(right, off);
+      const y = this.env.getHeight(p.x, p.z);
+      (rp as any).__base = { x: p.x, y, z: p.z, ry: faceRy };
+      rp.setTarget(p.x, y, p.z, faceRy, false);
+      this.previews.push(rp);
+    }
+  }
+
+  /** Rock the preview avatars back and forth so the walk cycle animates in place. */
+  private updatePreviews(dt: number) {
+    if (this.previews.length === 0) return;
+    this.previewT += dt;
+    const sway = Math.sin(this.previewT * 2) * 0.4; // ±0.4 m along each avatar's facing
+    for (const rp of this.previews) {
+      const b = (rp as any).__base as { x: number; y: number; z: number; ry: number };
+      const fx = -Math.sin(b.ry);
+      const fz = -Math.cos(b.ry);
+      rp.setTarget(b.x + fx * sway, b.y, b.z + fz * sway, b.ry, false);
+      rp.update(dt);
+    }
+  }
+
   private frame() {
     const dt = Math.min(0.05, this.clock.getDelta());
     const t = this.clock.elapsedTime;
@@ -285,6 +323,7 @@ export class Game {
     this.env.updateLightBudget(this.player.position.x, this.player.position.z, QUALITY.maxCaveLights);
     this.clues.update(t);
     this.net.update(dt);
+    this.updatePreviews(dt);
 
     // Creek ambience swells as you near the water (audible within ~30 m).
     const creekDist = this.env.distanceToCreek(this.player.position.x, this.player.position.z);
