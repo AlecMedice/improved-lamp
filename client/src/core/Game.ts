@@ -4,7 +4,7 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
-import { NET, FILM, NIGHT_SECONDS, CAVES, CAVE, ABILITY, CHARGE, REVIVE, MAP, PLAYER, BIGFOOT_VISION, SENSES, POST } from "../config";
+import { NET, FILM, NIGHT_SECONDS, CAVES, CAVE, ABILITY, CHARGE, REVIVE, MAP, PLAYER, BIGFOOT_VISION, SENSES, POST, QUALITY, isMobile } from "../config";
 
 /** Screen-space vignette + moving film grain, composited after bloom (replaces the old CSS vignette). */
 const VignetteGrainShader = {
@@ -55,6 +55,9 @@ export class Game {
   private keybinds = new Keybinds();
   private settingsMenu!: SettingsMenu;
   private briefing = new Briefing();
+  private showPerf = new URLSearchParams(location.search).has("perf");
+  private perfFps = 60;
+  private perfTimer = 0;
   private scene = new THREE.Scene();
   private camera: THREE.PerspectiveCamera;
   private clock = new THREE.Clock();
@@ -101,9 +104,12 @@ export class Game {
     this.isBigfoot = role === "bigfoot";
     this.canvas = canvas;
 
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    const mobile = isMobile();
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !mobile, powerPreference: "high-performance" });
+    // Pixel ratio is the biggest fragment-cost lever; cap it (lower on hi-dpi mobile).
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, mobile ? QUALITY.pixelRatioCapMobile : QUALITY.pixelRatioCap));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.info.autoReset = false; // we render several composer passes per frame; reset once/frame
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     // Per-client render (scenes don't leak). Bigfoot no longer gets a blanket brightness buff —
     // its night sight is the dim short-range vision cone (see LocalPlayer); exposure stays near
@@ -160,6 +166,16 @@ export class Game {
       () => { this.input.allowPointerLock = true; if (!this.ended) this.canvas.requestPointerLock(); }
     );
     this.applySettings(this.settings.data);
+
+    // Perf readout hook (always available for tooling; the on-screen overlay needs ?perf).
+    (window as any).__perf = () => ({
+      fps: Math.round(this.perfFps),
+      draws: this.renderer.info.render.calls,
+      tris: this.renderer.info.render.triangles,
+      caveLights: this.env.litCaveLights,
+      pixelRatio: this.renderer.getPixelRatio(),
+    });
+    if (this.showPerf) { const el = document.getElementById("perf"); if (el) el.style.display = "block"; }
 
     this.net = new Network(this.scene, role, name, room, this.audio);
     this.net.onStatus = (s) => this.hud.setStatus(s);
@@ -266,6 +282,7 @@ export class Game {
     this.hud.setNight(this.night, this.totalNights, this.timeOfDay);
 
     this.env.update(t);
+    this.env.updateLightBudget(this.player.position.x, this.player.position.z, QUALITY.maxCaveLights);
     this.clues.update(t);
     this.net.update(dt);
 
@@ -400,7 +417,20 @@ export class Game {
     this.fxPass.uniforms.time.value = t;
     const nightDepth = Math.sin(Math.min(1, this.timeOfDay) * Math.PI); // 0 at dusk/dawn, 1 at midnight
     this.fxPass.uniforms.vignette.value = POST.vignette + POST.vignetteNight * nightDepth;
+    this.renderer.info.reset(); // count draws across all composer passes for this frame
     this.composer.render();
+
+    if (this.showPerf) {
+      this.perfFps += (1 / Math.max(dt, 1e-3) - this.perfFps) * 0.1;
+      this.perfTimer -= dt;
+      if (this.perfTimer <= 0) {
+        this.perfTimer = 0.25;
+        const r = this.renderer.info.render;
+        const el = document.getElementById("perf");
+        if (el) el.textContent =
+          `${Math.round(this.perfFps)} fps\n${r.calls} draws · ${Math.round(r.triangles / 1000)}k tris\ncave lights ${this.env.litCaveLights} · dpr ${this.renderer.getPixelRatio()}`;
+      }
+    }
   }
 
   /**

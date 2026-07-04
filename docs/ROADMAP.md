@@ -92,9 +92,11 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 
 **Goal:** the game looks and plays like a finished build. **← Phase 5 done.**
 
-## Phase 6 — Art pass & performance ⬜
+## Phase 6 — Art pass & performance 🟡
 - ⬜ Authored low‑poly models + rigs/animations (searchers, Bigfoot)
-- ⬜ Instancing, LODs, shadow budget, mobile‑GPU friendliness
+- 🟡 Perf — trees/bushes/rocks already `InstancedMesh`, no shadows; **added: forward‑render light‑budget
+  cull (only the nearest cave glow stays lit), mobile pixel‑ratio + AA scaling (`config.QUALITY`/`isMobile`),
+  `high-performance` context, and a `?perf` fps/draw‑call readout.** LODs still ⬜.
 - ⬜ Map art pass (lighting beats, landmarks for navigation)
 
 ## Phase 7 — Live & deploy ⬜

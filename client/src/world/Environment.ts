@@ -51,6 +51,7 @@ export class Environment {
   // Lake: an ellipse SW of camp, fed visually by the creek (shared so the sim agrees).
   private readonly lake = LAKE;
   private campfire?: THREE.PointLight;
+  private caveLights: THREE.PointLight[] = []; // cave glows; only the nearest few stay lit (perf)
   private skyMat!: THREE.ShaderMaterial;
   private hemi!: THREE.HemisphereLight;
   private sun!: THREE.DirectionalLight;
@@ -382,6 +383,7 @@ export class Environment {
       const glow = new THREE.PointLight(0x4a6ab0, 4, 12, 2); // faint depth inside the dark
       glow.position.set(cave.x - dx * 1.5, y + 1.4, cave.z - dz * 1.5);
       g.add(glow);
+      this.caveLights.push(glow);
       this.scene.add(g);
       // Side + back colliders (mouth stays walkable) are produced by the shared buildColliders().
     }
@@ -760,5 +762,23 @@ export class Environment {
     if (this.campfire) {
       this.campfire.intensity = 60 + Math.sin(t * 13) * 8 + Math.sin(t * 23.7) * 5;
     }
+  }
+
+  /**
+   * Trim the forward-render light budget: keep only the `maxOn` cave glows nearest (x,z) lit; an
+   * invisible light is skipped by the renderer entirely. You're never near more than one cave, and
+   * the glow's range is 12 m, so far cave lights only cost fill-rate for nothing.
+   */
+  updateLightBudget(x: number, z: number, maxOn: number) {
+    if (this.caveLights.length <= maxOn) return;
+    const byDist = this.caveLights
+      .map((l) => ({ l, d: (l.position.x - x) ** 2 + (l.position.z - z) ** 2 }))
+      .sort((a, b) => a.d - b.d);
+    byDist.forEach((e, i) => { e.l.visible = i < maxOn; });
+  }
+
+  /** Number of cave glow lights currently lit (for the perf readout). */
+  get litCaveLights(): number {
+    return this.caveLights.reduce((n, l) => n + (l.visible ? 1 : 0), 0);
   }
 }
