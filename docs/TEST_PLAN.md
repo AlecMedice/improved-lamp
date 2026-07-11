@@ -91,11 +91,11 @@ Start solo to walk the world.
 Tick these off; each line is one observable behaviour.
 
 ### Movement & world (either role, offline‑OK)
-- [ ] WASD moves, mouse looks, sprint is faster, crouch lowers + slows you.
-- [ ] You can't walk through tree trunks, the RV, the tower, or cave boulders (pushed out, no phasing).
-- [ ] Terrain height is followed (you walk up/down slopes, never sink or float).
-- [ ] Fallen logs **slow searchers**; **Space vaults** a log (stamina cost) and negates the slow.
-- [ ] Wading into the lake slows you; the creek is audible as you approach.
+- [x] WASD moves, mouse looks, sprint is faster, crouch lowers + slows you.
+- [x] You can't walk through tree trunks, the RV, the tower, or cave boulders (pushed out, no phasing).
+- [x] Terrain height is followed (you walk up/down slopes, never sink or float).
+- [~] Fallen logs **slow searchers**; **Space vaults** a log (stamina cost) and negates the slow.
+- [~] Wading into the lake slows you; the creek is audible as you approach.
 
 ### Networking (server up, ≥2 tabs)
 - [ ] A second player appears as an avatar and moves smoothly (interpolated, no teleport jitter).
