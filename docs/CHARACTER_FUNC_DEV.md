@@ -87,7 +87,22 @@ duplicates never occur in practice.
 
 Every other specialty is a **scalar or a client render toggle** — no new messages.
 
-### 2.5 Testing
+### 2.5 Debug: switching personas easily (build this with the enabling layer)
+
+Testers need to try each character without rerolling matches, so the persona switch is a **first-class
+part of the enabling layer**, gated by the same `ALLOW_DEV_ROLE` flag as `?devRole` (off in production):
+
+- **`?devSpecialty=<id>` join param** (mirrors `?devRole=`) — `tracking | photo | sound | endurance |
+  analysis`. When set, the match-start deal honours it for that client instead of dealing random, so a
+  tester always spawns as the persona they want. Combine with `?devRole=searcher`.
+- **In-match hot-swap key** (debug only) — a keybind (e.g. `[` / `]` to cycle, or a small debug overlay)
+  sends a `debugSetSpecialty {id}` message; the server (only when `ALLOW_DEV_ROLE`) reassigns the caller's
+  `specialty` live and re-applies modifiers. Lets one tester feel all five back-to-back in a single match
+  without rejoining. Rejected entirely in production.
+
+Both routes reuse the same assignment path — the debug switch just overrides the random id.
+
+### 2.6 Testing
 
 Add to `server/test/` alongside the anti-cheat/sim suite: assignment deals distinct ids; the film-range
 bonus shifts `canFilm`'s threshold; `reviveSecondsMul` changes completion time; flash validation rejects
@@ -185,8 +200,9 @@ export const SPECIALTIES = {
 ## 5. Suggested build order
 
 1. **Enabling layer:** `Player.specialty` + `characterName` schema, the shared `SPECIALTIES` table, random
-   deal in `startMatch`, client HUD/name label — **no gameplay modifiers yet**, just identity. Proves the
-   pipeline end to end and is shippable on its own.
+   deal in `startMatch`, client HUD/name label, **and the debug persona switch (§2.5)** — **no gameplay
+   modifiers yet**, just identity + the ability to force/switch persona. Proves the pipeline end to end
+   and gives testers the switch before any specialty exists to try.
 2. **Sam + Wren + Theo** (scalars + one small marks list): revive/stamina, clue-contact/mark, hear-range +
    film-progress. Reuse existing systems; no new RPCs.
 3. **Eli's flash** (new RPC) — model on `dazzle`/`roar`; add its server-validation test.
@@ -201,7 +217,7 @@ pass); add a server test for any new validation.
 - ✅ **Mara** — identity-only for now; her specialty ships with the non-film evidence system.
 - ✅ **Stamina ceiling** — per-player clamp; everyone 100, Sam 150.
 - **Assignment** — pure random each match (story's intent), or a lobby pick/lock later? *(open)*
-- **Power level** — pick a tier below (or per-character). *(open)*
+- ✅ **Power level** — **Standard (§3 / §7)** for the first build; playtest will retune from there.
 
 ## 7. Power-level tiers
 

@@ -144,6 +144,10 @@ Tick these off; each line is one observable behaviour.
 ## 6. Handy dev shortcuts
 - `NIGHT_SECONDS=20 npm run dev` (server) — very short nights to reach night‑2/3 escalation + win/loss fast.
 - `?devRole=bigfoot|searcher` — deterministic role per tab. First `devRole=bigfoot` request wins.
+- `?devSpecialty=tracking|photo|sound|endurance|analysis` *(planned — ships with the character system,
+  see `docs/CHARACTER_FUNC_DEV.md`)* — force which searcher persona this tab plays instead of the random
+  deal, so you can test one character's specialty on demand. Gated by `ALLOW_DEV_ROLE` like `?devRole`.
+  A debug hot‑swap key (cycle personas mid‑match) is planned alongside it for trying all five in one run.
 - `?perf` — perf overlay + `window.__perf()`.
 - `window.__previewAvatars()` (any `?perf`/tab, in the console) — drops a hunter + Bigfoot in front of the
   camera for a close‑up art/proportion check without staging a whole match.

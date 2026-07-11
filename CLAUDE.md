@@ -5,8 +5,16 @@ for proof of **Bigfoot** (played by the 6th player). Browser game: **Three.js cl
 Colyseus server, TypeScript everywhere**. Stylized low‑poly, smooth‑shaded, dusk‑to‑dawn.
 
 Read `docs/` for the full picture: `GAME_DESIGN.md` (GDD, the source of truth for
-rules), `ROADMAP.md` (what's done / next), `PROMPT.md`, `STORY.md`. This file is the
+rules), `ROADMAP.md` (what's done / next), `PROMPT.md`, `STORY.md`,
+`CHARACTER_FUNC_DEV.md` (searcher-specialty design + build plan). This file is the
 fast orientation + conventions.
+
+## Working style (owner preference)
+On collaborative design/spec sessions (story, mechanics, planning), **pause at decision
+points and ask with selectable options** (the AskUserQuestion tool — the owner prefers
+picking an answer over free‑form), then continue once it's answered. Don't batch several
+open questions into prose and barrel ahead — surface one decision, let it be answered,
+proceed. (Straightforward implementation work doesn't need this — just build.)
 
 ## Run it
 Two parts, two terminals. **`ws://localhost:2567` is the backend, not a web page — open the Vite URL.**
