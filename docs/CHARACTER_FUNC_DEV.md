@@ -216,8 +216,11 @@ pass); add a server test for any new validation.
 
 - ✅ **Mara** — identity-only for now; her specialty ships with the non-film evidence system.
 - ✅ **Stamina ceiling** — per-player clamp; everyone 100, Sam 150.
-- **Assignment** — pure random each match (story's intent), or a lobby pick/lock later? *(open)*
+- ✅ **Assignment** — **pure random each match** (distinct deal at match start, per the story). No lobby
+  pick/lock; the `?devSpecialty` debug switch covers forcing a persona for testing.
 - ✅ **Power level** — **Standard (§3 / §7)** for the first build; playtest will retune from there.
+
+All spec decisions are now settled — the doc is ready to build from.
 
 ## 7. Power-level tiers
 
