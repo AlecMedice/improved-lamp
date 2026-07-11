@@ -250,6 +250,19 @@ export class Network {
     return out;
   }
 
+  /** Live trail-marker positions from shared state — shown on the hunters' map. */
+  getMarks(): Array<{ x: number; z: number }> {
+    const out: Array<{ x: number; z: number }> = [];
+    const marks = (this.room?.state as any)?.marks;
+    if (marks) for (const m of marks) out.push({ x: m.x, z: m.z });
+    return out;
+  }
+
+  /** Wren drops a team-visible trail marker at her feet (server gates it to the specialty + cooldown). */
+  sendMark() {
+    this.room?.send("mark");
+  }
+
   /** Hunter drops a stakeout ping at a world (x,z). */
   sendPing(x: number, z: number) {
     this.room?.send("ping", { x, z });

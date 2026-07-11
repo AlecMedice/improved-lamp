@@ -15,6 +15,7 @@ export type MapData = {
   others: Dot[]; // teammates to show (already filtered by role)
   clues: Dot[]; // clue trail to show (already filtered by role)
   pings: Dot[]; // stakeout pings to show (already filtered by role)
+  marks: Dot[]; // Wren's team-visible trail markers (already filtered by role)
   bigfoot: boolean; // the local player is Bigfoot (drives the legend)
 };
 
@@ -157,6 +158,22 @@ export class MapView {
       ctx.arc(p.x, p.y, 6 + pulse * 3, 0, Math.PI * 2);
       ctx.stroke();
       disc(ctx, p.x, p.y, 2.5, "#ffe24a");
+    }
+
+    // trail marks (Wren) — a small amber chevron/diamond, distinct from the pulsing pings
+    for (const mk of d.marks) {
+      const p = toMap(mk.x, mk.z);
+      ctx.fillStyle = "#ffb347";
+      ctx.strokeStyle = "rgba(255,179,71,0.9)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y - 4);
+      ctx.lineTo(p.x + 4, p.y);
+      ctx.lineTo(p.x, p.y + 4);
+      ctx.lineTo(p.x - 4, p.y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
     }
 
     // teammates (hunters) — glowing cyan dots

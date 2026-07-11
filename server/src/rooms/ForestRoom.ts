@@ -1,9 +1,9 @@
 import { Room, Client } from "@colyseus/core";
-import { GameState, Player, Clue, Ping } from "./schema/GameState";
+import { GameState, Player, Clue, Ping, Mark } from "./schema/GameState";
 import {
   WORLD, PLAYER, CAVE, CLUE_LIFETIME, generateCaves, makeWorld, resolveCollision, lineBlocked, climbSupport,
   nearestCaveIndex, caveEmergePoint, dealSpecialties, CHARACTER_NAME, isSpecialtyId, type SpecialtyId,
-  reviveMul, staminaMax, filmProgressMul,
+  reviveMul, staminaMax, filmProgressMul, TRACKING_MARK,
 } from "../../../shared/sim";
 import { refillAllowance, gateStep, staminaCeiling, filmVisible } from "./antiCheat";
 
@@ -25,6 +25,7 @@ const MAX_CLUES = 80; // hard cap on live clues
 // --- Hunter ping (stakeout markers) tuning ---
 const PING_LIFETIME = 35; // seconds a ping stays before fading off the map
 const MAX_PINGS = 12; // hard cap (one per hunter, but stay safe)
+const MAX_MARKS = 24; // hard cap on Wren's live trail markers (lifetime is TRACKING_MARK.lifetimeSec)
 
 // --- Filming (hunters win) tuning ---
 const FILM_RANGE = 38; // server sanity range a hunter can film Bigfoot from
@@ -119,6 +120,10 @@ export class ForestRoom extends Room<GameState> {
   private pingAge = new Map<string, number>(); // ping id -> elapsed when created
   private pingOwner = new Map<string, string>(); // hunter sid -> their current ping id
 
+  private markSeq = 0;
+  private markAge = new Map<string, number>(); // mark id -> elapsed when created (Wren's trail markers)
+  private markReadyAt = new Map<string, number>(); // sid -> elapsed when the next mark is allowed (cooldown)
+
   private roarReadyAt = new Map<string, number>(); // bigfoot sid -> elapsed when roar is ready
   private frozenUntil = new Map<string, number>(); // hunter sid -> elapsed when freeze ends
   private incapUntil = new Map<string, number>(); // hunter sid -> elapsed when incapacitation ends
@@ -200,6 +205,15 @@ export class ForestRoom extends Room<GameState> {
       const x = clamp(num(data.x, 0), -WORLD_HALF, WORLD_HALF);
       const z = clamp(num(data.z, 0), -WORLD_HALF, WORLD_HALF);
       this.addPing(client.sessionId, x, z);
+    });
+
+    // Wren (Tracking) drops a team-visible trail marker at her feet. Server-gated to the specialty + cooldown.
+    this.onMessage("mark", (client) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p || p.specialty !== "tracking" || p.status !== "active") return;
+      if (this.elapsed < (this.markReadyAt.get(client.sessionId) ?? 0)) return; // cooldown
+      this.markReadyAt.set(client.sessionId, this.elapsed + TRACKING_MARK.cooldownSec);
+      this.addMark(p.x, p.z);
     });
 
     // Bigfoot roars: freezes every active hunter within ROAR_RADIUS for FREEZE_SECONDS.
@@ -379,6 +393,7 @@ export class ForestRoom extends Room<GameState> {
     this.chargeReadyAt.delete(sid);
     this.lastMoveMs.delete(sid);
     this.moveAllowance.delete(sid);
+    this.markReadyAt.delete(sid);
     this.caveReadyAt.delete(sid);
     this.devRoles.delete(sid);
     this.devSpecialties.delete(sid);
@@ -505,10 +520,13 @@ export class ForestRoom extends Room<GameState> {
     this.nightElapsed = 0;
     this.state.clues.clear();
     this.state.pings.clear();
+    this.state.marks.clear();
     this.clueAge.clear();
     this.lastTrack.clear();
     this.pingAge.clear();
     this.pingOwner.clear();
+    this.markAge.clear();
+    this.markReadyAt.clear();
     this.roarReadyAt.clear();
     this.frozenUntil.clear();
     this.incapUntil.clear();
@@ -569,6 +587,7 @@ export class ForestRoom extends Room<GameState> {
     this.dropClues(bigfoots);
     this.expireClues();
     this.expirePings();
+    this.expireMarks();
     this.updateRevives(dt);
     this.updateStatuses();
     this.updateDazzle(dt, hunters, bigfoots);
@@ -805,6 +824,33 @@ export class ForestRoom extends Room<GameState> {
         this.state.pings.splice(i, 1);
         this.pingAge.delete(ping.id);
         this.clearOwnerByPing(ping.id);
+      }
+    }
+  }
+
+  // --- Trail marks (Wren) ----------------------------------------------------
+
+  private addMark(x: number, z: number) {
+    if (this.state.marks.length >= MAX_MARKS) {
+      const old = this.state.marks.shift();
+      if (old) this.markAge.delete(old.id);
+    }
+    const m = new Mark();
+    m.id = "m" + this.markSeq++;
+    m.x = x;
+    m.z = z;
+    this.state.marks.push(m);
+    this.markAge.set(m.id, this.elapsed);
+  }
+
+  private expireMarks() {
+    for (let i = this.state.marks.length - 1; i >= 0; i--) {
+      const mark = this.state.marks[i];
+      if (!mark) continue;
+      const born = this.markAge.get(mark.id) ?? this.elapsed;
+      if (this.elapsed - born > TRACKING_MARK.lifetimeSec) {
+        this.state.marks.splice(i, 1);
+        this.markAge.delete(mark.id);
       }
     }
   }

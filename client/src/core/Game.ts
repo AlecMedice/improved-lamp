@@ -232,6 +232,7 @@ export class Game {
       this.net.onPingAdd = (id, x, z) => this.pings!.add(id, x, z);
       this.net.onPingRemove = (id) => this.pings!.remove(id);
       this.input.onAction("ping", () => this.dropPing());
+      this.input.onAction("mark", () => this.dropMark()); // Wren only (server gates it)
       this.map.onMapClick = (x, z) => this.dropPing(x, z);
     }
     void this.net.connect();
@@ -398,6 +399,7 @@ export class Game {
         others: hunter ? this.net.getRemoteSearchers() : [],
         clues: hunter && this.clueVisionActive() ? this.clues.getRecentDots(MAP.clueWindow * clueWindowMul(this.self.specialty)) : [],
         pings: hunter ? this.net.getPings() : [],
+        marks: hunter ? this.net.getMarks() : [],
         bigfoot: this.isBigfoot,
       });
     }
@@ -658,6 +660,13 @@ export class Game {
     if (this.isBigfoot || this.ended || this.self.status !== "active") return;
     this.net.sendPing(x ?? this.player.position.x, z ?? this.player.position.z);
     this.audio.playOnce("ping_drop", { volume: 0.5 });
+  }
+
+  /** Wren drops a team-visible trail marker at her feet (server enforces the Tracking specialty + cooldown). */
+  private dropMark() {
+    if (this.isBigfoot || this.ended || this.self.specialty !== "tracking" || this.self.status !== "active") return;
+    this.net.sendMark();
+    this.audio.playOnce("ping_drop", { volume: 0.4 });
   }
 
   /** Apply the settings live: brightness scales exposure, volume → audio, sensitivity → look. */
