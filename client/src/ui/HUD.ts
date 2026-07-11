@@ -25,6 +25,17 @@ export class HUD {
     this.el("clock").textContent = clockTime(timeOfDay);
   }
 
+  /** Show the local searcher's assigned character (name + specialty). Pass empty to hide (Bigfoot/unassigned). */
+  setPersona(characterName: string, specialty: string) {
+    const pill = this.el("persona");
+    if (characterName) {
+      pill.textContent = specialty ? `${characterName} · ${specialty}` : characterName;
+      pill.style.display = "";
+    } else {
+      pill.style.display = "none";
+    }
+  }
+
   /** Show role-appropriate objective text and hide the filming UI for Bigfoot. */
   setRole(role: string) {
     const bigfoot = role === "bigfoot";

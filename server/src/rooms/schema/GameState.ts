@@ -5,6 +5,11 @@ export class Player extends Schema {
   @type("string") role = "searcher"; // "searcher" | "bigfoot"
   @type("string") name = "Searcher";
 
+  // Character specialty, dealt at match start (searchers only; "" = Bigfoot/unassigned). See
+  // shared/sim/specialties.ts + docs/CHARACTER_FUNC_DEV.md. `characterName` is the display name.
+  @type("string") specialty = "";
+  @type("string") characterName = "";
+
   // Transform (client-sent, server-clamped in v1; see ROADMAP Phase 2 for full authority).
   // y is the player's FEET height (terrain height), so avatars sit on the ground for everyone.
   @type("number") x = 0;

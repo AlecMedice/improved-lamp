@@ -11,6 +11,7 @@ export * from "./caves";
 export * from "./world";
 export * from "./collision";
 export * from "./movement";
+export * from "./specialties";
 
 import { generateCaves, type Cave } from "./caves";
 import { makeTerrain, type HeightFn } from "./terrain";

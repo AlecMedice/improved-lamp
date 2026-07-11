@@ -2,7 +2,7 @@ import { Room, Client } from "@colyseus/core";
 import { GameState, Player, Clue, Ping } from "./schema/GameState";
 import {
   WORLD, PLAYER, CAVE, CLUE_LIFETIME, generateCaves, makeWorld, resolveCollision, lineBlocked, climbSupport,
-  nearestCaveIndex, caveEmergePoint,
+  nearestCaveIndex, caveEmergePoint, dealSpecialties, CHARACTER_NAME, isSpecialtyId, type SpecialtyId,
 } from "../../../shared/sim";
 import { refillAllowance, gateStep, staminaCeiling, filmVisible } from "./antiCheat";
 
@@ -130,6 +130,7 @@ export class ForestRoom extends Room<GameState> {
   private chargingUntil = new Map<string, number>(); // bigfoot sid -> elapsed while a charge burst is active
   private chargeReadyAt = new Map<string, number>(); // bigfoot sid -> elapsed when the next charge is ready
   private devRoles = new Map<string, string>(); // sid -> "bigfoot"|"searcher" (dev URL param override)
+  private devSpecialties = new Map<string, SpecialtyId>(); // sid -> forced specialty (dev ?devSpecialty override)
 
   onCreate() {
     this.setState(new GameState());
@@ -295,6 +296,7 @@ export class ForestRoom extends Room<GameState> {
         this.spawnPlayer(p);
       });
       this.resetMatchState();
+      this.assignSpecialties(); // deal a random (distinct) character to each searcher
       this.state.matchPhase = "playing";
       console.log(`Match started by ${client.sessionId}; Bigfoot = ${bigfootSid ?? "(solo)"}.`);
     });
@@ -304,6 +306,19 @@ export class ForestRoom extends Room<GameState> {
       if (client.sessionId !== this.state.hostId || this.state.matchPhase !== "results") return;
       this.resetMatchState();
       this.state.matchPhase = "lobby";
+    });
+
+    // Debug: hot-swap the caller's character mid-match so a tester can feel all five in one run.
+    // Test convenience only — gated behind ALLOW_DEV_ROLE like ?devRole/?devSpecialty (off in production).
+    this.onMessage("debugSetSpecialty", (client, data: any) => {
+      if (!ALLOW_DEV_ROLE || this.state.matchPhase !== "playing") return;
+      const p = this.state.players.get(client.sessionId);
+      if (!p || p.role === "bigfoot") return;
+      const id = data?.id;
+      if (!isSpecialtyId(id)) return;
+      p.specialty = id;
+      p.characterName = CHARACTER_NAME[id];
+      this.devSpecialties.set(client.sessionId, id); // sticks across a re-deal within the session
     });
 
     this.setSimulationInterval((dt) => this.update(dt), 1000 / 20);
@@ -321,6 +336,8 @@ export class ForestRoom extends Room<GameState> {
     if (this.state.hostId === "") this.state.hostId = client.sessionId;
     const devRole = options?.devRole;
     if (ALLOW_DEV_ROLE && (devRole === "bigfoot" || devRole === "searcher")) this.devRoles.set(client.sessionId, devRole);
+    const devSpecialty = options?.devSpecialty;
+    if (ALLOW_DEV_ROLE && isSpecialtyId(devSpecialty)) this.devSpecialties.set(client.sessionId, devSpecialty);
     console.log(`${client.sessionId} joined the lobby (${this.clients.length}/${this.maxClients}).`);
   }
 
@@ -363,6 +380,7 @@ export class ForestRoom extends Room<GameState> {
     this.moveAllowance.delete(sid);
     this.caveReadyAt.delete(sid);
     this.devRoles.delete(sid);
+    this.devSpecialties.delete(sid);
     // If a leaving Bigfoot was dragging hunters, free them (they stay incapacitated in place).
     for (const [hsid, bsid] of this.grabbedBy) if (bsid === sid) this.grabbedBy.delete(hsid);
     // Drop any revive intent aimed at the leaver (their target vanished).
@@ -389,6 +407,25 @@ export class ForestRoom extends Room<GameState> {
     p.slowed = false;
     p.filming = false;
     p.filmProgress = 0;
+  }
+
+  /** Deal each searcher a random (distinct) character specialty; honour any ?devSpecialty forces. Bigfoot gets none. */
+  private assignSpecialties() {
+    const searcherSids: string[] = [];
+    this.state.players.forEach((p, sid) => { if (p.role !== "bigfoot") searcherSids.push(sid); });
+    const forced: Record<string, SpecialtyId | undefined> = {};
+    for (const sid of searcherSids) forced[sid] = this.devSpecialties.get(sid);
+    const deal = dealSpecialties(searcherSids, forced, Math.random);
+    this.state.players.forEach((p, sid) => {
+      const id = deal[sid];
+      if (p.role === "bigfoot" || !id) {
+        p.specialty = "";
+        p.characterName = "";
+      } else {
+        p.specialty = id;
+        p.characterName = CHARACTER_NAME[id];
+      }
+    });
   }
 
   // --- Movement validation (server-authoritative) ----------------------------
@@ -455,6 +492,8 @@ export class ForestRoom extends Room<GameState> {
 
   /** Clear the night clock, footage, clues, pings, and all status timers for a fresh match. */
   private resetMatchState() {
+    // Clear dealt personas (startMatch re-deals after this; returnToLobby leaves the lobby persona-less).
+    this.state.players.forEach((p) => { p.specialty = ""; p.characterName = ""; });
     this.state.winner = "";
     this.state.nightNumber = 1;
     this.state.timeOfDay = 0;

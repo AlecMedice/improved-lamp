@@ -12,7 +12,7 @@ type MovePayload = {
   reviving: boolean; reviveTarget: string; // hunter reviving a downed teammate (held action)
 };
 
-export type SelfInfo = { status: string; filmProgress: number; role: string; slowed: boolean; dazzled: boolean };
+export type SelfInfo = { status: string; filmProgress: number; role: string; slowed: boolean; dazzled: boolean; specialty: string; characterName: string };
 
 /** Per-night escalation multipliers, server-authoritative (see GameState). */
 export type EscalationInfo = {
@@ -123,6 +123,8 @@ export class Network {
             role: player.role,
             slowed: player.slowed,
             dazzled: !!player.dazzled,
+            specialty: player.specialty ?? "",
+            characterName: player.characterName ?? "",
           });
         applySelf();
         player.onChange(applySelf);
@@ -268,6 +270,11 @@ export class Network {
   }
 
   /** Bigfoot asks the server to fast-travel to cave `index` (server validates + is authoritative). */
+  /** Debug only: hot-swap the local searcher's persona (server rejects unless ALLOW_DEV_ROLE). */
+  sendDebugSetSpecialty(id: string) {
+    this.room?.send("debugSetSpecialty", { id });
+  }
+
   sendCaveTravel(index: number) {
     this.room?.send("caveTravel", { index });
   }

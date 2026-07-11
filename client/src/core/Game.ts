@@ -27,7 +27,7 @@ import { ClueField } from "../world/ClueField";
 import { PingField } from "../world/PingField";
 import { LocalPlayer } from "../entities/LocalPlayer";
 import { RemotePlayer } from "../entities/RemotePlayer";
-import { climbSupport, nearestCaveIndex, caveEmergePoint } from "../../../shared/sim";
+import { climbSupport, nearestCaveIndex, caveEmergePoint, SPECIALTY_IDS } from "../../../shared/sim";
 import { Input } from "./Input";
 import { Network, SelfInfo, EscalationInfo } from "./Network";
 import { Room } from "colyseus.js";
@@ -78,7 +78,7 @@ export class Game {
   private sendAccum = 0;
   private timeOfDay = 0;
   private serverTimeOfDay: number | null = null;
-  private self: SelfInfo = { status: "active", filmProgress: 0, role: "searcher", slowed: false, dazzled: false };
+  private self: SelfInfo = { status: "active", filmProgress: 0, role: "searcher", slowed: false, dazzled: false, specialty: "", characterName: "" };
   private ended = false;
   private caveCooldown = 0;
   private traveling = false; // suspends local control + move-sends during a cave hop
@@ -157,6 +157,14 @@ export class Game {
     this.input.setLookHandler((dx, dy) => this.player.look(dx, dy));
     this.input.onAction("map", () => this.toggleMap());
     this.input.onPress("Escape", () => this.toggleSettings()); // fixed, not rebindable
+    // Debug persona hot-swap: `\` cycles the searcher's character. Only bound when ?devSpecialty is
+    // present (a debug session); the server rejects it unless ALLOW_DEV_ROLE, so it's inert in prod.
+    if (!this.isBigfoot && new URLSearchParams(location.search).has("devSpecialty")) {
+      this.input.onPress("Backslash", () => {
+        const i = SPECIALTY_IDS.indexOf(this.self.specialty as (typeof SPECIALTY_IDS)[number]);
+        this.net.sendDebugSetSpecialty(SPECIALTY_IDS[(i + 1) % SPECIALTY_IDS.length]);
+      });
+    }
     if (!this.isBigfoot) this.input.onAction("flashlight", () => this.player.toggleFlashlight());
     this.map.onSelectCave = (i) => this.travelToCave(i);
 
@@ -188,7 +196,10 @@ export class Game {
     this.net.onPhase = (_phase, tod) => (this.serverTimeOfDay = tod);
     this.net.onNight = (n, total) => this.onNightChange(n, total);
     this.net.onFootage = (have, need) => this.onFootage(have, need);
-    this.net.onSelf = (info) => (this.self = info);
+    this.net.onSelf = (info) => {
+      this.self = info;
+      this.hud.setPersona(info.characterName, info.specialty); // reflects the deal + any debug hot-swap
+    };
     this.net.onClueAdd = (c) => {
       this.clues.add(c);
       if (c.ctype === "branch") this.audio.playAt("branch_snap", c.x, c.z, { volume: 0.5, refDistance: 14 });

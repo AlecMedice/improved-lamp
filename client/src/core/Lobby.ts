@@ -18,8 +18,10 @@ export class Lobby {
 
   /** Join and show the lobby. Resolves when the host starts the match. */
   async join(name: string): Promise<MatchHandoff> {
-    const devRole = new URLSearchParams(location.search).get("devRole") ?? undefined;
-    const room = await this.client.joinOrCreate("forest", { name, devRole });
+    const params = new URLSearchParams(location.search);
+    const devRole = params.get("devRole") ?? undefined;
+    const devSpecialty = params.get("devSpecialty") ?? undefined; // force a persona for testing (gated server-side)
+    const room = await this.client.joinOrCreate("forest", { name, devRole, devSpecialty });
     this.overlay.style.display = "flex";
     this.startBtn.onclick = () => room.send("startMatch");
 
