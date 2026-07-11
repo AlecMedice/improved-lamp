@@ -67,8 +67,8 @@ they never fight during reconciliation.
 | stamina max & drain | **shared** (client predicts, server envelope clamps to the same per-player cap) | movement is client-predicted but server-bounded |
 | clue glow, contact window, evidence sight, hear range, roar-direction HUD, quieter footsteps, name tags | **client** | presentation only — no outcome effect |
 
-> Note: the resource envelope currently clamps stamina/battery to a hard `[0,100]`. Sam's higher stamina
-> ceiling means the clamp (and the schema default) must become **per-player max**, read from the table.
+> **Decided:** the resource envelope's stamina clamp becomes **per-player max**, read from the table —
+> everyone stays at `100` except Sam at `150`. (Battery stays a flat `[0,100]` for now.)
 
 ### 2.3 Assignment
 
@@ -113,12 +113,10 @@ export const CHARACTER_NAME: Record<SpecialtyId, string> = {
 };
 
 export const SPECIALTIES = {
-  // 🔬 Mara — reads the trail, coordinates the team. (Weakest fit to current mechanics — see §4.)
-  analysis: {
-    clueFreshnessRead: true,  // client: age tint + heading arrows on the clue trail
-    pingCap:           2,     // (baseline 1) concurrent stakeout pings
-    pingLifetimeMul:   1.5,   // her pings last longer (PING_LIFETIME 35 -> 52.5s)
-  },
+  // 🔬 Mara — IDENTITY-ONLY for now (no gameplay modifier). Her "analysis" fantasy needs non-film
+  // evidence to attach to (casts/samples/false clues), which doesn't exist yet. She still gets a name,
+  // portrait, and dusk-briefing line; her mechanic lands when the evidence-variety system does. See §4.
+  analysis: {},
 
   // 📷 Eli — reach + the flash.
   photo: {
@@ -150,7 +148,7 @@ export const SPECIALTIES = {
   // 🩹 Sam — keeps the team standing.
   endurance: {
     reviveSecondsMul: 0.6,    // REVIVE_SECONDS 4 -> 2.4s
-    staminaMax:       125,    // (baseline 100) higher ceiling; envelope clamps to this for Sam
+    staminaMax:       150,    // (baseline 100) much deeper reserve — Sam is the endurance carry
     staminaDrainMul:  0.85,   // sprint/leap/climb cost ~15% less
     batteryGift: { amount: 50, charges: 1 }, // hand a spare battery (hold-E); needs the hand-off action
   },
@@ -165,7 +163,7 @@ export const SPECIALTIES = {
 | 🥾 Wren | longer/wider trail vision, quiet | mark trail | the clue/map trail |
 | 🎙️ Theo | long-range hearing, faster film | — | early-warning + the win condition |
 | 📷 Eli | longer film range | flash (stun+reveal) | the win condition + Bigfoot deterrence |
-| 🔬 Mara | reads clue freshness/heading, more/longer pings | — | trail-reading + team coordination |
+| 🔬 Mara | *identity only for now (deferred)* | — | — (lands with non-film evidence) |
 
 ---
 
@@ -176,11 +174,11 @@ export const SPECIALTIES = {
 - **Wren / Theo** — mostly client presentation + a couple of server-owned scalars (`filmProgressMul`,
   marks). No fundamentally new mechanics.
 - **Eli** — the `flash` is the only genuinely new **ability RPC**; everything else is a scalar.
-- **Mara** — the loosest fit: there is **no evidence-casting or false-clue mechanic today** (every clue
-  is a genuine Bigfoot track, and film is the only evidence). The story's "confirms the real thing" has
-  nothing to attach to yet. The interim above makes her the **coordinator** (trail-reading + pings) so
-  she's not a no-op; the full "analysis" fantasy lands when non-film evidence exists. **This is the one I
-  most want your steer on.**
+- **Mara** — **decided: identity-only for now.** There is no evidence-casting or false-clue mechanic
+  today (every clue is a genuine Bigfoot track, film is the only evidence), so her "analysis" fantasy has
+  nothing to attach to. She ships as a name/portrait/briefing identity with **no gameplay modifier**, and
+  her real specialty is built together with the non-film evidence system (casts / hair samples / false
+  clues). Until then she's a fully playable searcher with the shared core kit, just no specialty edge.
 
 ---
 
@@ -198,12 +196,32 @@ export const SPECIALTIES = {
 Verify per `CLAUDE.md` after each step (`client tsc + vite build`, `server tsc + npm test`, two-tab feel
 pass); add a server test for any new validation.
 
-## 6. Decisions for you
+## 6. Decisions
 
-- **Mara's interim specialty** — ship the coordinator interpretation now, or leave her identity-only until
-  the evidence-variety system exists to carry the real "analysis" fantasy?
-- **Stamina ceiling** — OK to make the resource envelope's stamina clamp per-player (needed for Sam's
-  `staminaMax 125`), or keep everyone at 100 and give Sam a drain reduction only?
-- **Assignment** — pure random each match (story's intent), or a lobby pick/lock later?
-- **Power level** — do these numbers feel like the "always relevant, still cohesion-first" target, or do
-  you want them pushed harder (bigger effects) or softer?
+- ✅ **Mara** — identity-only for now; her specialty ships with the non-film evidence system.
+- ✅ **Stamina ceiling** — per-player clamp; everyone 100, Sam 150.
+- **Assignment** — pure random each match (story's intent), or a lobby pick/lock later? *(open)*
+- **Power level** — pick a tier below (or per-character). *(open)*
+
+## 7. Power-level tiers
+
+"Power level" = how much a specialty swings a match. The same mechanic reads very differently at
+different numbers — a subtle edge you barely notice, or a defining advantage the team builds around. The
+base constants in §3 are the **Standard** column. Representative dials:
+
+| Dial | Subtle | **Standard (§3)** | Bold |
+|---|---|---|---|
+| Sam — revive time (from 4s) | 0.8 → 3.2s | **0.6 → 2.4s** | 0.45 → 1.8s |
+| Sam — stamina max (from 100) | 120 | **150** | 180 |
+| Eli — film range (from 38m) | ×1.15 → 44m | **×1.25 → 47.5m** | ×1.4 → 53m |
+| Eli — flashes / night | 1 | **1** | 2 |
+| Theo — hear range (from 35m) | ×1.5 → 52m | **×1.8 → 63m** | ×2.2 → 77m |
+| Theo — film speed (from 3.0s) | ×1.1 | **×1.15** | ×1.3 |
+| Wren — evidence sight (from 18m) | ×1.6 → 29m | **×2.0 → 36m** | ×2.5 → 45m |
+| Wren — clue window (from 15s) | ×1.3 → 20s | **×1.5 → 22.5s** | ×2.0 → 30s |
+
+- **Subtle** — flavourful nudges; the team plays the same, just slightly smoother. Lowest balance risk.
+- **Standard** — you feel your specialty and lean into it, but a coordinated team still wins on cohesion.
+- **Bold** — specialties are build-defining; the team plans around who they got. Highest swing / risk.
+
+*(Sam's stamina is already set to 150 = Standard here per your call.)*
