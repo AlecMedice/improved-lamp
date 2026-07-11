@@ -117,8 +117,8 @@ Tonight, for the first time, the lights might be smart enough to stay together.
 
 ## Three Nights
 
-Each night runs from **9 p.m. to 7 a.m.** — ten hours of dark to hunt in, or to survive. Three nights
+Each night runs from **8 p.m. to 8 a.m.** — twelve hours of dark to hunt in, or to survive. Three nights
 running. The searchers win by banking enough clean footage before the third dawn; Bigfoot wins by living
 to see it.
 
-Dawn comes at seven. Not everyone out here is going to be there to watch it come up.
+Dawn comes at eight. Not everyone out here is going to be there to watch it come up.
