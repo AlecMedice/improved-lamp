@@ -62,7 +62,15 @@ export const PLAYER = {
 export const CAVE = {
   triggerRadius: 6, // how close Bigfoot must be to a mouth to use it
   travelCooldown: 2.0, // seconds between cave jumps
+  emergeOffset: 8, // metres toward map centre a traveller emerges (outside the boulder horseshoe)
 };
+
+/**
+ * Seconds before a dropped clue (footprint/branch) goes cold and disappears. Server-owned truth:
+ * the server ages clues by this (scaled by per-night escalation) and the client fades its meshes on
+ * the same window, so the visible trail can't drift from the replicated one.
+ */
+export const CLUE_LIFETIME = 50;
 
 /** Cave-network generation tuning (seed-derived, identical on client + server). */
 export const CAVE_GEN = {

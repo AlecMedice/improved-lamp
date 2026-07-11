@@ -21,9 +21,14 @@ Bigfoot and another as a searcher (`server/src/rooms` is authoritative).
 ## Verify your work (do this before claiming done)
 ```bash
 cd client && npx tsc --noEmit && npx vite build     # client typechecks + bundles
-cd server && npx tsc --noEmit                        # server typechecks
+cd server && npx tsc --noEmit && npm test            # server typechecks + vitest (sim + anti-cheat)
 ```
-For server/gameplay logic, a **headless smoke test** is the fast way to prove behavior:
+The **vitest** suite (`server/test/`) covers the two things unit tests protect best: `shared/sim`
+determinism (same seed ⇒ identical world + `stepPlayer` sequences) and the pure server-authority
+helpers in `server/src/rooms/antiCheat.ts` (filming LOS/aim, speed-gate token bucket, resource
+envelope). It imports only pure modules — no Colyseus Room/schema — so there are no decorators to
+compile. Add a case here whenever you touch validation or the sim. For end-to-end *stateful* flows
+(roar → grab → revive), a **headless smoke test** is still the fast way to prove behavior:
 write a throwaway `client/_smoke.mjs` using `colyseus.js` (already installed in `client/`),
 connect 1–2 clients, drive messages, assert on `room.state`, then delete it. Example
 pattern used during development: join a bigfoot + searcher, send `move`/`roar`/`grab`,
@@ -39,12 +44,19 @@ Don't commit smoke files or `client/dist/`.
   `ForestRoom.update()`.
 - **Movement is server‑authoritative** (Phase 2). The client predicts locally (shared‑sim
   `stepPlayer` in `LocalPlayer`) and streams `move` ~15 Hz; the server **re‑validates** each move
-  against the shared world (`ForestRoom.applyMove`: world‑bounds clamp, max‑speed gate, collision
-  pushout, terrain feet‑clamp) and ignores moves from non‑`active` players. The client
+  against the shared world (`ForestRoom.applyMove`: world‑bounds clamp, speed‑gate **token bucket**,
+  collision pushout, terrain feet‑clamp) and ignores moves from non‑`active` players. The client
   **reconciles** by easing toward the server's corrected position (`LocalPlayer.correctTo`);
   large desyncs snap. Remotes interpolate on a snapshot buffer. Cave fast‑travel is a validated
-  `caveTravel` command. (Resources stay client‑owned; full input‑replay prediction is the
-  deferred Phase 2.3 stretch — the pure `stepPlayer` sim is the foundation for it.)
+  `caveTravel` command. (Full input‑replay prediction is the deferred Phase 2.3 stretch — the pure
+  `stepPlayer` sim is the foundation for it.)
+- **The server doesn't trust client‑reported outcomes.** Pure validation helpers in
+  `server/src/rooms/antiCheat.ts` back this: **filming** (the hunter win condition) is recomputed
+  server‑side — range + aim cone from the replicated yaw + line‑of‑sight — so `inView` from the client
+  is only a HUD hint, not the grant (`updateFilming`/`canFilm`, mirrors the dazzle beam check). The
+  **speed gate** is a per‑second token bucket, not flat per‑message slack, so move‑spam earns no free
+  distance. **Battery/stamina** run through a resource envelope: battery can only decrease (no pickups
+  yet) and a dead battery forces the light off; stamina can't regen faster than the sim's rate.
 - **Deterministic world + movement sim live in `shared/sim/`**, imported by both the client and
   the server (relative imports, no alias). Terrain height, tree/RV/cave/tower colliders, fallen
   logs, and **seeded `CAVES`** are all derived from `WORLD.seed` there, so every client and the
@@ -61,6 +73,8 @@ Don't commit smoke files or `client/dist/`.
 Client → server (`Network.send*`):
 - `move` `{x,y,z,ry, flashlightOn, battery, stamina, recording, inView, reviving, reviveTarget}` — `y` = feet.
   `reviving`/`reviveTarget` are the held-action teammate revive (like `recording` — no separate RPC).
+  `inView`/`battery`/`stamina` are **hints the server re‑validates or bounds** (see anti‑cheat above),
+  not trusted values; `x,z,y` are corrected by `applyMove`; only `ry` (camera aim) is taken as sent.
 - `ping` `{x,z}` — hunters only (stakeout marker).
 - `roar` — Bigfoot: AoE freeze *(rejected while dazzled)*. `Space` = leap (stamina-gated bound).
 - `grab` — Bigfoot: grab nearest frozen hunter / drop the dragged one *(rejected while dazzled)*.

@@ -27,7 +27,7 @@ import { ClueField } from "../world/ClueField";
 import { PingField } from "../world/PingField";
 import { LocalPlayer } from "../entities/LocalPlayer";
 import { RemotePlayer } from "../entities/RemotePlayer";
-import { climbSupport } from "../../../shared/sim";
+import { climbSupport, nearestCaveIndex, caveEmergePoint } from "../../../shared/sim";
 import { Input } from "./Input";
 import { Network, SelfInfo, EscalationInfo } from "./Network";
 import { Room } from "colyseus.js";
@@ -601,16 +601,9 @@ export class Game {
     return !this.env.lineBlocked(this.player.position, bf);
   }
 
-  /** Index of a cave whose mouth Bigfoot is standing in, or -1. */
+  /** Index of a cave whose mouth Bigfoot is standing in, or -1 (shared with the server's validation). */
   private nearestCaveIndex(): number {
-    const p = this.player.position;
-    const r2 = CAVE.triggerRadius * CAVE.triggerRadius;
-    for (let i = 0; i < CAVES.length; i++) {
-      const dx = CAVES[i].x - p.x;
-      const dz = CAVES[i].z - p.z;
-      if (dx * dx + dz * dz <= r2) return i;
-    }
-    return -1;
+    return nearestCaveIndex(CAVES, this.player.position.x, this.player.position.z);
   }
 
   /** Bigfoot picks a destination cave from the map and emerges from its mouth. */
@@ -618,18 +611,16 @@ export class Game {
     if (!this.isBigfoot || this.ended || this.caveCooldown > 0) return;
     const here = this.nearestCaveIndex();
     if (here < 0 || i === here || i < 0 || i >= CAVES.length) return;
-    const dest = CAVES[i];
-    const dl = Math.hypot(dest.x, dest.z) || 1;
     this.caveCooldown = CAVE.travelCooldown;
     this.traveling = true; // suspend local control + move-sends; the server moves us authoritatively
     this.net.sendCaveTravel(i); // server validates the jump and is authoritative for it
     this.closeMap(); // synchronous (keeps the pointer-lock user gesture)
     // Fade to black, hop at the darkest point (matching the server), fade back in at the new cave.
-    // Face away from the destination cave (into the forest) on emergence.
-    const exitYaw = Math.atan2(dest.x, dest.z);
+    // Shared helper -> exact same emerge spot + heading the server places us at (into the forest).
+    const emerge = caveEmergePoint(CAVES[i]);
     this.audio.playOnce("cave_whoosh", { volume: 0.6 });
     this.hud.fade(() => {
-      this.player.teleportTo(dest.x - (dest.x / dl) * 8, dest.z - (dest.z / dl) * 8, exitYaw);
+      this.player.teleportTo(emerge.x, emerge.z, emerge.yaw);
       this.traveling = false;
     });
   }

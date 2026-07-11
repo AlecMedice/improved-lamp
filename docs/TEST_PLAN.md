@@ -33,7 +33,14 @@ page — don't open it in a browser. Confirm the server is healthy with `curl ht
 ## 3. Stand up six players in tabs
 
 Each browser tab = one player. Roles are assigned by the server when the host starts, but you can force a
-tab's role with the **`?devRole=`** query param so you always get a known 1‑Bigfoot / 5‑searcher split:
+tab's role with the **`?devRole=`** query param so you always get a known 1‑Bigfoot / 5‑searcher split.
+
+> **The server only honours `devRole` when it's allowed to** — it's a test backdoor, gated off in
+> production. It's on automatically in dev (`npm run dev`, i.e. `NODE_ENV !== "production"`). If you run a
+> production build, start the server with **`ALLOW_DEV_ROLE=1`** to re‑enable it for testing:
+> ```bash
+> ALLOW_DEV_ROLE=1 NIGHT_SECONDS=60 npm start
+> ```
 
 | Tab | URL | Becomes |
 |-----|-----|---------|
