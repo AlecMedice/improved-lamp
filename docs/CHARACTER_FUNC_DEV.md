@@ -5,6 +5,12 @@ exists today**, specs **what each specialty should do**, and lays out **how to b
 repo's existing patterns (server-owned tunables replicated to clients, held actions on the move stream,
 abilities as RPCs with cooldown maps).
 
+**Design principle.** All five specialties are first-class mechanics, not cosmetic perks — and **all
+five ship**, not just the cheap ones. Each should be *always relevant*: it changes how that character
+plays for the whole match and touches a real system (filming, the clue/map trail, revive/incap,
+battery/stamina, Bigfoot deterrence). A player should feel their specialty every night. The balance
+target is *distinct, defining playstyles that still win on cohesion* — impactful, not a solo carry.
+
 Status legend: ✅ shipped · 🟡 partial substrate exists · ❌ not built.
 
 ---
@@ -125,5 +131,6 @@ alongside the existing anti-cheat/sim suite in `server/test/`.
   priority? With more than five (not currently possible; `maxClients = 6`), allow duplicates?
 - **Lobby choice vs. pure random:** story says random. Do we ever want a pick/lock lobby instead, or
   random-only?
-- **Balance:** every number here is a first guess. Specialties should be *edges*, not power spikes — the
-  game's thesis is team cohesion, not carry characters.
+- **Balance:** every number here is a first guess. Specialties should be *impactful and always relevant*
+  — each defines a playstyle and shapes the whole match — while still tuned so the team wins on cohesion,
+  not on any single carry.
