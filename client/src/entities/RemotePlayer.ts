@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { AudioEngine } from "../core/AudioEngine";
 import { SENSES } from "../config";
+import { footstepVolumeMul } from "../../../shared/sim";
 
 /** A timestamped server snapshot for interpolation. */
 type Snapshot = { t: number; x: number; y: number; z: number; ry: number };
@@ -60,6 +61,7 @@ export class RemotePlayer {
   private lastX = 0;
   private lastZ = 0;
   private readonly stride: number;
+  private footstepVol = 1; // Wren (Tracking) moves quietly → others hear her footsteps at half volume
 
   constructor(private scene: THREE.Scene, role: string, private audio?: AudioEngine) {
     this.isBigfoot = role === "bigfoot";
@@ -195,6 +197,11 @@ export class RemotePlayer {
     if (this.recLight) this.recLight.visible = on;
   }
 
+  /** Apply this player's specialty presentation (Wren's quieter footsteps). */
+  setSpecialty(specialty: string) {
+    this.footstepVol = footstepVolumeMul(specialty);
+  }
+
   setStatus(status: string) {
     if (!this.statusIcon || !this.statusMat) return;
     if (status === "frozen") {
@@ -306,7 +313,7 @@ export class RemotePlayer {
     if (this.stepDist >= this.stride) {
       this.stepDist = 0;
       this.audio.playAt(this.isBigfoot ? "footstep_heavy" : "footstep_soft", x, z, {
-        volume: this.isBigfoot ? 0.7 : 0.4,
+        volume: (this.isBigfoot ? 0.7 : 0.4) * this.footstepVol,
         refDistance: 7,
       });
     }

@@ -52,6 +52,21 @@ describe("battery drain", () => {
   });
 });
 
+describe("per-player stamina ceiling (Sam's Endurance)", () => {
+  it("caps regen at 100 by default", () => {
+    const st = makeState({ stamina: 99 });
+    for (let i = 0; i < 20; i++) stepPlayer(st, makeInput({ dt: 1 }), world, MODS);
+    expect(st.stamina).toBe(100);
+  });
+
+  it("lets stamina climb to a raised max (150) when the modifier is set", () => {
+    const st = makeState({ stamina: 99 });
+    const mods = { ...MODS, staminaMax: 150 };
+    for (let i = 0; i < 20; i++) stepPlayer(st, makeInput({ dt: 1 }), world, mods);
+    expect(st.stamina).toBe(150);
+  });
+});
+
 describe("Bigfoot leap", () => {
   it("launches at leapSpeed, spends stamina, and peaks near the analytic apex", () => {
     const st = makeState({ isBigfoot: true });

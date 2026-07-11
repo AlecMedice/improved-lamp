@@ -48,7 +48,8 @@ export type StepResult = { moving: boolean; sprinting: boolean };
 export type StepModifiers = {
   speedMul: number; // slow factor * per-night Bigfoot speed escalation (1 = baseline)
   batteryDrainMul: number; // per-night flashlight drain escalation
-  staminaDrainMul: number; // per-night sprint drain escalation
+  staminaDrainMul: number; // per-night sprint drain escalation (× the Endurance specialty's reduction)
+  staminaMax?: number; // per-player stamina ceiling (Sam's Endurance raises it; defaults to 100)
 };
 
 /**
@@ -183,7 +184,7 @@ export function stepPlayer(st: PlayerSimState, input: MoveInput, world: World, m
   // climb against a surface, suppress regen (even at 0 stamina) or the gate never bites — you'd ratchet
   // up a tick at a time as regen refills between attempts. Release the climb to recover.
   if (sprinting) st.stamina = Math.max(0, st.stamina - PLAYER.staminaDrainPerSec * mods.staminaDrainMul * dt);
-  else if (!climb) st.stamina = Math.min(100, st.stamina + PLAYER.staminaRegenPerSec * dt);
+  else if (!climb) st.stamina = Math.min(mods.staminaMax ?? 100, st.stamina + PLAYER.staminaRegenPerSec * dt);
   if (st.stamina <= 0) st.exhausted = true;
   else if (st.exhausted && st.stamina >= PLAYER.staminaRecover) st.exhausted = false;
 

@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { dealSpecialties, SPECIALTY_IDS, CHARACTER_NAME, isSpecialtyId, type SpecialtyId } from "../../shared/sim";
+import {
+  dealSpecialties, SPECIALTY_IDS, CHARACTER_NAME, isSpecialtyId, type SpecialtyId,
+  reviveMul, staminaMax, staminaDrainMul, filmProgressMul, clueWindowMul, evidenceSightMul, hearRangeMul, footstepVolumeMul,
+} from "../../shared/sim";
 
 // The enabling layer: personas are dealt distinct and random, with the ?devSpecialty debug force honoured.
 const rng = () => Math.random();
@@ -48,5 +51,29 @@ describe("specialty identity", () => {
     expect(isSpecialtyId("tracking")).toBe(true);
     expect(isSpecialtyId("bigfoot")).toBe(false);
     expect(isSpecialtyId(undefined)).toBe(false);
+  });
+});
+
+describe("specialty getters (Standard tier + baseline defaults)", () => {
+  it("returns each specialty's tuned value", () => {
+    expect(reviveMul("endurance")).toBe(0.6);
+    expect(staminaMax("endurance")).toBe(150);
+    expect(staminaDrainMul("endurance")).toBe(0.85);
+    expect(filmProgressMul("sound")).toBe(1.15);
+    expect(hearRangeMul("sound")).toBe(1.8);
+    expect(clueWindowMul("tracking")).toBe(1.5);
+    expect(evidenceSightMul("tracking")).toBe(2.0);
+    expect(footstepVolumeMul("tracking")).toBe(0.5);
+  });
+
+  it("falls back to the baseline for other/absent specialties (incl. Mara + Bigfoot)", () => {
+    for (const id of ["analysis", "", "bigfoot"]) {
+      expect(reviveMul(id)).toBe(1);
+      expect(staminaMax(id)).toBe(100);
+      expect(staminaDrainMul(id)).toBe(1);
+      expect(filmProgressMul(id)).toBe(1);
+      expect(clueWindowMul(id)).toBe(1);
+      expect(footstepVolumeMul(id)).toBe(1);
+    }
   });
 });

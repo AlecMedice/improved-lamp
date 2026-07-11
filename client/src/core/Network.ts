@@ -138,6 +138,7 @@ export class Network {
         rp.setFilming(player.filming);
         rp.setStatus(player.status);
         rp.setBeingRevived(!!player.beingRevived);
+        rp.setSpecialty(player.specialty ?? "");
       };
       apply();
       player.onChange(apply);

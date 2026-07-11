@@ -27,7 +27,11 @@ import { ClueField } from "../world/ClueField";
 import { PingField } from "../world/PingField";
 import { LocalPlayer } from "../entities/LocalPlayer";
 import { RemotePlayer } from "../entities/RemotePlayer";
-import { climbSupport, nearestCaveIndex, caveEmergePoint, SPECIALTY_IDS } from "../../../shared/sim";
+import {
+  climbSupport, nearestCaveIndex, caveEmergePoint, SPECIALTY_IDS,
+  staminaMax as staminaMaxFor, staminaDrainMul as staminaDrainMulFor,
+  clueWindowMul, evidenceSightMul, hearRangeMul, reviveMul,
+} from "../../../shared/sim";
 import { Input } from "./Input";
 import { Network, SelfInfo, EscalationInfo } from "./Network";
 import { Room } from "colyseus.js";
@@ -79,6 +83,7 @@ export class Game {
   private timeOfDay = 0;
   private serverTimeOfDay: number | null = null;
   private self: SelfInfo = { status: "active", filmProgress: 0, role: "searcher", slowed: false, dazzled: false, specialty: "", characterName: "" };
+  private escStaminaDrain = 1; // latest per-night stamina-drain escalation (composed with specialty in applySpecialtyMods)
   private ended = false;
   private caveCooldown = 0;
   private traveling = false; // suspends local control + move-sends during a cave hop
@@ -199,6 +204,7 @@ export class Game {
     this.net.onSelf = (info) => {
       this.self = info;
       this.hud.setPersona(info.characterName, info.specialty); // reflects the deal + any debug hot-swap
+      this.applySpecialtyMods(); // persona may have changed (deal / hot-swap) → refresh stamina mods
     };
     this.net.onClueAdd = (c) => {
       this.clues.add(c);
@@ -390,7 +396,7 @@ export class Game {
         travelMode: this.isBigfoot && this.caveCooldown === 0 && this.nearestCaveIndex() >= 0,
         currentCave: this.nearestCaveIndex(),
         others: hunter ? this.net.getRemoteSearchers() : [],
-        clues: hunter && this.clueVisionActive() ? this.clues.getRecentDots(MAP.clueWindow) : [],
+        clues: hunter && this.clueVisionActive() ? this.clues.getRecentDots(MAP.clueWindow * clueWindowMul(this.self.specialty)) : [],
         pings: hunter ? this.net.getPings() : [],
         bigfoot: this.isBigfoot,
       });
@@ -417,7 +423,7 @@ export class Game {
       if (holdingE) {
         reviving = true;
         reviveTarget = target!.sid;
-        this.reviveProgress = Math.min(1, this.reviveProgress + dt / REVIVE.seconds);
+        this.reviveProgress = Math.min(1, this.reviveProgress + dt / (REVIVE.seconds * reviveMul(this.self.specialty)));
         this.reviveTickTimer -= dt;
         if (this.reviveTickTimer <= 0) {
           this.audio.playOnce("revive_channel", { volume: 0.5 });
@@ -463,7 +469,7 @@ export class Game {
     }
 
     this.hud.setBattery(this.player.battery);
-    this.hud.setStamina(this.player.stamina);
+    this.hud.setStamina((this.player.stamina / this.player.staminaMax) * 100); // % of this persona's max
     this.hud.setBeam(!this.isBigfoot && this.player.isFlashlightOn); // beam mask + lens grime while lit
 
     // Drive the post FX: moving grain + a vignette that tightens toward the dead of night.
@@ -507,12 +513,16 @@ export class Game {
   private clueVisionActive(): boolean {
     const p = this.player.position;
     const bf = this.net.getBigfootPosition();
+    // Specialty-scaled senses: Theo (Sound) hears farther; Wren (Tracking) sees clues farther, for longer.
+    const hearRange = MAP.hearRange * hearRangeMul(this.self.specialty);
     if (bf) {
       const dx = bf.x - p.x;
       const dz = bf.z - p.z;
-      if (dx * dx + dz * dz < MAP.hearRange * MAP.hearRange) return true;
+      if (dx * dx + dz * dz < hearRange * hearRange) return true;
     }
-    return this.clues.hasRecentClueWithin(p.x, p.z, MAP.evidenceSight, MAP.clueWindow);
+    const sight = MAP.evidenceSight * evidenceSightMul(this.self.specialty);
+    const window = MAP.clueWindow * clueWindowMul(this.self.specialty);
+    return this.clues.hasRecentClueWithin(p.x, p.z, sight, window);
   }
 
   /** Freeze/incap stings on our own state change + the searcher proximity heartbeat. */
@@ -545,8 +555,15 @@ export class Game {
   private applyEscalation(e: EscalationInfo) {
     this.player.nightSpeedMul = this.isBigfoot ? e.bigfootSpeedMul : 1; // hunters pressured via drain
     this.player.batteryDrainMul = e.batteryDrainMul;
-    this.player.staminaDrainMul = e.staminaDrainMul;
+    this.escStaminaDrain = e.staminaDrainMul;
     this.roarCooldownSec = e.roarCooldownSec;
+    this.applySpecialtyMods(); // fold the specialty in on top of the per-night escalation
+  }
+
+  /** Compose per-night escalation with the local searcher's specialty into the movement mods. */
+  private applySpecialtyMods() {
+    this.player.staminaMax = staminaMaxFor(this.self.specialty); // Sam (Endurance): 150
+    this.player.staminaDrainMul = this.escStaminaDrain * staminaDrainMulFor(this.self.specialty); // Sam: ×0.85
   }
 
   private tryRoar() {

@@ -71,6 +71,29 @@ export const SPECIALTIES = {
 } as const;
 
 /**
+ * Typed accessors — read a specialty's tunable, or the baseline default for `""`/`analysis`/anything
+ * without that field. Every gameplay call site reads through these so there's no optional-chaining
+ * sprawl and no place to forget the default. (Nested objects like `flash`/`mark` are read directly.)
+ */
+const TABLE = SPECIALTIES as unknown as Record<string, Record<string, number | undefined>>;
+function specNum(id: string, key: string, dflt: number): number {
+  const v = TABLE[id]?.[key];
+  return typeof v === "number" ? v : dflt;
+}
+export const reviveMul = (id: string) => specNum(id, "reviveSecondsMul", 1); // Sam: 0.6
+export const staminaMax = (id: string) => specNum(id, "staminaMax", 100); // Sam: 150
+export const staminaDrainMul = (id: string) => specNum(id, "staminaDrainMul", 1); // Sam: 0.85
+export const filmProgressMul = (id: string) => specNum(id, "filmProgressMul", 1); // Theo: 1.15
+export const filmRangeMul = (id: string) => specNum(id, "filmRangeMul", 1); // Eli: 1.25 (step 3)
+export const clueWindowMul = (id: string) => specNum(id, "clueWindowMul", 1); // Wren: 1.5
+export const evidenceSightMul = (id: string) => specNum(id, "evidenceSightMul", 1); // Wren: 2.0
+export const hearRangeMul = (id: string) => specNum(id, "hearRangeMul", 1); // Theo: 1.8
+export const footstepVolumeMul = (id: string) => specNum(id, "footstepVolumeMul", 1); // Wren: 0.5
+
+/** Wren's team-visible trail marker rules (cooldown + lifetime, seconds). */
+export const TRACKING_MARK = SPECIALTIES.tracking.mark;
+
+/**
  * Deal a specialty to each searcher. Distinct where the pool allows (≤5 searchers ⇒ all distinct);
  * a forced id (debug `?devSpecialty`) is honoured and removed from the random pool so it can't collide.
  * Pure given `rand` (inject `Math.random` in the server, a seeded rng in tests).

@@ -3,6 +3,7 @@ import { GameState, Player, Clue, Ping } from "./schema/GameState";
 import {
   WORLD, PLAYER, CAVE, CLUE_LIFETIME, generateCaves, makeWorld, resolveCollision, lineBlocked, climbSupport,
   nearestCaveIndex, caveEmergePoint, dealSpecialties, CHARACTER_NAME, isSpecialtyId, type SpecialtyId,
+  reviveMul, staminaMax, filmProgressMul,
 } from "../../../shared/sim";
 import { refillAllowance, gateStep, staminaCeiling, filmVisible } from "./antiCheat";
 
@@ -159,7 +160,7 @@ export class ForestRoom extends Room<GameState> {
       p.battery = clamp(Math.min(num(data.battery, p.battery), p.battery), 0, 100);
       if (p.battery <= 0) p.flashlightOn = false;
       const maxStamina = staminaCeiling(p.stamina, PLAYER.staminaRegenPerSec, dtSec, STAMINA_SLACK);
-      p.stamina = clamp(Math.min(num(data.stamina, p.stamina), maxStamina), 0, 100);
+      p.stamina = clamp(Math.min(num(data.stamina, p.stamina), maxStamina), 0, staminaMax(p.specialty));
 
       const flag = this.filmFlags.get(client.sessionId) ?? { recording: false, inView: false };
       flag.recording = !!data.recording;
@@ -424,6 +425,7 @@ export class ForestRoom extends Room<GameState> {
       } else {
         p.specialty = id;
         p.characterName = CHARACTER_NAME[id];
+        p.stamina = staminaMax(id); // start with the full (per-persona) reserve — Sam gets 150
       }
     });
   }
@@ -591,7 +593,7 @@ export class ForestRoom extends Room<GameState> {
 
       const prog = (this.reviveProgress.get(targetSid) ?? 0) + dt;
       revivedThisTick.add(targetSid);
-      if (prog >= REVIVE_SECONDS) {
+      if (prog >= REVIVE_SECONDS * reviveMul(reviver.specialty)) { // Sam (Endurance) revives faster
         target.status = "active"; // freed early — same post-incap recovery as a natural wake-up
         this.incapUntil.delete(targetSid);
         this.grabbedBy.delete(targetSid);
@@ -822,7 +824,7 @@ export class ForestRoom extends Room<GameState> {
       const gaining = !!flag?.recording && bigfoots.some(({ p: b }) => this.canFilm(p, b));
 
       if (gaining) {
-        p.filmProgress += dt / FILM_SECONDS;
+        p.filmProgress += (dt / FILM_SECONDS) * filmProgressMul(p.specialty); // Theo (Sound) banks faster
         if (p.filmProgress >= 1) {
           p.filmProgress = 0;
           this.state.videosCaptured++;
