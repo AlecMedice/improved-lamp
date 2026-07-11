@@ -39,98 +39,171 @@ So each specialty below is either a **per-player scalar** over something that al
 
 ---
 
-## 2. Randomized assignment (the enabling feature)
+## 2. Framework
 
-**Goal:** when the host starts a match, each Searcher is randomly assigned one of the five characters
-(distinct where possible), replicated so every client shows the right name/specialty.
+### 2.1 Data model
 
-Implementation:
-- **Schema:** add `@type("string") specialty = ""` (and optionally `characterName`) to `Player`
-  (`schema/GameState.ts`). `""` = unassigned / Bigfoot.
-- **Assignment:** in the `startMatch` handler (`ForestRoom.ts`), after roles are picked, shuffle the five
-  specialty ids and deal one to each searcher. With ≤5 searchers all are distinct; if we ever allow more,
-  fall back to duplicates. Bigfoot gets `""`.
-- **Single source of truth:** a `SPECIALTIES` table (server-side, replicated like the `ESCALATION`
-  table) holds every tunable, keyed by specialty id — one place to balance, no client mirror.
-- **Client:** read `player.specialty` to label the HUD / avatar / dusk briefing, and to apply the
-  presentation-only modifiers (see below). The lobby can later show the assigned character card.
+- **Specialty id** — one of `"analysis" | "photo" | "tracking" | "sound" | "endurance"` (Mara, Eli,
+  Wren, Theo, Sam). Bigfoot / unassigned = `""`.
+- **Schema** (`schema/GameState.ts`) — add to `Player`:
+  `@type("string") specialty = ""` and `@type("string") characterName = ""`. Both are set once at match
+  start and never change during a match, so they cost one replication each, not per-tick.
+- **The `SPECIALTIES` table lives in `shared/sim/` and is pure** (plain constants — no Three.js, no
+  decorators). Because the numbers never change mid-match, we do **not** replicate them like the
+  `ESCALATION` table (which we replicate precisely because it changes each night). Instead **both sides
+  import the same table** and look it up by the player's replicated `specialty` id. Only the *assignment*
+  travels over the wire. This keeps a single source of truth and respects `shared/` purity.
 
-This mirrors how per-night escalation already flows (server owns the table → replicates values →
-client applies its share).
+### 2.2 Where each modifier is enforced
 
----
+The rule mirrors the anti-cheat work already done: **the server owns anything that can change the
+outcome; the client owns presentation and prediction, bounded by the server.** Because the table is
+shared, the server's resource envelope and the client's prediction read the *same* per-player numbers, so
+they never fight during reconciliation.
 
-## 3. The five specialties
+| Modifier | Enforced by | Why |
+|---|---|---|
+| revive time, film range, film-progress rate, flash, extra pings, trail marks | **server** | touch the win condition / match outcome |
+| stamina max & drain | **shared** (client predicts, server envelope clamps to the same per-player cap) | movement is client-predicted but server-bounded |
+| clue glow, contact window, evidence sight, hear range, roar-direction HUD, quieter footsteps, name tags | **client** | presentation only — no outcome effect |
 
-Each entry: the fiction → the mechanic → what it costs to build. All numbers are first-guess tunables.
+> Note: the resource envelope currently clamps stamina/battery to a hard `[0,100]`. Sam's higher stamina
+> ceiling means the clamp (and the schema default) must become **per-player max**, read from the table.
 
-### 🩹 Sam — Endurance ✅-adjacent (cheapest; all substrate exists)
-- **Faster revive:** scale `REVIVE_SECONDS` per-reviver (`×0.6`). Server-owned (revive completes on the
-  server).
-- **More stamina:** `+25` max stamina, or slower drain — apply in the shared sim via a per-player
-  `StepModifiers`-style scalar (client predicts, server envelope already bounds regen).
-- **Share batteries:** depends on the **battery-pickup** system (not yet built — see roadmap Track C2).
-  Interim: Sam spawns with a giveable spare (hold-E hand-off), deferred until pickups land.
-- **Build cost:** low. Revive + stamina are scalars over existing systems.
+### 2.3 Assignment
 
-### 🥾 Wren — Tracking 🟡 (scalars over the existing clue/map system)
-- **Prints glow / longer contact:** widen her clue-contact window and evidence-sight range
-  (`MAP.clueWindow ×1.5`, `evidenceSight ×2`) so the trail shows for her more readily and longer.
-- **Mark the trail:** let her promote a clue to a team-visible marker (reuse the `ping` path with a
-  distinct type, or a small `marks` array like `pings`).
-- **Moves quietly:** client audio flag — quieter footstep cue on her `RemotePlayer`.
-- **Build cost:** low–medium. Contact scalars are client-side; "mark" is a small new replicated list.
+In the `startMatch` handler, after Bigfoot is chosen: shuffle the five ids and deal one to each searcher
+(assignment is not sim state, so ordinary `Math.random` shuffle is fine). ≤5 searchers ⇒ all distinct;
+Bigfoot gets `""`. Set `characterName` from a name map. `maxClients = 6` (1 Bigfoot + 5 searchers), so
+duplicates never occur in practice.
 
-### 🎙️ Theo — Sound 🟡 (scalars + one client cue)
-- **Early warning:** larger `MAP.hearRange ×1.8` (Bigfoot registers as "nearby" from farther off); a
-  persistent roar-direction indicator (~10s) on his HUD.
-- **"Recording counts as evidence":** in today's film-only model, express this as a **filming bonus**
-  rather than a separate evidence type — e.g. Theo banks film progress slightly faster, or a short
-  audio-only capture at close range contributes partial progress. (Keeps the single win condition; avoids
-  reviving the retired evidence-node design. Revisit if/when other evidence types return.)
-- **Build cost:** low–medium. Mostly client presentation + one filming scalar (server-owned).
+### 2.4 New message contract (only two specialties need one)
 
-### 📷 Eli — The Photo 🟡 substrate / ❌ flash
-- **Longer capture range:** per-player `FILM_RANGE` bonus (`+25%`). Server-owned (it's the win check).
-- **Flash (stun + reveal):** **new RPC**, modeled on `roar`/`dazzle` — one charge per night, short range,
-  instant dazzle on Bigfoot + a loud "here I am" ping to it. Server validates range + cone + LOS + charge
-  count (mirror `updateDazzle`), broadcasts a positional flash cue.
-- **Build cost:** medium. Range is a scalar; the flash is a new server-validated ability + cooldown map +
-  client VFX/SFX.
+- `flash` — Eli, client→server RPC, no payload. Server validates charges-left-this-night + range + aim
+  cone + LOS (mirror `updateDazzle`), applies a dazzle, marks Eli's position visible to Bigfoot for a few
+  seconds, and broadcasts a positional `flash` cue. Charges reset each night.
+- `mark` — Wren, client→server RPC `{x,z}` (or a held action). Promotes a nearby clue to a team-visible
+  trail marker (a small `marks` ArraySchema, modeled on `pings`). Cooldown'd.
 
-### 🔬 Mara — Analysis ❌ (loosest fit to current mechanics)
-- **Casts evidence faster / confirms the real thing:** there is **no evidence-casting or false-positive
-  mechanic today** (clues are always genuine Bigfoot tracks; the only evidence is film). Options:
-  1. **Defer** until non-film evidence exists (cleanest — pairs with the future casts/samples system).
-  2. **Reinterpret now** as a clue-reading edge: Mara sees clue *freshness/direction* (age tint + heading
-     arrows) and gets `+1` concurrent ping, making her the team's coordinator.
-- **Recommendation:** ship option 2 as her interim specialty so she isn't a no-op, and fold in the
-  "confirm real finds" fiction when the evidence-variety system arrives.
-- **Build cost:** medium (new client clue-read rendering) or deferred.
+Every other specialty is a **scalar or a client render toggle** — no new messages.
+
+### 2.5 Testing
+
+Add to `server/test/` alongside the anti-cheat/sim suite: assignment deals distinct ids; the film-range
+bonus shifts `canFilm`'s threshold; `reviveSecondsMul` changes completion time; flash validation rejects
+out-of-range / no-LOS / no-charge; the envelope honours a per-player stamina cap.
 
 ---
 
-## 4. Suggested build order
+## 3. Base constants (first pass)
 
-1. **Enabling layer:** `Player.specialty` schema field + `SPECIALTIES` server table + random assignment
-   in `startMatch` + client HUD label. Ship with **no** gameplay modifiers first, just identity — proves
-   the pipeline end to end.
-2. **Sam + Wren + Theo** (the scalar-only specialties): revive/stamina, clue-contact/mark, hear-range +
-   filming bonus. All reuse existing systems; no new RPCs.
-3. **Eli's flash** (new RPC) — the first genuinely new mechanic; model it on `dazzle`/`roar`.
-4. **Mara** (interim clue-read) and **Sam's battery sharing** — these ride on other roadmap items
-   (evidence variety, battery pickups); do them alongside those.
+Proposed as a pure shared table. Every number is annotated with the **baseline it modifies** so the
+effect is legible; all are first guesses meant for your feedback and playtest tuning.
 
-Verify per `CLAUDE.md` after each step: `client tsc + vite build`, `server tsc + npm test`, plus a
-two-tab manual pass for feel. Add server-side unit tests for any new validation (e.g. the flash),
-alongside the existing anti-cheat/sim suite in `server/test/`.
+```ts
+// shared/sim/specialties.ts (proposed) — pure; imported by client + server.
+export type SpecialtyId = "analysis" | "photo" | "tracking" | "sound" | "endurance";
 
-## 5. Open questions
+export const CHARACTER_NAME: Record<SpecialtyId, string> = {
+  analysis:  "Dr. Mara Okonkwo",
+  photo:     "Eli Vance",
+  tracking:  "Wren Castellano",
+  sound:     "Theo Park",
+  endurance: "Sam Reyes",
+};
 
-- **Duplicates:** with fewer than five searchers, which specialties get dropped — random, or a fixed
-  priority? With more than five (not currently possible; `maxClients = 6`), allow duplicates?
-- **Lobby choice vs. pure random:** story says random. Do we ever want a pick/lock lobby instead, or
-  random-only?
-- **Balance:** every number here is a first guess. Specialties should be *impactful and always relevant*
-  — each defines a playstyle and shapes the whole match — while still tuned so the team wins on cohesion,
-  not on any single carry.
+export const SPECIALTIES = {
+  // 🔬 Mara — reads the trail, coordinates the team. (Weakest fit to current mechanics — see §4.)
+  analysis: {
+    clueFreshnessRead: true,  // client: age tint + heading arrows on the clue trail
+    pingCap:           2,     // (baseline 1) concurrent stakeout pings
+    pingLifetimeMul:   1.5,   // her pings last longer (PING_LIFETIME 35 -> 52.5s)
+  },
+
+  // 📷 Eli — reach + the flash.
+  photo: {
+    filmRangeMul: 1.25,       // FILM_RANGE 38 -> 47.5m (server); client FILM.range 35 -> 43.75m
+    flash: {
+      range:         22,      // short reach (< dazzle's 40)
+      aimCos:        Math.cos(0.5), // ~29° cone — an aimed shot, a touch tighter than filming
+      dazzleSeconds: 3,       // reuse DAZZLE_SECONDS: locks Bigfoot's roar/grab + cuts its sight
+      revealSeconds: 5,       // Bigfoot sees Eli's position marked for this long (the "here I am")
+      chargesPerNight: 1,     // one flash per night, refills at each nightfall
+    },
+  },
+
+  // 🥾 Wren — the trail specialist.
+  tracking: {
+    clueWindowMul:     1.5,   // MAP.clueWindow 15 -> 22.5s (trail stays visible longer)
+    evidenceSightMul:  2.0,   // MAP.evidenceSight 18 -> 36m (spots clues from farther)
+    footstepVolumeMul: 0.5,   // client audio: half-volume footsteps
+    mark: { cooldownSec: 8, lifetimeSec: 50 }, // team-visible trail marker (~CLUE_LIFETIME 50)
+  },
+
+  // 🎙️ Theo — ears + a filming edge.
+  sound: {
+    hearRangeMul:      1.8,   // MAP.hearRange 35 -> 63m (earlier "in contact" warning)
+    roarDirPersistSec: 10,    // roar-direction indicator lingers on his HUD
+    filmProgressMul:   1.15,  // banks film ~15% faster (server-owned; FILM_SECONDS 3.0 effective ~2.6)
+  },
+
+  // 🩹 Sam — keeps the team standing.
+  endurance: {
+    reviveSecondsMul: 0.6,    // REVIVE_SECONDS 4 -> 2.4s
+    staminaMax:       125,    // (baseline 100) higher ceiling; envelope clamps to this for Sam
+    staminaDrainMul:  0.85,   // sprint/leap/climb cost ~15% less
+    batteryGift: { amount: 50, charges: 1 }, // hand a spare battery (hold-E); needs the hand-off action
+  },
+} as const;
+```
+
+**Systems each specialty pulls on** (so none is a niche perk):
+
+| Character | Always-on effect | New action | Core system it reshapes |
+|---|---|---|---|
+| 🩹 Sam | faster revives, deeper stamina | give battery | revive/incap + stamina/battery economy |
+| 🥾 Wren | longer/wider trail vision, quiet | mark trail | the clue/map trail |
+| 🎙️ Theo | long-range hearing, faster film | — | early-warning + the win condition |
+| 📷 Eli | longer film range | flash (stun+reveal) | the win condition + Bigfoot deterrence |
+| 🔬 Mara | reads clue freshness/heading, more/longer pings | — | trail-reading + team coordination |
+
+---
+
+## 4. Per-character notes & caveats
+
+- **Sam** — cheapest; revive/stamina are scalars over shipped systems. `batteryGift` is the one piece
+  that needs a new hand-off action (and pairs naturally with the roadmap's battery-pickup work).
+- **Wren / Theo** — mostly client presentation + a couple of server-owned scalars (`filmProgressMul`,
+  marks). No fundamentally new mechanics.
+- **Eli** — the `flash` is the only genuinely new **ability RPC**; everything else is a scalar.
+- **Mara** — the loosest fit: there is **no evidence-casting or false-clue mechanic today** (every clue
+  is a genuine Bigfoot track, and film is the only evidence). The story's "confirms the real thing" has
+  nothing to attach to yet. The interim above makes her the **coordinator** (trail-reading + pings) so
+  she's not a no-op; the full "analysis" fantasy lands when non-film evidence exists. **This is the one I
+  most want your steer on.**
+
+---
+
+## 5. Suggested build order
+
+1. **Enabling layer:** `Player.specialty` + `characterName` schema, the shared `SPECIALTIES` table, random
+   deal in `startMatch`, client HUD/name label — **no gameplay modifiers yet**, just identity. Proves the
+   pipeline end to end and is shippable on its own.
+2. **Sam + Wren + Theo** (scalars + one small marks list): revive/stamina, clue-contact/mark, hear-range +
+   film-progress. Reuse existing systems; no new RPCs.
+3. **Eli's flash** (new RPC) — model on `dazzle`/`roar`; add its server-validation test.
+4. **Mara** (interim coordinator) and **Sam's battery hand-off** — ride alongside the evidence-variety and
+   battery-pickup roadmap items.
+
+Verify per `CLAUDE.md` after each step (`client tsc + vite build`, `server tsc + npm test`, two-tab feel
+pass); add a server test for any new validation.
+
+## 6. Decisions for you
+
+- **Mara's interim specialty** — ship the coordinator interpretation now, or leave her identity-only until
+  the evidence-variety system exists to carry the real "analysis" fantasy?
+- **Stamina ceiling** — OK to make the resource envelope's stamina clamp per-player (needed for Sam's
+  `staminaMax 125`), or keep everyone at 100 and give Sam a drain reduction only?
+- **Assignment** — pure random each match (story's intent), or a lobby pick/lock later?
+- **Power level** — do these numbers feel like the "always relevant, still cohesion-first" target, or do
+  you want them pushed harder (bigger effects) or softer?
