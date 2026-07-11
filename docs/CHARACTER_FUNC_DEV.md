@@ -199,13 +199,15 @@ export const SPECIALTIES = {
 
 ## 5. Suggested build order
 
-1. **Enabling layer:** `Player.specialty` + `characterName` schema, the shared `SPECIALTIES` table, random
-   deal in `startMatch`, client HUD/name label, **and the debug persona switch (§2.5)** — **no gameplay
-   modifiers yet**, just identity + the ability to force/switch persona. Proves the pipeline end to end
-   and gives testers the switch before any specialty exists to try.
-2. **Sam + Wren + Theo** (scalars + one small marks list): revive/stamina, clue-contact/mark, hear-range +
-   film-progress. Reuse existing systems; no new RPCs.
-3. **Eli's flash** (new RPC) — model on `dazzle`/`roar`; add its server-validation test.
+1. ✅ **Enabling layer:** `Player.specialty` + `characterName` schema, the shared `SPECIALTIES` table,
+   random deal in `startMatch`, client HUD/name label, **and the debug persona switch (§2.5)** — identity
+   + force/switch persona, no gameplay modifiers.
+2. ✅ **Sam + Wren + Theo:** Sam — revive ×0.6, stamina cap 150 (sim + envelope) dealt full, sprint drain
+   ×0.85; Wren — clue window ×1.5 / evidence sight ×2, quiet footsteps, **team-visible trail mark** (new
+   `marks` list + `mark` RPC + key `G` + map render); Theo — film progress ×1.15, hear range ×1.8,
+   **roar-direction HUD** (lingers 10s). *(Deviations: the stamina drain-mul applies to sprint only —
+   leap/climb benefit indirectly via the deeper pool; Sam's `batteryGift` is deferred to step 4.)*
+3. **Eli's flash** (new RPC) — model on `dazzle`/`roar`; add its server-validation test. *(next)*
 4. **Mara** (interim coordinator) and **Sam's battery hand-off** — ride alongside the evidence-variety and
    battery-pickup roadmap items.
 

@@ -88,6 +88,7 @@ export const filmRangeMul = (id: string) => specNum(id, "filmRangeMul", 1); // E
 export const clueWindowMul = (id: string) => specNum(id, "clueWindowMul", 1); // Wren: 1.5
 export const evidenceSightMul = (id: string) => specNum(id, "evidenceSightMul", 1); // Wren: 2.0
 export const hearRangeMul = (id: string) => specNum(id, "hearRangeMul", 1); // Theo: 1.8
+export const roarDirPersistSec = (id: string) => specNum(id, "roarDirPersistSec", 0); // Theo: 10 (0 = no indicator)
 export const footstepVolumeMul = (id: string) => specNum(id, "footstepVolumeMul", 1); // Wren: 0.5
 
 /** Wren's team-visible trail marker rules (cooldown + lifetime, seconds). */

@@ -30,7 +30,7 @@ import { RemotePlayer } from "../entities/RemotePlayer";
 import {
   climbSupport, nearestCaveIndex, caveEmergePoint, SPECIALTY_IDS,
   staminaMax as staminaMaxFor, staminaDrainMul as staminaDrainMulFor,
-  clueWindowMul, evidenceSightMul, hearRangeMul, reviveMul,
+  clueWindowMul, evidenceSightMul, hearRangeMul, reviveMul, roarDirPersistSec,
 } from "../../../shared/sim";
 import { Input } from "./Input";
 import { Network, SelfInfo, EscalationInfo } from "./Network";
@@ -84,6 +84,8 @@ export class Game {
   private serverTimeOfDay: number | null = null;
   private self: SelfInfo = { status: "active", filmProgress: 0, role: "searcher", slowed: false, dazzled: false, specialty: "", characterName: "" };
   private escStaminaDrain = 1; // latest per-night stamina-drain escalation (composed with specialty in applySpecialtyMods)
+  private roarDirPos: { x: number; z: number } | null = null; // Theo: origin of a recent roar to point at
+  private roarDirUntil = 0; // performance.now()/1000 when the roar-direction indicator expires
   private ended = false;
   private caveCooldown = 0;
   private traveling = false; // suspends local control + move-sends during a cave hop
@@ -215,7 +217,15 @@ export class Game {
     // Host reset us to the lobby — reload back into the waiting room.
     this.net.onReturnToLobby = () => location.reload();
     // Another player's roar, from its real position (carries far: big ref distance, low rolloff).
-    this.net.onRoar = (x, z) => this.audio.playAt("roar", x, z, { volume: 0.95, refDistance: 30, rolloff: 0.7 });
+    this.net.onRoar = (x, z) => {
+      this.audio.playAt("roar", x, z, { volume: 0.95, refDistance: 30, rolloff: 0.7 });
+      // Theo (Sound): remember where it came from and point at it for a while.
+      const persist = roarDirPersistSec(this.self.specialty);
+      if (persist > 0) {
+        this.roarDirPos = { x, z };
+        this.roarDirUntil = performance.now() / 1000 + persist;
+      }
+    };
     this.net.onEscalation = (e) => this.applyEscalation(e);
 
     // Bigfoot abilities: right-click roar, left-click grab a frozen hunter, sprint-key charge, senses.
@@ -472,6 +482,7 @@ export class Game {
 
     this.hud.setBattery(this.player.battery);
     this.hud.setStamina((this.player.stamina / this.player.staminaMax) * 100); // % of this persona's max
+    this.updateRoarDirHud();
     this.hud.setBeam(!this.isBigfoot && this.player.isFlashlightOn); // beam mask + lens grime while lit
 
     // Drive the post FX: moving grain + a vignette that tightens toward the dead of night.
@@ -560,6 +571,24 @@ export class Game {
     this.escStaminaDrain = e.staminaDrainMul;
     this.roarCooldownSec = e.roarCooldownSec;
     this.applySpecialtyMods(); // fold the specialty in on top of the per-night escalation
+  }
+
+  /** Theo (Sound): point the roar indicator toward the last roar's origin, screen-relative, until it expires. */
+  private updateRoarDirHud() {
+    if (!this.roarDirPos) return;
+    if (performance.now() / 1000 >= this.roarDirUntil) {
+      this.roarDirPos = null;
+      this.hud.setRoarDirection(null);
+      return;
+    }
+    const dx = this.roarDirPos.x - this.player.position.x;
+    const dz = this.roarDirPos.z - this.player.position.z;
+    const yaw = this.player.yawAngle;
+    const len = Math.hypot(dx, dz) || 1;
+    // Project onto the camera's forward (-sin,-cos) and right (cos,-sin) axes → screen bearing (0 = ahead).
+    const f = (dx / len) * -Math.sin(yaw) + (dz / len) * -Math.cos(yaw);
+    const r = (dx / len) * Math.cos(yaw) + (dz / len) * -Math.sin(yaw);
+    this.hud.setRoarDirection(Math.atan2(r, f));
   }
 
   /** Compose per-night escalation with the local searcher's specialty into the movement mods. */
