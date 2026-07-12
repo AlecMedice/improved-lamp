@@ -4,6 +4,52 @@ Working list of known issues. Newest first. Remove an entry once it's verified f
 
 ---
 
+## OPEN — Water (lake) doesn't slow players down
+
+**Severity:** medium (mechanic not working as designed)
+**Role affected:** all
+**First reported:** 2026-07-11 (user playtest)
+
+### Symptom
+Wading into the lake plays the water audio correctly, but there's **no movement slowdown** — you
+move through water at full speed. The lake is supposed to slow everyone (searchers heavily,
+Bigfoot less), per the design.
+
+### Where to look (not yet investigated)
+- Slow factors exist in `shared/sim/constants.ts` (`PLAYER.lakeHunterFactor` 0.28,
+  `lakeBigfootFactor` 0.72) and the sim applies them in `shared/sim/movement.ts` via `lakeDepth(x,z)`
+  (`stepPlayer` multiplies `speed` by the lake factor when `lakeDepth > 0`).
+- `lakeDepth` uses `LAKE` (`shared/sim/world.ts`). Likely suspects: the `LAKE` x/z/radius used by the
+  sim doesn't match where the lake mesh is *rendered* (client `Environment`), so `lakeDepth` returns 0
+  at the visible water; or the audio trigger uses a different distance check than the sim. Confirm the
+  sim's `LAKE` footprint lines up with the rendered lake before adjusting factors.
+
+---
+
+## OPEN — Fallen logs should block, not slow
+
+**Severity:** medium (design change — current behaviour is wrong)
+**Role affected:** searchers (logs only slow hunters today)
+**First reported:** 2026-07-11 (user playtest)
+
+### Symptom / desired behaviour
+Fallen logs currently **slow** a hunter who walks into them (`PLAYER.logSlowFactor` 0.35, applied in
+`shared/sim/movement.ts` via `logOverlap`). Desired: a log should be **impassable** — you must
+**jump / vault over it** to cross. No wade-through-slow at all.
+
+### Where to look (not yet investigated)
+- `shared/sim/movement.ts`: the `logOverlap` branch currently does `speed *= lerp(1, logSlowFactor, …)`
+  when grounded and not vaulting. The fix is to treat the log as a **solid collider** (push the player
+  out, like trees) instead of slowing them, while keeping the existing **vault** (`Space`) path so a
+  stamina-gated hop clears it. Vault already sets `vy` and bypasses the slow — that airborne-crossing
+  logic should be preserved; only the grounded "slow instead of block" needs to become "block".
+- Colliders live in `shared/sim/world.ts` (logs are `FALLEN_LOGS`, currently a capsule test, not part
+  of `colliders`). Making them solid means either adding capsule collision to the pushout or converting
+  the slow branch into a movement block. Note: this is shared-sim (client prediction + server authority
+  both run it), so it needs the determinism to stay intact — add/adjust a sim test.
+
+---
+
 ## OPEN — Bigfoot: large dark polygonal blob in view near caves
 
 **Severity:** medium (visual / immersion; not a blocker)
