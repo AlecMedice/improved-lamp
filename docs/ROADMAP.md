@@ -105,10 +105,18 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
   moonlight rims silhouettes at deep night.
 
 ## Phase 7 — Live & deploy ⬜
-- ⬜ Deploy server (Colyseus on a host) + static client (CDN)
-- ⬜ Matchmaking/quick‑play, simple stats
 - ⬜ Accessibility audit, playtest balancing pass
 - ⬜ (Stretch) accounts, cosmetics, additional maps
+- ⚠️ *Superseded for shipping:* the browser + Colyseus deploy (server on a host + static client CDN)
+  is replaced by the Unity/Steam plan below — the target is a downloadable Steam game with
+  host-authoritative relay play (R.E.P.O.-style), not a hosted web build.
+
+## Phase 8 — Unity / Steam migration ⬜ → see [`UNITY_MIGRATION.md`](./UNITY_MIGRATION.md)
+The engine pivot: a downloadable Steam game, host-authoritative with Steam Datagram Relay. Sequenced
+**netcode-first, sim-port-last** (the shared sim is still evolving, so it's frozen and ported only when
+stable). Steps R1–R6 in the migration doc. **R1 (Unity + FishNet + Steam relay "moving cube" slice) is
+scaffolded** in [`unity/`](../unity) — drop-in scripts + setup/test guide to de-risk the relay before
+any game logic moves.
 
 ---
 
