@@ -1,5 +1,5 @@
 import { mulberry32 } from "./rng";
-import { CAVE_GEN } from "./constants";
+import { CAVE, CAVE_GEN } from "./constants";
 
 export type Cave = { x: number; z: number };
 
@@ -20,4 +20,29 @@ export function generateCaves(seed: number): Cave[] {
     if (out.every((c) => Math.hypot(c.x - x, c.z - z) >= CAVE_GEN.minSpacing)) out.push({ x, z });
   }
   return out;
+}
+
+/** Index of a cave whose mouth (x,z) is within `CAVE.triggerRadius`, or -1. One place for client + server. */
+export function nearestCaveIndex(caves: readonly Cave[], x: number, z: number): number {
+  const r2 = CAVE.triggerRadius * CAVE.triggerRadius;
+  for (let i = 0; i < caves.length; i++) {
+    const dx = caves[i].x - x;
+    const dz = caves[i].z - z;
+    if (dx * dx + dz * dz <= r2) return i;
+  }
+  return -1;
+}
+
+/**
+ * Where a traveller emerges from a cave mouth: `CAVE.emergeOffset` metres toward map centre
+ * (outside the boulder horseshoe), facing back into the forest. Shared so the server's authoritative
+ * `caveTravel` and the client's fade-in animation land on the exact same spot + heading.
+ */
+export function caveEmergePoint(cave: Cave): { x: number; z: number; yaw: number } {
+  const dl = Math.hypot(cave.x, cave.z) || 1;
+  return {
+    x: cave.x - (cave.x / dl) * CAVE.emergeOffset,
+    z: cave.z - (cave.z / dl) * CAVE.emergeOffset,
+    yaw: Math.atan2(cave.x, cave.z),
+  };
 }

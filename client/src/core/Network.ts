@@ -12,7 +12,7 @@ type MovePayload = {
   reviving: boolean; reviveTarget: string; // hunter reviving a downed teammate (held action)
 };
 
-export type SelfInfo = { status: string; filmProgress: number; role: string; slowed: boolean; dazzled: boolean };
+export type SelfInfo = { status: string; filmProgress: number; role: string; slowed: boolean; dazzled: boolean; specialty: string; characterName: string };
 
 /** Per-night escalation multipliers, server-authoritative (see GameState). */
 export type EscalationInfo = {
@@ -123,6 +123,8 @@ export class Network {
             role: player.role,
             slowed: player.slowed,
             dazzled: !!player.dazzled,
+            specialty: player.specialty ?? "",
+            characterName: player.characterName ?? "",
           });
         applySelf();
         player.onChange(applySelf);
@@ -136,6 +138,7 @@ export class Network {
         rp.setFilming(player.filming);
         rp.setStatus(player.status);
         rp.setBeingRevived(!!player.beingRevived);
+        rp.setSpecialty(player.specialty ?? "");
       };
       apply();
       player.onChange(apply);
@@ -247,6 +250,19 @@ export class Network {
     return out;
   }
 
+  /** Live trail-marker positions from shared state — shown on the hunters' map. */
+  getMarks(): Array<{ x: number; z: number }> {
+    const out: Array<{ x: number; z: number }> = [];
+    const marks = (this.room?.state as any)?.marks;
+    if (marks) for (const m of marks) out.push({ x: m.x, z: m.z });
+    return out;
+  }
+
+  /** Wren drops a team-visible trail marker at her feet (server gates it to the specialty + cooldown). */
+  sendMark() {
+    this.room?.send("mark");
+  }
+
   /** Hunter drops a stakeout ping at a world (x,z). */
   sendPing(x: number, z: number) {
     this.room?.send("ping", { x, z });
@@ -268,6 +284,11 @@ export class Network {
   }
 
   /** Bigfoot asks the server to fast-travel to cave `index` (server validates + is authoritative). */
+  /** Debug only: hot-swap the local searcher's persona (server rejects unless ALLOW_DEV_ROLE). */
+  sendDebugSetSpecialty(id: string) {
+    this.room?.send("debugSetSpecialty", { id });
+  }
+
   sendCaveTravel(index: number) {
     this.room?.send("caveTravel", { index });
   }

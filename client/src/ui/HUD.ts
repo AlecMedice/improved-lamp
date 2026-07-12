@@ -25,6 +25,28 @@ export class HUD {
     this.el("clock").textContent = clockTime(timeOfDay);
   }
 
+  /** Show the local searcher's assigned character (name + specialty). Pass empty to hide (Bigfoot/unassigned). */
+  setPersona(characterName: string, specialty: string) {
+    const pill = this.el("persona");
+    if (characterName) {
+      pill.textContent = specialty ? `${characterName} · ${specialty}` : characterName;
+      pill.style.display = "";
+    } else {
+      pill.style.display = "none";
+    }
+  }
+
+  /** Theo (Sound): a lingering arrow pointing toward a recent roar's origin (screen-relative). Pass null to hide. */
+  setRoarDirection(angleRad: number | null) {
+    const el = this.el("roar-dir");
+    if (angleRad === null) {
+      el.style.display = "none";
+      return;
+    }
+    el.style.display = "flex";
+    this.el("roar-dir-arrow").style.transform = `rotate(${angleRad}rad)`;
+  }
+
   /** Show role-appropriate objective text and hide the filming UI for Bigfoot. */
   setRole(role: string) {
     const bigfoot = role === "bigfoot";

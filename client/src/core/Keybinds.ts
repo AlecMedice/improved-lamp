@@ -1,7 +1,7 @@
 /** Rebindable actions and their key bindings, persisted to localStorage. Consumed by Input. */
 export const ACTIONS = [
   "forward", "back", "left", "right", "jump", "sprint",
-  "crouch", "flashlight", "map", "ping", "interact", "senses",
+  "crouch", "flashlight", "map", "ping", "interact", "senses", "mark",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -19,11 +19,13 @@ export const ACTION_LABELS: Record<Action, string> = {
   ping: "Stakeout ping",
   interact: "Revive / interact",
   senses: "Senses overlay",
+  mark: "Mark trail (Tracker)",
 };
 
 const DEFAULTS: Record<Action, string> = {
   forward: "KeyW", back: "KeyS", left: "KeyA", right: "KeyD", jump: "Space", sprint: "ShiftLeft",
   crouch: "ControlLeft", flashlight: "KeyF", map: "KeyM", ping: "KeyQ", interact: "KeyE", senses: "KeyV",
+  mark: "KeyG",
 };
 
 const KEY = "hollowpines.keybinds";

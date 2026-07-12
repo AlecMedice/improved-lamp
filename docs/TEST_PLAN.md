@@ -33,7 +33,14 @@ page — don't open it in a browser. Confirm the server is healthy with `curl ht
 ## 3. Stand up six players in tabs
 
 Each browser tab = one player. Roles are assigned by the server when the host starts, but you can force a
-tab's role with the **`?devRole=`** query param so you always get a known 1‑Bigfoot / 5‑searcher split:
+tab's role with the **`?devRole=`** query param so you always get a known 1‑Bigfoot / 5‑searcher split.
+
+> **The server only honours `devRole` when it's allowed to** — it's a test backdoor, gated off in
+> production. It's on automatically in dev (`npm run dev`, i.e. `NODE_ENV !== "production"`). If you run a
+> production build, start the server with **`ALLOW_DEV_ROLE=1`** to re‑enable it for testing:
+> ```bash
+> ALLOW_DEV_ROLE=1 NIGHT_SECONDS=60 npm start
+> ```
 
 | Tab | URL | Becomes |
 |-----|-----|---------|
@@ -84,11 +91,11 @@ Start solo to walk the world.
 Tick these off; each line is one observable behaviour.
 
 ### Movement & world (either role, offline‑OK)
-- [ ] WASD moves, mouse looks, sprint is faster, crouch lowers + slows you.
-- [ ] You can't walk through tree trunks, the RV, the tower, or cave boulders (pushed out, no phasing).
-- [ ] Terrain height is followed (you walk up/down slopes, never sink or float).
-- [ ] Fallen logs **slow searchers**; **Space vaults** a log (stamina cost) and negates the slow.
-- [ ] Wading into the lake slows you; the creek is audible as you approach.
+- [x] WASD moves, mouse looks, sprint is faster, crouch lowers + slows you.
+- [x] You can't walk through tree trunks, the RV, the tower, or cave boulders (pushed out, no phasing).
+- [x] Terrain height is followed (you walk up/down slopes, never sink or float).
+- [~] Fallen logs **slow searchers**; **Space vaults** a log (stamina cost) and negates the slow.
+- [~] Wading into the lake slows you; the creek is audible as you approach.
 
 ### Networking (server up, ≥2 tabs)
 - [ ] A second player appears as an avatar and moves smoothly (interpolated, no teleport jitter).
@@ -137,6 +144,10 @@ Tick these off; each line is one observable behaviour.
 ## 6. Handy dev shortcuts
 - `NIGHT_SECONDS=20 npm run dev` (server) — very short nights to reach night‑2/3 escalation + win/loss fast.
 - `?devRole=bigfoot|searcher` — deterministic role per tab. First `devRole=bigfoot` request wins.
+- `?devSpecialty=tracking|photo|sound|endurance|analysis` *(planned — ships with the character system,
+  see `docs/CHARACTER_FUNC_DEV.md`)* — force which searcher persona this tab plays instead of the random
+  deal, so you can test one character's specialty on demand. Gated by `ALLOW_DEV_ROLE` like `?devRole`.
+  A debug hot‑swap key (cycle personas mid‑match) is planned alongside it for trying all five in one run.
 - `?perf` — perf overlay + `window.__perf()`.
 - `window.__previewAvatars()` (any `?perf`/tab, in the console) — drops a hunter + Bigfoot in front of the
   camera for a close‑up art/proportion check without staging a whole match.

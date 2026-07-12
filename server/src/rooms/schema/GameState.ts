@@ -5,6 +5,11 @@ export class Player extends Schema {
   @type("string") role = "searcher"; // "searcher" | "bigfoot"
   @type("string") name = "Searcher";
 
+  // Character specialty, dealt at match start (searchers only; "" = Bigfoot/unassigned). See
+  // shared/sim/specialties.ts + docs/CHARACTER_FUNC_DEV.md. `characterName` is the display name.
+  @type("string") specialty = "";
+  @type("string") characterName = "";
+
   // Transform (client-sent, server-clamped in v1; see ROADMAP Phase 2 for full authority).
   // y is the player's FEET height (terrain height), so avatars sit on the ground for everyone.
   @type("number") x = 0;
@@ -44,11 +49,19 @@ export class Ping extends Schema {
   @type("number") z = 0;
 }
 
+/** A team-visible trail marker Wren (Tracking specialty) drops; expires after a lifetime. */
+export class Mark extends Schema {
+  @type("string") id = "";
+  @type("number") x = 0;
+  @type("number") z = 0;
+}
+
 /** Authoritative match state, replicated to all clients. */
 export class GameState extends Schema {
   @type({ map: Player }) players = new MapSchema<Player>();
   @type([Clue]) clues = new ArraySchema<Clue>();
   @type([Ping]) pings = new ArraySchema<Ping>();
+  @type([Mark]) marks = new ArraySchema<Mark>();
 
   // Match lifecycle.
   @type("string") matchPhase = "lobby"; // "lobby" | "playing" | "results"

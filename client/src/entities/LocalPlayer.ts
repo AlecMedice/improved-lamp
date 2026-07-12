@@ -25,7 +25,8 @@ export class LocalPlayer {
   // Per-night escalation (set by Game from server-replicated multipliers; 1 = night-1 baseline).
   nightSpeedMul = 1; // Bigfoot grows faster on later nights (hunters stay 1)
   batteryDrainMul = 1; // flashlight drains faster on later nights
-  staminaDrainMul = 1; // sprinting tires you faster on later nights
+  staminaDrainMul = 1; // sprinting tires you faster on later nights (× Sam's Endurance reduction)
+  staminaMax = 100; // per-player stamina ceiling (Sam's Endurance raises it to 150)
 
   /** Authoritative-shaped physics state, advanced by the shared stepPlayer. */
   readonly sim: PlayerSimState;
@@ -173,6 +174,7 @@ export class LocalPlayer {
       speedMul: this.externalSpeedMul * this.nightSpeedMul * this.chargeMul,
       batteryDrainMul: this.batteryDrainMul,
       staminaDrainMul: this.staminaDrainMul,
+      staminaMax: this.staminaMax,
     };
     const res = stepPlayer(this.sim, cmd, this.world, mods);
     this.applyPresentation(dt, cmd, res);

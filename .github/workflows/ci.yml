@@ -2,7 +2,8 @@ name: CI
 
 # Runs the same gates as CLAUDE.md's "verify your work" section on every PR and on
 # pushes to main: the client typechecks + bundles, and the server typechecks (which
-# also guards shared/ purity, since shared/sim is imported by both sides).
+# also guards shared/ purity, since shared/sim is imported by both sides) and runs the
+# vitest suite (shared-sim determinism + server anti-cheat helpers).
 on:
   push:
     branches: [main]
@@ -26,7 +27,7 @@ jobs:
       - run: npm run build # tsc --noEmit && vite build
 
   server:
-    name: server — typecheck
+    name: server — typecheck + test
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -40,3 +41,4 @@ jobs:
           cache-dependency-path: server/package-lock.json
       - run: npm ci
       - run: npm run typecheck # tsc --noEmit (also guards shared/ purity)
+      - run: npm test # vitest run (sim determinism + anti-cheat validation)

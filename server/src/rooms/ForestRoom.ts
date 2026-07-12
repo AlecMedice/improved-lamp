@@ -1,6 +1,15 @@
 import { Room, Client } from "@colyseus/core";
-import { GameState, Player, Clue, Ping } from "./schema/GameState";
-import { WORLD, PLAYER, CAVE, generateCaves, makeWorld, resolveCollision, lineBlocked, climbSupport } from "../../../shared/sim";
+import { GameState, Player, Clue, Ping, Mark } from "./schema/GameState";
+import {
+  WORLD, PLAYER, CAVE, CLUE_LIFETIME, generateCaves, makeWorld, resolveCollision, lineBlocked, climbSupport,
+  nearestCaveIndex, caveEmergePoint, dealSpecialties, CHARACTER_NAME, isSpecialtyId, type SpecialtyId,
+  reviveMul, staminaMax, filmProgressMul, TRACKING_MARK,
+} from "../../../shared/sim";
+import { refillAllowance, gateStep, staminaCeiling, filmVisible } from "./antiCheat";
+
+// dev-role URL override (?devRole=bigfoot) is a test convenience — never trust it in production.
+// Honor it only when explicitly allowed, or outside a production build.
+const ALLOW_DEV_ROLE = process.env.ALLOW_DEV_ROLE === "1" || process.env.NODE_ENV !== "production";
 
 // --- Night / match structure ---
 // One night runs 8pm -> 8am in this many real seconds. Overridable via env for quick test matches.
@@ -11,15 +20,16 @@ const WORLD_HALF = WORLD.size / 2; // ±400 on x/z
 // --- Clue (hint) framework tuning ---
 const STRIDE = 2.4; // metres Bigfoot travels between dropped footprints
 const BRANCH_CHANCE = 0.18; // chance a footstep also snaps a nearby branch
-const CLUE_LIFETIME = 50; // seconds before a track goes cold and disappears
 const MAX_CLUES = 80; // hard cap on live clues
 
 // --- Hunter ping (stakeout markers) tuning ---
 const PING_LIFETIME = 35; // seconds a ping stays before fading off the map
 const MAX_PINGS = 12; // hard cap (one per hunter, but stay safe)
+const MAX_MARKS = 24; // hard cap on Wren's live trail markers (lifetime is TRACKING_MARK.lifetimeSec)
 
 // --- Filming (hunters win) tuning ---
 const FILM_RANGE = 38; // server sanity range a hunter can film Bigfoot from
+const FILM_AIM_COS = Math.cos(0.6); // hunter must be facing within ~34 deg of Bigfoot (generous vs the client's 18 deg 3D cone, since we only have yaw)
 const FILM_SECONDS = 3.0; // seconds of Bigfoot-in-frame = one solid video
 const FILM_DECAY = 0.5; // how fast an interrupted clip drains (fraction/sec)
 
@@ -78,9 +88,14 @@ const CAVES = generateCaves(WORLD.seed);
 // The client predicts movement locally and streams its result; the server re-validates each move
 // against the shared world and corrects out-of-bounds results (phasing through trees, teleporting).
 const SPEED_GATE_MARGIN = 1.6; // generous headroom over sprint speed (diagonal + downhill + jitter)
-const SPEED_GATE_BASE = 2.0; // metres of always-allowed slack per move (covers bursts / first move)
+// Distance allowance is a token bucket refilled at max speed and capped at this burst, so spamming
+// many tiny moves can't earn free speed (an old per-message flat slack did — see applyMove).
+const SPEED_GATE_BURST = 3.0; // metres of accumulated slack the bucket can hold (covers first move / jitter)
 const Y_BELOW_TOL = 1.0; // how far below terrain a feet-y may sit (sampling slop) before clamping
-const Y_ABOVE_TOL = 3.75; // how far above terrain a feet-y may sit (covers Bigfoot's leap apex ~2.82 m + headroom)
+// How far above terrain a feet-y may sit — derived from the leap apex so it can't silently drift if
+// leapSpeed/gravity change: apex = v^2 / 2g, plus headroom for sampling slop.
+const Y_ABOVE_TOL = (PLAYER.leapSpeed * PLAYER.leapSpeed) / (2 * PLAYER.gravity) + 0.9; // ~3.72 m
+const STAMINA_SLACK = 2; // points of stamina-regen slack per move (jitter/rounding) in the resource envelope
 
 type FilmFlag = { recording: boolean; inView: boolean };
 
@@ -98,11 +113,16 @@ export class ForestRoom extends Room<GameState> {
   private lastTrack = new Map<string, { x: number; z: number }>(); // bigfoot sid -> last footprint
   private filmFlags = new Map<string, FilmFlag>(); // hunter sid -> live recording flags
   private lastMoveMs = new Map<string, number>(); // sid -> Date.now() of last accepted move (speed gate)
+  private moveAllowance = new Map<string, number>(); // sid -> distance token bucket (metres) for the speed gate
   private caveReadyAt = new Map<string, number>(); // bigfoot sid -> elapsed when cave travel is ready
 
   private pingSeq = 0;
   private pingAge = new Map<string, number>(); // ping id -> elapsed when created
   private pingOwner = new Map<string, string>(); // hunter sid -> their current ping id
+
+  private markSeq = 0;
+  private markAge = new Map<string, number>(); // mark id -> elapsed when created (Wren's trail markers)
+  private markReadyAt = new Map<string, number>(); // sid -> elapsed when the next mark is allowed (cooldown)
 
   private roarReadyAt = new Map<string, number>(); // bigfoot sid -> elapsed when roar is ready
   private frozenUntil = new Map<string, number>(); // hunter sid -> elapsed when freeze ends
@@ -116,9 +136,13 @@ export class ForestRoom extends Room<GameState> {
   private chargingUntil = new Map<string, number>(); // bigfoot sid -> elapsed while a charge burst is active
   private chargeReadyAt = new Map<string, number>(); // bigfoot sid -> elapsed when the next charge is ready
   private devRoles = new Map<string, string>(); // sid -> "bigfoot"|"searcher" (dev URL param override)
+  private devSpecialties = new Map<string, SpecialtyId>(); // sid -> forced specialty (dev ?devSpecialty override)
 
   onCreate() {
     this.setState(new GameState());
+    this.state.totalNights = TOTAL_NIGHTS; // the schema default + this constant are the same knob; publish it once
+
+    if (!ALLOW_DEV_ROLE) console.log("ForestRoom: devRole override disabled (set ALLOW_DEV_ROLE=1 to enable).");
 
     // Clients predict + stream their transform; the server re-validates and corrects (server-authoritative).
     this.onMessage("move", (client, data: any) => {
@@ -126,11 +150,22 @@ export class ForestRoom extends Room<GameState> {
       const p = this.state.players.get(client.sessionId);
       if (!p || p.status !== "active" || !data) return; // frozen/incapacitated players don't self-move
 
+      // Elapsed since this player's last accepted move — the regen budget for the resource envelope
+      // (read before applyMove updates lastMoveMs; both see the same previous timestamp).
+      const now = Date.now();
+      const dtSec = Math.min(1, Math.max(0, (now - (this.lastMoveMs.get(client.sessionId) ?? now)) / 1000));
+
       this.applyMove(client.sessionId, p, data); // bounds + speed gate + collision + terrain feet
       p.ry = num(data.ry, p.ry); // camera aim is trusted (standard for FPS netcode)
       if (typeof data.flashlightOn === "boolean") p.flashlightOn = data.flashlightOn;
-      p.battery = clamp(num(data.battery, p.battery), 0, 100);
-      p.stamina = clamp(num(data.stamina, p.stamina), 0, 100);
+
+      // Resource envelope (anti-cheat): the client simulates drain/regen, but the server bounds what it
+      // may report. Battery never regenerates (no pickups yet), so it can only decrease; a dead battery
+      // forces the light off. Stamina may regen, but no faster than the sim's regen rate.
+      p.battery = clamp(Math.min(num(data.battery, p.battery), p.battery), 0, 100);
+      if (p.battery <= 0) p.flashlightOn = false;
+      const maxStamina = staminaCeiling(p.stamina, PLAYER.staminaRegenPerSec, dtSec, STAMINA_SLACK);
+      p.stamina = clamp(Math.min(num(data.stamina, p.stamina), maxStamina), 0, staminaMax(p.specialty));
 
       const flag = this.filmFlags.get(client.sessionId) ?? { recording: false, inView: false };
       flag.recording = !!data.recording;
@@ -151,16 +186,16 @@ export class ForestRoom extends Room<GameState> {
       if (!p || p.role !== "bigfoot" || p.status !== "active" || !data) return;
       const dest = Number(data.index);
       if (!Number.isInteger(dest) || dest < 0 || dest >= CAVES.length) return;
-      const here = this.nearestCaveIndex(p.x, p.z); // must be standing in *some* mouth
+      const here = nearestCaveIndex(CAVES, p.x, p.z); // must be standing in *some* mouth
       if (here < 0 || here === dest) return;
       if (this.elapsed < (this.caveReadyAt.get(client.sessionId) ?? 0)) return; // cooldown
       this.caveReadyAt.set(client.sessionId, this.elapsed + CAVE.travelCooldown);
-      const c = CAVES[dest];
-      const dl = Math.hypot(c.x, c.z) || 1;
-      p.x = c.x - (c.x / dl) * 8; // emerge 8 m toward map centre (outside the boulder horseshoe)
-      p.z = c.z - (c.z / dl) * 8;
+      const emerge = caveEmergePoint(CAVES[dest]); // shared: same spot + heading the client fades in to
+      p.x = emerge.x;
+      p.z = emerge.z;
       p.y = this.world.getHeight(p.x, p.z);
-      this.lastMoveMs.set(client.sessionId, Date.now()); // reset the speed gate around the jump
+      p.ry = emerge.yaw; // face back into the forest, matching the client's exit yaw
+      this.resetSpeedGate(client.sessionId); // don't clamp the jump as a speedhack
     });
 
     // Hunters drop a stakeout ping (from the map or where they stand). One per hunter.
@@ -170,6 +205,15 @@ export class ForestRoom extends Room<GameState> {
       const x = clamp(num(data.x, 0), -WORLD_HALF, WORLD_HALF);
       const z = clamp(num(data.z, 0), -WORLD_HALF, WORLD_HALF);
       this.addPing(client.sessionId, x, z);
+    });
+
+    // Wren (Tracking) drops a team-visible trail marker at her feet. Server-gated to the specialty + cooldown.
+    this.onMessage("mark", (client) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p || p.specialty !== "tracking" || p.status !== "active") return;
+      if (this.elapsed < (this.markReadyAt.get(client.sessionId) ?? 0)) return; // cooldown
+      this.markReadyAt.set(client.sessionId, this.elapsed + TRACKING_MARK.cooldownSec);
+      this.addMark(p.x, p.z);
     });
 
     // Bigfoot roars: freezes every active hunter within ROAR_RADIUS for FREEZE_SECONDS.
@@ -267,6 +311,7 @@ export class ForestRoom extends Room<GameState> {
         this.spawnPlayer(p);
       });
       this.resetMatchState();
+      this.assignSpecialties(); // deal a random (distinct) character to each searcher
       this.state.matchPhase = "playing";
       console.log(`Match started by ${client.sessionId}; Bigfoot = ${bigfootSid ?? "(solo)"}.`);
     });
@@ -276,6 +321,19 @@ export class ForestRoom extends Room<GameState> {
       if (client.sessionId !== this.state.hostId || this.state.matchPhase !== "results") return;
       this.resetMatchState();
       this.state.matchPhase = "lobby";
+    });
+
+    // Debug: hot-swap the caller's character mid-match so a tester can feel all five in one run.
+    // Test convenience only — gated behind ALLOW_DEV_ROLE like ?devRole/?devSpecialty (off in production).
+    this.onMessage("debugSetSpecialty", (client, data: any) => {
+      if (!ALLOW_DEV_ROLE || this.state.matchPhase !== "playing") return;
+      const p = this.state.players.get(client.sessionId);
+      if (!p || p.role === "bigfoot") return;
+      const id = data?.id;
+      if (!isSpecialtyId(id)) return;
+      p.specialty = id;
+      p.characterName = CHARACTER_NAME[id];
+      this.devSpecialties.set(client.sessionId, id); // sticks across a re-deal within the session
     });
 
     this.setSimulationInterval((dt) => this.update(dt), 1000 / 20);
@@ -292,7 +350,9 @@ export class ForestRoom extends Room<GameState> {
     this.filmFlags.set(client.sessionId, { recording: false, inView: false });
     if (this.state.hostId === "") this.state.hostId = client.sessionId;
     const devRole = options?.devRole;
-    if (devRole === "bigfoot" || devRole === "searcher") this.devRoles.set(client.sessionId, devRole);
+    if (ALLOW_DEV_ROLE && (devRole === "bigfoot" || devRole === "searcher")) this.devRoles.set(client.sessionId, devRole);
+    const devSpecialty = options?.devSpecialty;
+    if (ALLOW_DEV_ROLE && isSpecialtyId(devSpecialty)) this.devSpecialties.set(client.sessionId, devSpecialty);
     console.log(`${client.sessionId} joined the lobby (${this.clients.length}/${this.maxClients}).`);
   }
 
@@ -332,8 +392,11 @@ export class ForestRoom extends Room<GameState> {
     this.chargingUntil.delete(sid);
     this.chargeReadyAt.delete(sid);
     this.lastMoveMs.delete(sid);
+    this.moveAllowance.delete(sid);
+    this.markReadyAt.delete(sid);
     this.caveReadyAt.delete(sid);
     this.devRoles.delete(sid);
+    this.devSpecialties.delete(sid);
     // If a leaving Bigfoot was dragging hunters, free them (they stay incapacitated in place).
     for (const [hsid, bsid] of this.grabbedBy) if (bsid === sid) this.grabbedBy.delete(hsid);
     // Drop any revive intent aimed at the leaver (their target vanished).
@@ -348,11 +411,9 @@ export class ForestRoom extends Room<GameState> {
   /** Place a player at their role's start point. */
   private spawnPlayer(p: Player) {
     if (p.role === "bigfoot") {
-      const cave = CAVES[Math.floor(Math.random() * CAVES.length)];
-      const dl = Math.hypot(cave.x, cave.z) || 1;
-      // 8 m toward map centre — outside the boulder horseshoe (boulders extend ~3–4 m).
-      p.x = cave.x - (cave.x / dl) * 8;
-      p.z = cave.z - (cave.z / dl) * 8;
+      const emerge = caveEmergePoint(CAVES[Math.floor(Math.random() * CAVES.length)]);
+      p.x = emerge.x; // outside the boulder horseshoe (boulders extend ~3–4 m)
+      p.z = emerge.z;
     } else {
       p.x = (Math.random() - 0.5) * 8;
       p.z = 18 + (Math.random() - 0.5) * 4;
@@ -362,6 +423,26 @@ export class ForestRoom extends Room<GameState> {
     p.slowed = false;
     p.filming = false;
     p.filmProgress = 0;
+  }
+
+  /** Deal each searcher a random (distinct) character specialty; honour any ?devSpecialty forces. Bigfoot gets none. */
+  private assignSpecialties() {
+    const searcherSids: string[] = [];
+    this.state.players.forEach((p, sid) => { if (p.role !== "bigfoot") searcherSids.push(sid); });
+    const forced: Record<string, SpecialtyId | undefined> = {};
+    for (const sid of searcherSids) forced[sid] = this.devSpecialties.get(sid);
+    const deal = dealSpecialties(searcherSids, forced, Math.random);
+    this.state.players.forEach((p, sid) => {
+      const id = deal[sid];
+      if (p.role === "bigfoot" || !id) {
+        p.specialty = "";
+        p.characterName = "";
+      } else {
+        p.specialty = id;
+        p.characterName = CHARACTER_NAME[id];
+        p.stamina = staminaMax(id); // start with the full (per-persona) reserve — Sam gets 150
+      }
+    });
   }
 
   // --- Movement validation (server-authoritative) ----------------------------
@@ -376,20 +457,20 @@ export class ForestRoom extends Room<GameState> {
     let rx = clamp(num(data.x, p.x), -WORLD_HALF, WORLD_HALF);
     let rz = clamp(num(data.z, p.z), -WORLD_HALF, WORLD_HALF);
 
-    // Max-displacement gate, relative to this player's last accepted position.
+    // Max-displacement gate: a token bucket of travel distance, refilled at this player's max speed and
+    // capped at SPEED_GATE_BURST. Charging the bucket over *time* (not granting a flat slack per message)
+    // means spamming many tiny moves can't accumulate free distance — total travel stays speed-bounded.
     const now = Date.now();
     const last = this.lastMoveMs.get(sid) ?? now;
     const dtSec = Math.min(1, Math.max(0, (now - last) / 1000)); // clamp; a long gap isn't travel budget
     this.lastMoveMs.set(sid, now);
-    const allowed = this.maxSpeedFor(sid, p) * dtSec + SPEED_GATE_BASE;
-    const dx = rx - p.x;
-    const dz = rz - p.z;
-    const dist = Math.hypot(dx, dz);
-    if (dist > allowed && dist > 1e-6) {
-      const k = allowed / dist; // pull the step back along the requested direction
-      rx = p.x + dx * k;
-      rz = p.z + dz * k;
-    }
+    const budget = refillAllowance(
+      this.moveAllowance.get(sid) ?? SPEED_GATE_BURST, this.maxSpeedFor(sid, p), dtSec, SPEED_GATE_BURST
+    );
+    const gated = gateStep(p.x, p.z, rx, rz, budget);
+    rx = gated.x;
+    rz = gated.z;
+    this.moveAllowance.set(sid, budget - gated.spent);
 
     // Push out of any tree / RV / cave boulder / tower the client tried to occupy. Climb-aware for
     // Bigfoot only: at/above a climbable's top it isn't pushed out (standing on it, not through it).
@@ -420,19 +501,16 @@ export class ForestRoom extends Room<GameState> {
     return PLAYER.sprintSpeed * roleMul * chargeMul * SPEED_GATE_MARGIN;
   }
 
-  /** Index of a cave whose mouth (x,z) is within, or -1. */
-  private nearestCaveIndex(x: number, z: number): number {
-    const r2 = CAVE.triggerRadius * CAVE.triggerRadius;
-    for (let i = 0; i < CAVES.length; i++) {
-      const dx = CAVES[i].x - x;
-      const dz = CAVES[i].z - z;
-      if (dx * dx + dz * dz <= r2) return i;
-    }
-    return -1;
+  /** Reset the movement speed gate around a legitimate server-side teleport (cave jump, spawn). */
+  private resetSpeedGate(sid: string) {
+    this.lastMoveMs.set(sid, Date.now());
+    this.moveAllowance.set(sid, SPEED_GATE_BURST);
   }
 
   /** Clear the night clock, footage, clues, pings, and all status timers for a fresh match. */
   private resetMatchState() {
+    // Clear dealt personas (startMatch re-deals after this; returnToLobby leaves the lobby persona-less).
+    this.state.players.forEach((p) => { p.specialty = ""; p.characterName = ""; });
     this.state.winner = "";
     this.state.nightNumber = 1;
     this.state.timeOfDay = 0;
@@ -442,10 +520,13 @@ export class ForestRoom extends Room<GameState> {
     this.nightElapsed = 0;
     this.state.clues.clear();
     this.state.pings.clear();
+    this.state.marks.clear();
     this.clueAge.clear();
     this.lastTrack.clear();
     this.pingAge.clear();
     this.pingOwner.clear();
+    this.markAge.clear();
+    this.markReadyAt.clear();
     this.roarReadyAt.clear();
     this.frozenUntil.clear();
     this.incapUntil.clear();
@@ -458,6 +539,7 @@ export class ForestRoom extends Room<GameState> {
     this.chargingUntil.clear();
     this.chargeReadyAt.clear();
     this.lastMoveMs.clear();
+    this.moveAllowance.clear();
     this.caveReadyAt.clear();
   }
 
@@ -479,7 +561,7 @@ export class ForestRoom extends Room<GameState> {
     this.state.phase = phaseFor(this.state.timeOfDay);
     let nightsComplete = false;
     if (this.state.timeOfDay >= 1) {
-      if (this.state.nightNumber < TOTAL_NIGHTS) {
+      if (this.state.nightNumber < this.state.totalNights) {
         this.state.nightNumber++;
         this.nightElapsed = 0;
         this.state.timeOfDay = 0;
@@ -505,6 +587,7 @@ export class ForestRoom extends Room<GameState> {
     this.dropClues(bigfoots);
     this.expireClues();
     this.expirePings();
+    this.expireMarks();
     this.updateRevives(dt);
     this.updateStatuses();
     this.updateDazzle(dt, hunters, bigfoots);
@@ -529,7 +612,7 @@ export class ForestRoom extends Room<GameState> {
 
       const prog = (this.reviveProgress.get(targetSid) ?? 0) + dt;
       revivedThisTick.add(targetSid);
-      if (prog >= REVIVE_SECONDS) {
+      if (prog >= REVIVE_SECONDS * reviveMul(reviver.specialty)) { // Sam (Endurance) revives faster
         target.status = "active"; // freed early — same post-incap recovery as a natural wake-up
         this.incapUntil.delete(targetSid);
         this.grabbedBy.delete(targetSid);
@@ -745,18 +828,49 @@ export class ForestRoom extends Room<GameState> {
     }
   }
 
+  // --- Trail marks (Wren) ----------------------------------------------------
+
+  private addMark(x: number, z: number) {
+    if (this.state.marks.length >= MAX_MARKS) {
+      const old = this.state.marks.shift();
+      if (old) this.markAge.delete(old.id);
+    }
+    const m = new Mark();
+    m.id = "m" + this.markSeq++;
+    m.x = x;
+    m.z = z;
+    this.state.marks.push(m);
+    this.markAge.set(m.id, this.elapsed);
+  }
+
+  private expireMarks() {
+    for (let i = this.state.marks.length - 1; i >= 0; i--) {
+      const mark = this.state.marks[i];
+      if (!mark) continue;
+      const born = this.markAge.get(mark.id) ?? this.elapsed;
+      if (this.elapsed - born > TRACKING_MARK.lifetimeSec) {
+        this.state.marks.splice(i, 1);
+        this.markAge.delete(mark.id);
+      }
+    }
+  }
+
   // --- Filming ---------------------------------------------------------------
 
-  /** Accrue footage while a hunter records Bigfoot in-frame and within range. */
+  /**
+   * Accrue footage while a hunter records Bigfoot in-frame and within range. The client's `inView` is
+   * only a cheap early-out / HUD hint — the server independently recomputes visibility (range + aim cone
+   * from the replicated yaw + line-of-sight), so a modified client can't bank footage through walls or
+   * while facing away. This mirrors `updateDazzle`'s server-authoritative beam check.
+   */
   private updateFilming(dt: number, hunters: Array<{ sid: string; p: Player }>, bigfoots: Array<{ sid: string; p: Player }>) {
     for (const { sid, p } of hunters) {
       if (p.status !== "active") continue;
       const flag = this.filmFlags.get(sid);
-      const inRange = bigfoots.some(({ p: b }) => withinRange(p, b, FILM_RANGE));
-      const gaining = !!flag?.recording && !!flag?.inView && inRange;
+      const gaining = !!flag?.recording && bigfoots.some(({ p: b }) => this.canFilm(p, b));
 
       if (gaining) {
-        p.filmProgress += dt / FILM_SECONDS;
+        p.filmProgress += (dt / FILM_SECONDS) * filmProgressMul(p.specialty); // Theo (Sound) banks faster
         if (p.filmProgress >= 1) {
           p.filmProgress = 0;
           this.state.videosCaptured++;
@@ -765,6 +879,11 @@ export class ForestRoom extends Room<GameState> {
         p.filmProgress = Math.max(0, p.filmProgress - dt * FILM_DECAY);
       }
     }
+  }
+
+  /** Server-authoritative visibility for filming (range + aim cone + line-of-sight); see antiCheat.filmVisible. */
+  private canFilm(h: Player, bf: Player): boolean {
+    return filmVisible(this.world.colliders, h.x, h.z, h.ry, bf.x, bf.z, FILM_RANGE, FILM_AIM_COS);
   }
 }
 

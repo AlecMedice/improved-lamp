@@ -27,7 +27,11 @@ import { ClueField } from "../world/ClueField";
 import { PingField } from "../world/PingField";
 import { LocalPlayer } from "../entities/LocalPlayer";
 import { RemotePlayer } from "../entities/RemotePlayer";
-import { climbSupport } from "../../../shared/sim";
+import {
+  climbSupport, nearestCaveIndex, caveEmergePoint, SPECIALTY_IDS,
+  staminaMax as staminaMaxFor, staminaDrainMul as staminaDrainMulFor,
+  clueWindowMul, evidenceSightMul, hearRangeMul, reviveMul, roarDirPersistSec,
+} from "../../../shared/sim";
 import { Input } from "./Input";
 import { Network, SelfInfo, EscalationInfo } from "./Network";
 import { Room } from "colyseus.js";
@@ -78,7 +82,10 @@ export class Game {
   private sendAccum = 0;
   private timeOfDay = 0;
   private serverTimeOfDay: number | null = null;
-  private self: SelfInfo = { status: "active", filmProgress: 0, role: "searcher", slowed: false, dazzled: false };
+  private self: SelfInfo = { status: "active", filmProgress: 0, role: "searcher", slowed: false, dazzled: false, specialty: "", characterName: "" };
+  private escStaminaDrain = 1; // latest per-night stamina-drain escalation (composed with specialty in applySpecialtyMods)
+  private roarDirPos: { x: number; z: number } | null = null; // Theo: origin of a recent roar to point at
+  private roarDirUntil = 0; // performance.now()/1000 when the roar-direction indicator expires
   private ended = false;
   private caveCooldown = 0;
   private traveling = false; // suspends local control + move-sends during a cave hop
@@ -157,6 +164,14 @@ export class Game {
     this.input.setLookHandler((dx, dy) => this.player.look(dx, dy));
     this.input.onAction("map", () => this.toggleMap());
     this.input.onPress("Escape", () => this.toggleSettings()); // fixed, not rebindable
+    // Debug persona hot-swap: `\` cycles the searcher's character. Only bound when ?devSpecialty is
+    // present (a debug session); the server rejects it unless ALLOW_DEV_ROLE, so it's inert in prod.
+    if (!this.isBigfoot && new URLSearchParams(location.search).has("devSpecialty")) {
+      this.input.onPress("Backslash", () => {
+        const i = SPECIALTY_IDS.indexOf(this.self.specialty as (typeof SPECIALTY_IDS)[number]);
+        this.net.sendDebugSetSpecialty(SPECIALTY_IDS[(i + 1) % SPECIALTY_IDS.length]);
+      });
+    }
     if (!this.isBigfoot) this.input.onAction("flashlight", () => this.player.toggleFlashlight());
     this.map.onSelectCave = (i) => this.travelToCave(i);
 
@@ -188,7 +203,11 @@ export class Game {
     this.net.onPhase = (_phase, tod) => (this.serverTimeOfDay = tod);
     this.net.onNight = (n, total) => this.onNightChange(n, total);
     this.net.onFootage = (have, need) => this.onFootage(have, need);
-    this.net.onSelf = (info) => (this.self = info);
+    this.net.onSelf = (info) => {
+      this.self = info;
+      this.hud.setPersona(info.characterName, info.specialty); // reflects the deal + any debug hot-swap
+      this.applySpecialtyMods(); // persona may have changed (deal / hot-swap) → refresh stamina mods
+    };
     this.net.onClueAdd = (c) => {
       this.clues.add(c);
       if (c.ctype === "branch") this.audio.playAt("branch_snap", c.x, c.z, { volume: 0.5, refDistance: 14 });
@@ -198,7 +217,15 @@ export class Game {
     // Host reset us to the lobby — reload back into the waiting room.
     this.net.onReturnToLobby = () => location.reload();
     // Another player's roar, from its real position (carries far: big ref distance, low rolloff).
-    this.net.onRoar = (x, z) => this.audio.playAt("roar", x, z, { volume: 0.95, refDistance: 30, rolloff: 0.7 });
+    this.net.onRoar = (x, z) => {
+      this.audio.playAt("roar", x, z, { volume: 0.95, refDistance: 30, rolloff: 0.7 });
+      // Theo (Sound): remember where it came from and point at it for a while.
+      const persist = roarDirPersistSec(this.self.specialty);
+      if (persist > 0) {
+        this.roarDirPos = { x, z };
+        this.roarDirUntil = performance.now() / 1000 + persist;
+      }
+    };
     this.net.onEscalation = (e) => this.applyEscalation(e);
 
     // Bigfoot abilities: right-click roar, left-click grab a frozen hunter, sprint-key charge, senses.
@@ -215,6 +242,7 @@ export class Game {
       this.net.onPingAdd = (id, x, z) => this.pings!.add(id, x, z);
       this.net.onPingRemove = (id) => this.pings!.remove(id);
       this.input.onAction("ping", () => this.dropPing());
+      this.input.onAction("mark", () => this.dropMark()); // Wren only (server gates it)
       this.map.onMapClick = (x, z) => this.dropPing(x, z);
     }
     void this.net.connect();
@@ -379,8 +407,9 @@ export class Game {
         travelMode: this.isBigfoot && this.caveCooldown === 0 && this.nearestCaveIndex() >= 0,
         currentCave: this.nearestCaveIndex(),
         others: hunter ? this.net.getRemoteSearchers() : [],
-        clues: hunter && this.clueVisionActive() ? this.clues.getRecentDots(MAP.clueWindow) : [],
+        clues: hunter && this.clueVisionActive() ? this.clues.getRecentDots(MAP.clueWindow * clueWindowMul(this.self.specialty)) : [],
         pings: hunter ? this.net.getPings() : [],
+        marks: hunter ? this.net.getMarks() : [],
         bigfoot: this.isBigfoot,
       });
     }
@@ -406,7 +435,7 @@ export class Game {
       if (holdingE) {
         reviving = true;
         reviveTarget = target!.sid;
-        this.reviveProgress = Math.min(1, this.reviveProgress + dt / REVIVE.seconds);
+        this.reviveProgress = Math.min(1, this.reviveProgress + dt / (REVIVE.seconds * reviveMul(this.self.specialty)));
         this.reviveTickTimer -= dt;
         if (this.reviveTickTimer <= 0) {
           this.audio.playOnce("revive_channel", { volume: 0.5 });
@@ -452,7 +481,8 @@ export class Game {
     }
 
     this.hud.setBattery(this.player.battery);
-    this.hud.setStamina(this.player.stamina);
+    this.hud.setStamina((this.player.stamina / this.player.staminaMax) * 100); // % of this persona's max
+    this.updateRoarDirHud();
     this.hud.setBeam(!this.isBigfoot && this.player.isFlashlightOn); // beam mask + lens grime while lit
 
     // Drive the post FX: moving grain + a vignette that tightens toward the dead of night.
@@ -496,12 +526,16 @@ export class Game {
   private clueVisionActive(): boolean {
     const p = this.player.position;
     const bf = this.net.getBigfootPosition();
+    // Specialty-scaled senses: Theo (Sound) hears farther; Wren (Tracking) sees clues farther, for longer.
+    const hearRange = MAP.hearRange * hearRangeMul(this.self.specialty);
     if (bf) {
       const dx = bf.x - p.x;
       const dz = bf.z - p.z;
-      if (dx * dx + dz * dz < MAP.hearRange * MAP.hearRange) return true;
+      if (dx * dx + dz * dz < hearRange * hearRange) return true;
     }
-    return this.clues.hasRecentClueWithin(p.x, p.z, MAP.evidenceSight, MAP.clueWindow);
+    const sight = MAP.evidenceSight * evidenceSightMul(this.self.specialty);
+    const window = MAP.clueWindow * clueWindowMul(this.self.specialty);
+    return this.clues.hasRecentClueWithin(p.x, p.z, sight, window);
   }
 
   /** Freeze/incap stings on our own state change + the searcher proximity heartbeat. */
@@ -534,8 +568,33 @@ export class Game {
   private applyEscalation(e: EscalationInfo) {
     this.player.nightSpeedMul = this.isBigfoot ? e.bigfootSpeedMul : 1; // hunters pressured via drain
     this.player.batteryDrainMul = e.batteryDrainMul;
-    this.player.staminaDrainMul = e.staminaDrainMul;
+    this.escStaminaDrain = e.staminaDrainMul;
     this.roarCooldownSec = e.roarCooldownSec;
+    this.applySpecialtyMods(); // fold the specialty in on top of the per-night escalation
+  }
+
+  /** Theo (Sound): point the roar indicator toward the last roar's origin, screen-relative, until it expires. */
+  private updateRoarDirHud() {
+    if (!this.roarDirPos) return;
+    if (performance.now() / 1000 >= this.roarDirUntil) {
+      this.roarDirPos = null;
+      this.hud.setRoarDirection(null);
+      return;
+    }
+    const dx = this.roarDirPos.x - this.player.position.x;
+    const dz = this.roarDirPos.z - this.player.position.z;
+    const yaw = this.player.yawAngle;
+    const len = Math.hypot(dx, dz) || 1;
+    // Project onto the camera's forward (-sin,-cos) and right (cos,-sin) axes → screen bearing (0 = ahead).
+    const f = (dx / len) * -Math.sin(yaw) + (dz / len) * -Math.cos(yaw);
+    const r = (dx / len) * Math.cos(yaw) + (dz / len) * -Math.sin(yaw);
+    this.hud.setRoarDirection(Math.atan2(r, f));
+  }
+
+  /** Compose per-night escalation with the local searcher's specialty into the movement mods. */
+  private applySpecialtyMods() {
+    this.player.staminaMax = staminaMaxFor(this.self.specialty); // Sam (Endurance): 150
+    this.player.staminaDrainMul = this.escStaminaDrain * staminaDrainMulFor(this.self.specialty); // Sam: ×0.85
   }
 
   private tryRoar() {
@@ -601,16 +660,9 @@ export class Game {
     return !this.env.lineBlocked(this.player.position, bf);
   }
 
-  /** Index of a cave whose mouth Bigfoot is standing in, or -1. */
+  /** Index of a cave whose mouth Bigfoot is standing in, or -1 (shared with the server's validation). */
   private nearestCaveIndex(): number {
-    const p = this.player.position;
-    const r2 = CAVE.triggerRadius * CAVE.triggerRadius;
-    for (let i = 0; i < CAVES.length; i++) {
-      const dx = CAVES[i].x - p.x;
-      const dz = CAVES[i].z - p.z;
-      if (dx * dx + dz * dz <= r2) return i;
-    }
-    return -1;
+    return nearestCaveIndex(CAVES, this.player.position.x, this.player.position.z);
   }
 
   /** Bigfoot picks a destination cave from the map and emerges from its mouth. */
@@ -618,18 +670,16 @@ export class Game {
     if (!this.isBigfoot || this.ended || this.caveCooldown > 0) return;
     const here = this.nearestCaveIndex();
     if (here < 0 || i === here || i < 0 || i >= CAVES.length) return;
-    const dest = CAVES[i];
-    const dl = Math.hypot(dest.x, dest.z) || 1;
     this.caveCooldown = CAVE.travelCooldown;
     this.traveling = true; // suspend local control + move-sends; the server moves us authoritatively
     this.net.sendCaveTravel(i); // server validates the jump and is authoritative for it
     this.closeMap(); // synchronous (keeps the pointer-lock user gesture)
     // Fade to black, hop at the darkest point (matching the server), fade back in at the new cave.
-    // Face away from the destination cave (into the forest) on emergence.
-    const exitYaw = Math.atan2(dest.x, dest.z);
+    // Shared helper -> exact same emerge spot + heading the server places us at (into the forest).
+    const emerge = caveEmergePoint(CAVES[i]);
     this.audio.playOnce("cave_whoosh", { volume: 0.6 });
     this.hud.fade(() => {
-      this.player.teleportTo(dest.x - (dest.x / dl) * 8, dest.z - (dest.z / dl) * 8, exitYaw);
+      this.player.teleportTo(emerge.x, emerge.z, emerge.yaw);
       this.traveling = false;
     });
   }
@@ -639,6 +689,13 @@ export class Game {
     if (this.isBigfoot || this.ended || this.self.status !== "active") return;
     this.net.sendPing(x ?? this.player.position.x, z ?? this.player.position.z);
     this.audio.playOnce("ping_drop", { volume: 0.5 });
+  }
+
+  /** Wren drops a team-visible trail marker at her feet (server enforces the Tracking specialty + cooldown). */
+  private dropMark() {
+    if (this.isBigfoot || this.ended || this.self.specialty !== "tracking" || this.self.status !== "active") return;
+    this.net.sendMark();
+    this.audio.playOnce("ping_drop", { volume: 0.4 });
   }
 
   /** Apply the settings live: brightness scales exposure, volume → audio, sensitivity → look. */

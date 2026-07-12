@@ -1,9 +1,10 @@
 import * as THREE from "three";
 import { Environment } from "./Environment";
 import { SENSES } from "../config";
+import { CLUE_LIFETIME } from "../../../shared/sim";
 
-/** Visual fade window (seconds) for a clue — roughly matches the server's CLUE_LIFETIME. */
-const CLUE_FADE = 50;
+/** Visual fade window (seconds) for a clue — the server's clue lifetime, shared so the two can't drift. */
+const CLUE_FADE = CLUE_LIFETIME;
 
 export type ClueData = { id: string; ctype: string; x: number; z: number; ry: number };
 
