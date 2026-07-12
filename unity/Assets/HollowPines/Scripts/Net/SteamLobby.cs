@@ -5,8 +5,12 @@
 // the FishySteamworks transport (NAT punch-through + relay fallback, no port-forwarding).
 //
 // REQUIRES (see unity/README.md): FishNet, Steamworks.NET (provides `SteamManager`), and the
-// FishySteamworks transport set on the NetworkManager's TransportManager. These packages are why
-// this file does NOT compile outside a configured Unity project — that's expected.
+// FishySteamworks transport set on the NetworkManager's TransportManager.
+//
+// DORMANT until you opt in: this file is wrapped in `#if HP_STEAM`, so it compiles to nothing until
+// you (1) install the Steam packages and (2) add HP_STEAM to Player Settings → Scripting Define
+// Symbols. That lets the local (no-Steam) build compile with only FishNet installed.
+#if HP_STEAM
 using FishNet;
 using Steamworks;
 using UnityEngine;
@@ -103,3 +107,4 @@ namespace HollowPines.Net
         }
     }
 }
+#endif // HP_STEAM

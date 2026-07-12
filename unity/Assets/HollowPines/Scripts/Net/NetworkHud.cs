@@ -1,5 +1,7 @@
-// R1 vertical slice — throwaway on-screen controls. Real UI comes in R5; this just drives the
-// host/join/invite flow so you can prove the relay works. Attach to any GameObject in the scene.
+// R1 vertical slice — throwaway on-screen controls for the STEAM path (host/join/invite). Real UI
+// comes in R5. Dormant until you opt in: wrapped in `#if HP_STEAM` (install the Steam packages + add
+// the HP_STEAM define). For the local no-Steam build, use LocalNetworkHud instead.
+#if HP_STEAM
 using FishNet;
 using UnityEngine;
 
@@ -38,3 +40,4 @@ namespace HollowPines.Net
         }
     }
 }
+#endif // HP_STEAM
