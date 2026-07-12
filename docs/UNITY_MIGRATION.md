@@ -34,7 +34,7 @@ verifiable by tests, and should happen once against a *frozen* target.
 | --- | --- | --- |
 | **R1 — Netcode vertical slice** | Unity + FishNet + FishySteamworks: a **cube that moves**, host + a friend joining over Steam Datagram Relay. No real game logic. | 🟡 scaffolded → [`unity/`](../unity) |
 | **R2 — Freeze the sim surface** | In TS: finish wiring the specialty system (currently an "enabling layer," not live), then declare `shared/sim` + the rules frozen. | ⬜ |
-| **R3 — Port `shared/sim` → C#** | Translate the frozen sim incl. `specialties.ts` + the new cave/stamina helpers. **Parity-gate by mirroring `server/test/*.ts`** (the maintained truth), not a hand-rolled fixture. | ⬜ |
+| **R3 — Port `shared/sim` → C#** | Translate the sim incl. `specialties.ts` + the new cave/stamina helpers. **Parity-gated by mirroring `server/test/*.ts`** (the maintained truth) + a golden cross-check. | ✅ → [`csharp/`](../csharp), parity PASS |
 | **R4 — Host authority** | Drop the ported sim into R1; reimplement `ForestRoom`'s systems (night clock, roar/grab/incap, escalation, specialties deal, anti-cheat) as a FishNet host loop; movement under FishNet prediction. | ⬜ |
 | **R5 — Presentation** | Rebuild renderer/audio/HUD/map natively; rigged/animated models (absorbs old Phase 6). | ⬜ |
 | **R6 — Ship** | Steamworks app, depots, build upload, store page. | ⬜ |
@@ -75,9 +75,9 @@ the split but **collapses the server into the host client**:
 | Three.js client (`Environment`, `RemotePlayer`, `AudioEngine`, `HUD`, `MapView`, post-FX) | **Rebuilt in Unity** (R5) |
 | GDD rules + shared tunables (`shared/sim/constants.ts`) | **Reused as spec** — mirrored into C# constants |
 
-## Determinism notes (for when R3 lands)
+## Determinism notes (from the R3 port)
 
-These held for the earlier verified port and still apply — record them so the R3 port repeats them:
+These are the invariants the shipped C# port holds (verified by `csharp/Parity`):
 
 - **Doubles, not floats.** The TS sim is IEEE-754 `double` throughout; the port must use `double` or it
   diverges on the first collision push-out. Convert to `float` only at the Unity transform boundary.
@@ -97,10 +97,11 @@ Steamworks.NET + FishySteamworks, wire the NetworkManager/transport/cube, keep `
 by the build, run Steam logged in, then Host on one instance and join from another (ParrelSync for one
 machine; two machines/accounts for a real relay test).
 
-**R3 — C# sim library** (headless, no Unity needed):
+**R3 — C# sim library** (headless, no Unity needed — done, verified):
 ```bash
-dotnet test csharp/HollowPines.Sim.Tests    # parity suite mirrored from server/test/*.ts
+dotnet run --project csharp/Parity           # golden cross-check + mirrored vitest invariants → "PARITY OK"
 ```
+(In a fresh container: `apt-get update && apt-get install -y dotnet-sdk-8.0` first.)
 
 **Cross-check against the TS source of truth (already in the repo):**
 ```bash

@@ -1,0 +1,3 @@
+# .NET build artifacts (the parity harness)
+bin/
+obj/

@@ -113,10 +113,10 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 
 ## Phase 8 — Unity / Steam migration ⬜ → see [`UNITY_MIGRATION.md`](./UNITY_MIGRATION.md)
 The engine pivot: a downloadable Steam game, host-authoritative with Steam Datagram Relay. Sequenced
-**netcode-first, sim-port-last** (the shared sim is still evolving, so it's frozen and ported only when
-stable). Steps R1–R6 in the migration doc. **R1 (Unity + FishNet + Steam relay "moving cube" slice) is
-scaffolded** in [`unity/`](../unity) — drop-in scripts + setup/test guide to de-risk the relay before
-any game logic moves.
+**netcode-first, sim-port-last**. Steps R1–R6 in the migration doc. Done so far: **R1** (Unity + FishNet +
+Steam relay "moving cube" slice) scaffolded in [`unity/`](../unity); **R3** — the deterministic
+`shared/sim` **ported to C# with parity verified** against the TS sim + the vitest invariants
+([`csharp/`](../csharp), `dotnet run --project csharp/Parity` → PARITY OK).
 
 ---
 
