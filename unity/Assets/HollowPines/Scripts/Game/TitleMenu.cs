@@ -20,6 +20,7 @@ namespace HollowPines.Game
         private string _address = "127.0.0.1";
         private float _connectStartedAt = -1f; // >=0 while a join attempt is in flight
         private string _error;                 // last hosting/joining failure, shown under the buttons
+        private Vector2 _settingsScroll;       // settings page scroll (it's taller than a short window)
         private GUIStyle _titleStyle, _subStyle, _buttonStyle, _labelStyle, _errorStyle;
 
         private void Awake()
@@ -31,6 +32,16 @@ namespace HollowPines.Game
         {
 #if ENABLE_INPUT_SYSTEM
             HPKeybinds.UpdateCapture(); // key-rebind capture (settings page)
+
+            // Esc always backs out to the root menu — a second way home, so a mis-sized panel can
+            // never strand the player on a sub-page again. (Ignored while capturing a rebind: Esc
+            // cancels the capture there, handled inside UpdateCapture.)
+            var kb = UnityEngine.InputSystem.Keyboard.current;
+            if (kb != null && kb.escapeKey.wasPressedThisFrame && HPKeybinds.Capturing == null && _page != Page.Root)
+            {
+                if (_page == Page.Settings) CloseSettings();
+                else _page = Page.Root;
+            }
 #endif
             bool connected = Connected();
             SetTitleLighting(!connected); // the backdrop is lit well above gameplay dusk
@@ -96,8 +107,10 @@ namespace HollowPines.Game
 
             float cx = Screen.width / 2f;
             GUI.Label(new Rect(0, Screen.height * 0.14f, Screen.width, 90f), "HOLLOW PINES", _titleStyle);
-            GUI.Label(new Rect(0, Screen.height * 0.14f + 86f, Screen.width, 30f),
-                "five went looking for proof — something in the pines was looking back", _subStyle);
+            // Tagline on the front page only — the sub-pages need the vertical space.
+            if (_page == Page.Root)
+                GUI.Label(new Rect(0, Screen.height * 0.14f + 86f, Screen.width, 30f),
+                    "five went looking for proof — something in the pines was looking back", _subStyle);
 
             switch (_page)
             {
@@ -180,51 +193,71 @@ namespace HollowPines.Game
             if (MenuButton(cx, ref y, "BACK")) _page = Page.Root;
         }
 
+        /// <summary>
+        /// The settings page. Everything scrolls inside a panel clamped to the window, with BACK
+        /// pinned OUTSIDE the scroll so it can never be pushed off-screen — this page grew to ten
+        /// rebindable actions and the fixed-pixel version ran BACK past the bottom of the window,
+        /// leaving no way out of the menu at all. Esc also backs out (see Update).
+        /// </summary>
         private void DrawSettings(float cx)
         {
-            float y = Screen.height * 0.30f;
+            const float backRow = 52f;
+            float top = Screen.height * 0.14f + 124f;                  // clear of the title + subtitle
+            float w = Mathf.Min(400f, Screen.width - 40f);
+            float h = Mathf.Max(140f, Screen.height - top - 24f);
 
-            GUI.Label(new Rect(cx - 170f, y, 340f, 22f), "player name", _labelStyle);
-            y += 24f;
-            HPSettings.PlayerName = GUI.TextField(new Rect(cx - 170f, y, 340f, 32f), HPSettings.PlayerName, 16);
-            y += 44f;
+            GUILayout.BeginArea(new Rect(cx - w / 2f, top, w, h));
+            _settingsScroll = GUILayout.BeginScrollView(_settingsScroll, GUIStyle.none, GUI.skin.verticalScrollbar,
+                GUILayout.Height(h - backRow));
 
-            GUI.Label(new Rect(cx - 170f, y, 340f, 22f),
-                $"mouse sensitivity  ({HPSettings.MouseSensMul:0.00}x)", _labelStyle);
-            y += 22f;
-            HPSettings.MouseSensMul = GUI.HorizontalSlider(new Rect(cx - 170f, y, 340f, 20f), HPSettings.MouseSensMul, 0.2f, 3f);
-            y += 32f;
+            GUILayout.Label("player name", _labelStyle);
+            HPSettings.PlayerName = GUILayout.TextField(HPSettings.PlayerName, 16, GUILayout.Height(28f));
+            GUILayout.Space(10f);
 
-            GUI.Label(new Rect(cx - 170f, y, 340f, 22f),
-                $"master volume  ({(int)(HPSettings.MasterVolume * 100)}%)", _labelStyle);
-            y += 22f;
-            HPSettings.MasterVolume = GUI.HorizontalSlider(new Rect(cx - 170f, y, 340f, 20f), HPSettings.MasterVolume, 0f, 1f);
-            y += 34f;
+            GUILayout.Label($"mouse sensitivity  ({HPSettings.MouseSensMul:0.00}x)", _labelStyle);
+            HPSettings.MouseSensMul = GUILayout.HorizontalSlider(HPSettings.MouseSensMul, 0.2f, 3f);
+            GUILayout.Space(10f);
 
-            bool fs = GUI.Toggle(new Rect(cx - 170f, y, 340f, 24f), Screen.fullScreen, " fullscreen");
+            GUILayout.Label($"master volume  ({(int)(HPSettings.MasterVolume * 100)}%)", _labelStyle);
+            HPSettings.MasterVolume = GUILayout.HorizontalSlider(HPSettings.MasterVolume, 0f, 1f);
+            GUILayout.Space(10f);
+
+            // The single biggest frame-rate lever — same slider as the in-game pause menu.
+            GUILayout.Label($"resolution scale  ({(int)(HPSettings.RenderScale * 100)}%)  — lower = faster", _labelStyle);
+            HPSettings.RenderScale = Mathf.Round(GUILayout.HorizontalSlider(HPSettings.RenderScale, 0.4f, 1f) * 20f) / 20f;
+            GUILayout.Space(10f);
+
+            bool fs = GUILayout.Toggle(Screen.fullScreen, " fullscreen");
             if (fs != Screen.fullScreen) Screen.fullScreen = fs;
-            y += 34f;
+            GUILayout.Space(12f);
 
             // Key rebinding (Esc and the mouse stay fixed, like the web build).
-            GUI.Label(new Rect(cx - 170f, y, 340f, 22f), "controls (click, then press a key)", _labelStyle);
-            y += 24f;
+            GUILayout.Label("controls (click, then press a key)", _labelStyle);
             foreach (HPAction a in System.Enum.GetValues(typeof(HPAction)))
             {
-                GUI.Label(new Rect(cx - 170f, y + 3f, 150f, 22f), ActionName(a), _labelStyle);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(ActionName(a), _labelStyle, GUILayout.Width(170f));
                 string keyLabel = HPKeybinds.Capturing == a ? "press a key..." : HPKeybinds.Label(a);
-                if (GUI.Button(new Rect(cx - 10f, y, 180f, 24f), keyLabel))
-                    HPKeybinds.Capturing = a;
-                y += 27f;
+                if (GUILayout.Button(keyLabel, GUILayout.Height(24f))) HPKeybinds.Capturing = a;
+                GUILayout.EndHorizontal();
+                GUILayout.Space(3f);
             }
-            if (GUI.Button(new Rect(cx - 170f, y, 150f, 24f), "reset defaults")) HPKeybinds.ResetDefaults();
-            y += 36f;
+            GUILayout.Space(6f);
+            if (GUILayout.Button("reset defaults", GUILayout.Width(150f), GUILayout.Height(24f)))
+                HPKeybinds.ResetDefaults();
+            GUILayout.Space(8f);
+            GUILayout.EndScrollView();
 
-            if (MenuButton(cx, ref y, "BACK"))
-            {
-                HPKeybinds.Capturing = null;
-                HPSettings.Save();
-                _page = Page.Root;
-            }
+            if (GUILayout.Button("BACK", _buttonStyle, GUILayout.Height(40f))) CloseSettings();
+            GUILayout.EndArea();
+        }
+
+        /// <summary>Leave the settings page, persisting whatever was changed.</summary>
+        private void CloseSettings()
+        {
+            HPKeybinds.Capturing = null;
+            HPSettings.Save();
+            _page = Page.Root;
         }
 
         private static string ActionName(HPAction a)

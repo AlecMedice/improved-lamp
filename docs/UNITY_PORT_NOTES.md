@@ -148,6 +148,12 @@ UI pass should move to UI Toolkit/uGUI with real anchors.
 Also: overlays that reserve screen space must account for each other. The map frame centres in the
 space left *after* the HUD's top bar, or its title runs straight through the clock.
 
+**Worst case seen:** the title screen's settings page grew to ten rebindable actions and pushed its
+own BACK button off the bottom of a 1133×528 window — **no way out of the menu at all**. Two lessons:
+a page that grows with content must **scroll**, and any escape control (BACK, CLOSE, CONFIRM) belongs
+*outside* the scroll where layout can't move it. Every sub-page now also answers **Esc** as a second
+way home, on the principle that a UI should never have exactly one exit.
+
 ## 7. Performance: the browser was hiding the real cost
 
 The web build caps its device pixel ratio (`QUALITY.pixelRatioCap`), so Three.js never rendered at
