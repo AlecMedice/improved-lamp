@@ -212,6 +212,8 @@ namespace HollowPines.Game
                 foreach (var p in HPPlayer.All)
                 {
                     if (p == null || !p.IsBigfoot) continue;
+                    // A crouching Bigfoot can't be heard — no dread beat gives it away either.
+                    if (p.Crouched.Value) continue;
                     float dx = p.transform.position.x - me.transform.position.x;
                     float dz = p.transform.position.z - me.transform.position.z;
                     float d = Mathf.Sqrt(dx * dx + dz * dz);

@@ -359,6 +359,9 @@ namespace HollowPines.Game
         {
             var audio = HPAudio.Instance;
             if (audio == null) return;
+            // Crouching is silent for BOTH roles — the same rule that suppresses Bigfoot's tracks.
+            // Half speed buys you leaving no trace at all, in prints or in sound.
+            if (_crouching) { _stepTimer = 0f; return; }
             if (!_lastStep.Moving || !_sim.Grounded) { _stepTimer = 0f; return; }
 
             _stepTimer -= Time.deltaTime;
@@ -1035,6 +1038,9 @@ namespace HollowPines.Game
         {
             var audio = HPAudio.Instance;
             if (audio == null || Status.Value != StatusActive) return;
+            // A crouching player makes no sound anyone else can hear either. Keep the position
+            // tracking up to date so uncrouching doesn't emit a burst of backdated steps.
+            if (Crouched.Value) { _lastAudioPos = transform.position; _remoteStepDist = 0f; return; }
 
             Vector3 pos = transform.position;
             if (!_audioPosInit) { _audioPosInit = true; _lastAudioPos = pos; return; }
