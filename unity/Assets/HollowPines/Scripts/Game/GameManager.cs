@@ -877,6 +877,16 @@ namespace HollowPines.Game
                 double dx = pos.x - last.X, dz = pos.z - last.Z;
                 if (dx * dx + dz * dz < Stride * Stride) continue;
 
+                // Crouching Bigfoot leaves NO trail — no prints, no snapped branches, no castable
+                // tracks. The sim already halves crouch speed, so this is a real trade rather than a
+                // free upgrade: move silently, or move quickly. The stride counter still advances, so
+                // standing up doesn't immediately dump the print you just avoided leaving.
+                if (bf.Crouched.Value)
+                {
+                    _lastTrack[bf] = new Vec2(pos.x, pos.z);
+                    continue;
+                }
+
                 // Some prints land in ground soft and deep enough to be worth casting. Only a few are
                 // live at once — a newer workable print overrides the oldest.
                 bool castable = _rng.NextDouble() < CastableChance;

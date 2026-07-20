@@ -39,6 +39,8 @@ namespace HollowPines.Game
         public readonly SyncVar<string> Specialty = new SyncVar<string>("");
         public readonly SyncVar<string> CharacterName = new SyncVar<string>("");
         public readonly SyncVar<bool> FlashOn = new SyncVar<bool>(false);
+        /// <summary>Crouching. Replicated because the host suppresses Bigfoot's trail while it is.</summary>
+        public readonly SyncVar<bool> Crouched = new SyncVar<bool>(false);
         public readonly SyncVar<float> Battery = new SyncVar<float>(100f);
         public readonly SyncVar<float> Stamina = new SyncVar<float>(100f);
         public readonly SyncVar<bool> Filming = new SyncVar<bool>(false);
@@ -102,7 +104,7 @@ namespace HollowPines.Game
         private float _remoteStepDist;
         private bool _audioPosInit;
         private float _scentTimer;
-        private bool _sentRecording, _lastFlashSent = false;
+        private bool _sentRecording, _lastFlashSent = false, _lastCrouchSent = false;
         private int _reviveTargetSent = -1;
         private int _collectTargetSent = -1;
         private float _depositHeld; // how long the store-at-duffel hold has been running
@@ -666,10 +668,15 @@ namespace HollowPines.Game
         {
             _vitalsTimer += Time.deltaTime;
             bool flashChanged = _sim.FlashlightOn != _lastFlashSent;
-            if (_vitalsTimer < 0.2f && !flashChanged) return;
+            // Crouch is replicated because the HOST decides whether to drop a footprint, and a
+            // crouching Bigfoot leaves no trail. Send it the instant it changes rather than waiting
+            // for the 5 Hz tick, or you'd shed a print or two after going quiet.
+            bool crouchChanged = _crouching != _lastCrouchSent;
+            if (_vitalsTimer < 0.2f && !flashChanged && !crouchChanged) return;
             _vitalsTimer = 0f;
             _lastFlashSent = _sim.FlashlightOn;
-            ServerVitals(_sim.FlashlightOn, (float)_sim.Battery, (float)_sim.Stamina);
+            _lastCrouchSent = _crouching;
+            ServerVitals(_sim.FlashlightOn, (float)_sim.Battery, (float)_sim.Stamina, _crouching);
         }
 
         public enum HoldAction { None, Revive, Deposit, Collect, Battery }
@@ -835,8 +842,9 @@ namespace HollowPines.Game
         // ------------------------------------------------------------------ RPCs (owner -> server)
 
         [ServerRpc]
-        private void ServerVitals(bool flashOn, float battery, float stamina)
+        private void ServerVitals(bool flashOn, float battery, float stamina, bool crouched)
         {
+            Crouched.Value = crouched;
             // Resource envelope (mirrors the web build's bounds): battery only ever decreases and a
             // dead battery forces the light off; stamina is clamped to the specialty ceiling.
             float b = Mathf.Clamp(Mathf.Min(battery, Battery.Value), 0f, 100f);

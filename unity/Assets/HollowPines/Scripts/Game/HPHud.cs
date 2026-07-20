@@ -737,7 +737,8 @@ namespace HollowPines.Game
                                 "• LMB takes a frozen searcher — everything they were carrying is gone\n" +
                                 "• They carry it back to a bag at the camp. You cannot touch the bag.\n" +
                                 "• So take them on the walk home, while their hands are full\n" +
-                                "• Soft ground holds your deepest tracks — tread them out before they cast them", perk);
+                                "• Soft ground holds your deepest tracks — tread them out before they cast them\n" +
+                                $"• Crouch ({HPKeybinds.Label(HPAction.Crouch)}) and you leave nothing at all — but you're slow", perk);
             }
             else
             {
@@ -999,7 +1000,8 @@ namespace HollowPines.Game
             string help = me.IsBigfoot
                 ? $"WASD move · mouse look · {jump} leap / hold near a boulder-RV-tower to CLIMB\n" +
                   $"{sprint} SPRINT (faster than they are) · RMB ROAR (freeze) · LMB GRAB / drop\n" +
-                  $"{senses} senses overlay · {crouch} crouch · {map} map (cave fast-travel)\n" +
+                  $"{senses} senses overlay · {map} map (cave fast-travel)\n" +
+                  $"{crouch} CROUCH — slow, but you leave no tracks at all\n" +
                   "tread on your own deep tracks to ruin them · survive all 3 nights"
                 : $"WASD move · mouse look · {sprint} sprint · {jump} jump / VAULT a log\n" +
                   $"{flash} flashlight (dazzles Bigfoot if held on it) · RMB hold = FILM Bigfoot\n" +
