@@ -1,7 +1,7 @@
 // The title card + main menu shown when the exe opens — mechanical structure borrowed from
 // R.E.P.O.: a vertical stack of START NEW GAME / JOIN GAME / SETTINGS / QUIT over a live 3D
 // backdrop (a slow drift around the dark camp clearing; the forest is already built by
-// WorldBuilder). Replaces the R1 debug LocalNetworkHud in the Forest scene.
+// WorldBuilder). This is the only pre-connection UI — it drives hosting and joining directly.
 //
 // Visible whenever no connection is up, so a disconnect (host quit, kicked, cancel) lands you
 // back here automatically. JOIN is direct address (Tugboat) until Path B adds Steam invites —
@@ -159,6 +159,56 @@ namespace HollowPines.Game
                 Application.Quit();
 #endif
             }
+
+            DrawDevStrip(cx, y + 6f);
+        }
+
+        /// <summary>
+        /// DEV — force the persona you'll be dealt. Casting belongs to Mara, the flash to Eli and the
+        /// spare battery to Sam, so without this, testing any of them means restarting until the
+        /// random deal happens to hand you the right character (a 1-in-5 lottery per match).
+        /// The host re-validates the id, so this can't be used to invent a specialty.
+        /// </summary>
+        private void DrawDevStrip(float cx, float y)
+        {
+            var head = new GUIStyle(GUI.skin.label) { fontSize = 11, alignment = TextAnchor.MiddleCenter };
+            head.normal.textColor = new Color(0.55f, 0.6f, 0.58f);
+            GUI.Label(new Rect(cx - 220f, y, 440f, 18f), "DEV — force persona (testing only)", head);
+            y += 20f;
+
+            // "random" plus one button per specialty, labelled with the character's first name.
+            string[] ids = Sim.Specialties.SpecialtyIds;
+            int count = ids.Length + 1;
+            float bw = 68f, gap = 4f;
+            float total = count * bw + (count - 1) * gap;
+            float x = cx - total / 2f;
+            var small = new GUIStyle(GUI.skin.button) { fontSize = 11 };
+
+            for (int i = 0; i < count; i++)
+            {
+                string id = i == 0 ? "" : ids[i - 1];
+                string label = i == 0 ? "random" : FirstName(id);
+                bool active = HPSettings.DevSpecialty == id;
+
+                Color old = GUI.color;
+                if (active) GUI.color = new Color(1f, 0.85f, 0.5f);
+                if (GUI.Button(new Rect(x, y, bw, 22f), label, small))
+                {
+                    HPSettings.DevSpecialty = id;
+                    HPSettings.Save();
+                }
+                GUI.color = old;
+                x += bw + gap;
+            }
+        }
+
+        /// <summary>"Wren Castellano" -> "Wren", for the narrow dev buttons.</summary>
+        private static string FirstName(string specialtyId)
+        {
+            if (!Sim.Specialties.CharacterName.TryGetValue(specialtyId, out string full)) return specialtyId;
+            int sp = full.IndexOf(' ');
+            string first = sp > 0 ? full.Substring(0, sp) : full;
+            return first == "Dr." ? "Mara" : first; // "Dr. Mara Okonkwo"
         }
 
         private void DrawJoin(float cx)

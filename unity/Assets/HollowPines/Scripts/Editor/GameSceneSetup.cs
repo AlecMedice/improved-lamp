@@ -8,6 +8,7 @@
 //     Hollow Pines → Set Up Game Scene (Forest)     then Play → Host → START MATCH.
 //     Hollow Pines → Build Windows (Game)           → Build/Windows/HollowPines.exe
 using System.IO;
+using System.Linq;
 using FishNet.Component.Transforming;
 using FishNet.Managing;
 using FishNet.Object;
@@ -38,7 +39,7 @@ namespace HollowPines.EditorTools
                 return;
             }
 
-            R1Setup.SetInputHandlingToBoth();
+SetInputHandlingToBoth();
             PlayerSettings.productName = "Hollow Pines"; // window title + Build/Windows/HollowPines.exe
 
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
@@ -83,7 +84,7 @@ namespace HollowPines.EditorTools
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
             StampAssetPathHashes(new[] { playerPrefab, cluePrefab, markPrefab, pingPrefab });
-            R1Setup.AssignDefaultPrefabObjects(nm);
+AssignDefaultPrefabObjects(nm);
 
             Directory.CreateDirectory("Assets/Scenes");
             AssignSceneIds(scene); // MUST run before the save — see the method's note
@@ -175,6 +176,48 @@ namespace HollowPines.EditorTools
             object[] args = { scene, true, 0 };
             method.Invoke(null, args);
             Debug.Log($"[GameSceneSetup] Assigned SceneIds to scene NetworkObjects ({args[2]} generated).");
+        }
+
+        /// <summary>
+        /// The URP template ships Active Input Handling = "Input System Package (new)" ONLY, where
+        /// legacy UnityEngine.Input throws and IMGUI (our OnGUI HUDs) gets no input in a standalone
+        /// player. Set it to "Both" (2). Needs one editor restart to take effect in Play mode.
+        /// </summary>
+        internal static void SetInputHandlingToBoth()
+        {
+            var settings = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/ProjectSettings.asset").FirstOrDefault();
+            if (settings == null)
+            {
+                Debug.LogWarning("[GameSceneSetup] Couldn't load ProjectSettings.asset to adjust input handling.");
+                return;
+            }
+            var so = new SerializedObject(settings);
+            var prop = so.FindProperty("activeInputHandler");
+            if (prop != null && prop.intValue != 2)
+            {
+                prop.intValue = 2; // "Both": legacy Input + IMGUI keep working alongside the Input System
+                so.ApplyModifiedPropertiesWithoutUndo();
+                AssetDatabase.SaveAssets();
+                Debug.Log("[GameSceneSetup] Active Input Handling set to 'Both' — restart the editor once before Play testing.");
+            }
+        }
+
+        /// <summary>Point the NetworkManager's SpawnablePrefabs at FishNet's generated collection.</summary>
+        internal static void AssignDefaultPrefabObjects(NetworkManager nm)
+        {
+            // FishNet's Generator (an AssetPostprocessor) maintains a DefaultPrefabObjects asset;
+            // find it by type so we don't depend on where it was generated.
+            string guid = AssetDatabase.FindAssets("t:DefaultPrefabObjects").FirstOrDefault();
+            if (guid == null)
+            {
+                Debug.LogWarning("[GameSceneSetup] No DefaultPrefabObjects asset found — FishNet normally generates it on " +
+                                 "import. Select the NetworkManager and set SpawnablePrefabs manually if spawning fails.");
+                return;
+            }
+            var dpo = AssetDatabase.LoadAssetAtPath<ScriptableObject>(AssetDatabase.GUIDToAssetPath(guid));
+            var so = new SerializedObject(nm);
+            so.FindProperty("_spawnablePrefabs").objectReferenceValue = dpo; // field behind NetworkManager.SpawnablePrefabs
+            so.ApplyModifiedPropertiesWithoutUndo();
         }
 
         private static NetworkObject CreatePlayerPrefab()

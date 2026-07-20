@@ -129,6 +129,12 @@ namespace HollowPines.Game
         public readonly SyncVar<float> EscBattery = new SyncVar<float>(1f);
         public readonly SyncVar<float> EscStamina = new SyncVar<float>(1f);
         public readonly SyncVar<float> RoarCooldownSec = new SyncVar<float>((float)RoarCooldown);
+        /// <summary>
+        /// How long a clue survives on the CURRENT night (escalation shortens it: 50 → 40 → 32.5 s).
+        /// Replicated so clients can fade the trail on exactly the host's window — otherwise a print
+        /// looks as fresh at 49 s as at 1 s and then simply vanishes.
+        /// </summary>
+        public readonly SyncVar<float> ClueLifetimeSec = new SyncVar<float>((float)Clue.Lifetime);
 
         // --- Server-only working state ---
         private double _elapsed, _nightElapsed;
@@ -229,7 +235,18 @@ namespace HollowPines.Game
                 if (p != bigfoot) searcherIds.Add(p.ObjectId.ToString());
             }
 
-            var deal = Specialties.DealSpecialties(searcherIds, null, _rng.NextDouble);
+            // DEV persona overrides (title-screen picker). DealSpecialties honours forced picks and
+            // pulls them out of the random pool, so the remaining searchers still get distinct
+            // characters. Ids were validated when they were set (HPPlayer.ServerSetDevSpecialty).
+            Dictionary<string, string> forced = null;
+            foreach (var p in players)
+            {
+                if (p == bigfoot || !Specialties.IsSpecialtyId(p.DevSpecialty.Value)) continue;
+                if (forced == null) forced = new Dictionary<string, string>();
+                forced[p.ObjectId.ToString()] = p.DevSpecialty.Value;
+            }
+
+            var deal = Specialties.DealSpecialties(searcherIds, forced, _rng.NextDouble);
             foreach (var p in players)
             {
                 if (p == bigfoot || !deal.TryGetValue(p.ObjectId.ToString(), out string spec))
@@ -813,6 +830,7 @@ namespace HollowPines.Game
             EscBattery.Value = (float)e.Battery;
             EscStamina.Value = (float)e.Stamina;
             RoarCooldownSec.Value = (float)(RoarCooldown * e.RoarCd);
+            ClueLifetimeSec.Value = (float)(Clue.Lifetime * e.ClueLife);
 
             var players = LivePlayers();
             var bigfoots = players.FindAll(p => p.IsBigfoot);
@@ -865,6 +883,16 @@ namespace HollowPines.Game
                 }
                 double dx = pos.x - last.X, dz = pos.z - last.Z;
                 if (dx * dx + dz * dz < Stride * Stride) continue;
+
+                // Crouching Bigfoot leaves NO trail — no prints, no snapped branches, no castable
+                // tracks. The sim already halves crouch speed, so this is a real trade rather than a
+                // free upgrade: move silently, or move quickly. The stride counter still advances, so
+                // standing up doesn't immediately dump the print you just avoided leaving.
+                if (bf.Crouched.Value)
+                {
+                    _lastTrack[bf] = new Vec2(pos.x, pos.z);
+                    continue;
+                }
 
                 // Some prints land in ground soft and deep enough to be worth casting. Only a few are
                 // live at once — a newer workable print overrides the oldest.

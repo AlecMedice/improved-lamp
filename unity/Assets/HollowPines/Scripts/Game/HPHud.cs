@@ -162,7 +162,7 @@ namespace HollowPines.Game
         private void OnGUI()
         {
             var gm = GameManager.Instance;
-            if (gm == null || !InstanceFinder.IsClientStarted) return; // LocalNetworkHud handles connecting
+            if (gm == null || !InstanceFinder.IsClientStarted) return; // TitleMenu owns the pre-connection UI
             var me = HPPlayer.Local;
 
             // A fresh match start raises the dusk briefing.
@@ -737,7 +737,8 @@ namespace HollowPines.Game
                                 "• LMB takes a frozen searcher — everything they were carrying is gone\n" +
                                 "• They carry it back to a bag at the camp. You cannot touch the bag.\n" +
                                 "• So take them on the walk home, while their hands are full\n" +
-                                "• Soft ground holds your deepest tracks — tread them out before they cast them", perk);
+                                "• Soft ground holds your deepest tracks — tread them out before they cast them\n" +
+                                $"• Crouch ({HPKeybinds.Label(HPAction.Crouch)}): no tracks, no sound, nothing to hear — at half speed", perk);
             }
             else
             {
@@ -999,12 +1000,14 @@ namespace HollowPines.Game
             string help = me.IsBigfoot
                 ? $"WASD move · mouse look · {jump} leap / hold near a boulder-RV-tower to CLIMB\n" +
                   $"{sprint} SPRINT (faster than they are) · RMB ROAR (freeze) · LMB GRAB / drop\n" +
-                  $"{senses} senses overlay · {crouch} crouch · {map} map (cave fast-travel)\n" +
+                  $"{senses} senses overlay · {map} map (cave fast-travel)\n" +
+                  $"{crouch} CROUCH — half speed, but no tracks and no sound at all\n" +
                   "tread on your own deep tracks to ruin them · survive all 3 nights"
                 : $"WASD move · mouse look · {sprint} sprint · {jump} jump / VAULT a log\n" +
                   $"{flash} flashlight (dazzles Bigfoot if held on it) · RMB hold = FILM Bigfoot\n" +
                   $"{revive} hold = STORE proof at the duffel / revive / cast (Mara) / battery (Sam)\n" +
-                  $"{crouch} crouch · {mark} trail mark (Wren) · {flashAbility} camera flash (Eli)\n" +
+                  $"{crouch} crouch — half speed, but your footsteps go silent\n" +
+                  $"{mark} trail mark (Wren) · {flashAbility} camera flash (Eli)\n" +
                   $"{map} map · {ping} stakeout ping · store {NeededProof()} proof in the duffel to win";
             var style = new GUIStyle(GUI.skin.box) { alignment = TextAnchor.MiddleLeft, wordWrap = true };
             GUI.Box(new Rect(Screen.width / 2f - 280f, Screen.height - 146f, 560f, 114f), help, style);

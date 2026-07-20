@@ -170,6 +170,9 @@ namespace HollowPines.Game
             foreach (var other in HPPlayer.All)
             {
                 if (other == null || !other.IsBigfoot) continue;
+                // "In contact" via hearing — so a crouching Bigfoot doesn't trip it, even Theo's.
+                // The evidence-sight half of the check below still works: it left tracks earlier.
+                if (other.Crouched.Value) continue;
                 float dx = other.transform.position.x - p.x, dz = other.transform.position.z - p.z;
                 if (dx * dx + dz * dz < hear * hear) return true;
             }

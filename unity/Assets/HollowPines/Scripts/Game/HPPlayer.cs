@@ -39,12 +39,16 @@ namespace HollowPines.Game
         public readonly SyncVar<string> Specialty = new SyncVar<string>("");
         public readonly SyncVar<string> CharacterName = new SyncVar<string>("");
         public readonly SyncVar<bool> FlashOn = new SyncVar<bool>(false);
+        /// <summary>Crouching. Replicated because the host suppresses Bigfoot's trail while it is.</summary>
+        public readonly SyncVar<bool> Crouched = new SyncVar<bool>(false);
         public readonly SyncVar<float> Battery = new SyncVar<float>(100f);
         public readonly SyncVar<float> Stamina = new SyncVar<float>(100f);
         public readonly SyncVar<bool> Filming = new SyncVar<bool>(false);
         public readonly SyncVar<float> FilmProgress = new SyncVar<float>(0f);
         public readonly SyncVar<int> GrabberObjectId = new SyncVar<int>(-1);
         public readonly SyncVar<bool> WantsBigfoot = new SyncVar<bool>(false);
+        /// <summary>DEV: the persona this player asked to be dealt ("" = normal random deal).</summary>
+        public readonly SyncVar<string> DevSpecialty = new SyncVar<string>("");
         /// <summary>Bigfoot only: seconds until the next roar is available (HUD cooldown).</summary>
         public readonly SyncVar<float> RoarReadyIn = new SyncVar<float>(0f);
         /// <summary>Incapacitated only: 0..1 revive progress a teammate has accrued on this player.</summary>
@@ -100,7 +104,7 @@ namespace HollowPines.Game
         private float _remoteStepDist;
         private bool _audioPosInit;
         private float _scentTimer;
-        private bool _sentRecording, _lastFlashSent = false;
+        private bool _sentRecording, _lastFlashSent = false, _lastCrouchSent = false;
         private int _reviveTargetSent = -1;
         private int _collectTargetSent = -1;
         private float _depositHeld; // how long the store-at-duffel hold has been running
@@ -165,6 +169,9 @@ namespace HollowPines.Game
                 // it for walking (HandleCursor); the match-start teleport locks it for real.
                 if (!string.IsNullOrWhiteSpace(HPSettings.PlayerName))
                     ServerSetName(HPSettings.PlayerName);
+                // Chosen on the title screen, before we connected — send it once on spawn.
+                if (!string.IsNullOrEmpty(HPSettings.DevSpecialty))
+                    ServerSetDevSpecialty(HPSettings.DevSpecialty);
             }
         }
 
@@ -352,6 +359,9 @@ namespace HollowPines.Game
         {
             var audio = HPAudio.Instance;
             if (audio == null) return;
+            // Crouching is silent for BOTH roles — the same rule that suppresses Bigfoot's tracks.
+            // Half speed buys you leaving no trace at all, in prints or in sound.
+            if (_crouching) { _stepTimer = 0f; return; }
             if (!_lastStep.Moving || !_sim.Grounded) { _stepTimer = 0f; return; }
 
             _stepTimer -= Time.deltaTime;
@@ -661,10 +671,15 @@ namespace HollowPines.Game
         {
             _vitalsTimer += Time.deltaTime;
             bool flashChanged = _sim.FlashlightOn != _lastFlashSent;
-            if (_vitalsTimer < 0.2f && !flashChanged) return;
+            // Crouch is replicated because the HOST decides whether to drop a footprint, and a
+            // crouching Bigfoot leaves no trail. Send it the instant it changes rather than waiting
+            // for the 5 Hz tick, or you'd shed a print or two after going quiet.
+            bool crouchChanged = _crouching != _lastCrouchSent;
+            if (_vitalsTimer < 0.2f && !flashChanged && !crouchChanged) return;
             _vitalsTimer = 0f;
             _lastFlashSent = _sim.FlashlightOn;
-            ServerVitals(_sim.FlashlightOn, (float)_sim.Battery, (float)_sim.Stamina);
+            _lastCrouchSent = _crouching;
+            ServerVitals(_sim.FlashlightOn, (float)_sim.Battery, (float)_sim.Stamina, _crouching);
         }
 
         public enum HoldAction { None, Revive, Deposit, Collect, Battery }
@@ -830,8 +845,9 @@ namespace HollowPines.Game
         // ------------------------------------------------------------------ RPCs (owner -> server)
 
         [ServerRpc]
-        private void ServerVitals(bool flashOn, float battery, float stamina)
+        private void ServerVitals(bool flashOn, float battery, float stamina, bool crouched)
         {
+            Crouched.Value = crouched;
             // Resource envelope (mirrors the web build's bounds): battery only ever decreases and a
             // dead battery forces the light off; stamina is clamped to the specialty ceiling.
             float b = Mathf.Clamp(Mathf.Min(battery, Battery.Value), 0f, 100f);
@@ -922,6 +938,13 @@ namespace HollowPines.Game
         public void ServerSetWantsBigfoot(bool wants)
         {
             WantsBigfoot.Value = wants;
+        }
+
+        /// <summary>DEV persona request. Validated here so a client can't invent a specialty id.</summary>
+        [ServerRpc]
+        private void ServerSetDevSpecialty(string id)
+        {
+            DevSpecialty.Value = Specialties.IsSpecialtyId(id) ? id : "";
         }
 
         [ServerRpc]
@@ -1015,6 +1038,9 @@ namespace HollowPines.Game
         {
             var audio = HPAudio.Instance;
             if (audio == null || Status.Value != StatusActive) return;
+            // A crouching player makes no sound anyone else can hear either. Keep the position
+            // tracking up to date so uncrouching doesn't emit a burst of backdated steps.
+            if (Crouched.Value) { _lastAudioPos = transform.position; _remoteStepDist = 0f; return; }
 
             Vector3 pos = transform.position;
             if (!_audioPosInit) { _audioPosInit = true; _lastAudioPos = pos; return; }

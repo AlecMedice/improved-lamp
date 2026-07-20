@@ -78,6 +78,7 @@ namespace HollowPines.Game
                     glint.GetComponent<MeshRenderer>().sharedMaterial =
                         MeshUtil.Emissive(Color.black, MeshUtil.Rgb(0xe8d8a0), 2.6f);
                     _glint = glint.transform;
+                    _glintScale = _glint.localScale;
                 }
             }
             else
@@ -91,15 +92,61 @@ namespace HollowPines.Game
                 AddStick(root, new Vector3(-0.15f, 0.06f, 0f), Quaternion.Euler(0f, 15f, 80f), 0.8f, wood);
                 AddStick(root, new Vector3(0.18f, 0.05f, 0.08f), Quaternion.Euler(0f, -40f, 95f), 0.6f, wood);
             }
+
+            CacheMaterials(root); // must run after every piece exists — Update fades these
         }
 
         private Transform _glint;
+        private readonly List<Material> _mats = new List<Material>();
+        private readonly List<Color> _baseCols = new List<Color>();
+        private readonly List<Color> _emisCols = new List<Color>();
+        private Vector3 _glintScale;
+        /// <summary>Fraction of the lifetime a clue stays at full strength before it starts fading.</summary>
+        private const float HoldFraction = 0.5f;
+        /// <summary>Colour a cold trail sinks toward — the forest floor swallowing it.</summary>
+        private static readonly Color ColdCol = MeshUtil.Rgb(0x1a160f);
 
+        /// <summary>Cache each renderer's own material instance so this clue can fade independently.</summary>
+        private void CacheMaterials(Transform root)
+        {
+            foreach (var r in root.GetComponentsInChildren<MeshRenderer>())
+            {
+                Material m = r.sharedMaterial;
+                if (m == null || _mats.Contains(m)) continue;
+                _mats.Add(m);
+                _baseCols.Add(m.HasProperty("_BaseColor") ? m.GetColor("_BaseColor") : Color.white);
+                _emisCols.Add(m.HasProperty("_EmissionColor") ? m.GetColor("_EmissionColor") : Color.black);
+            }
+        }
+
+        /// <summary>
+        /// A trail going cold, made visible. Clues hold full strength for the first half of their
+        /// life, then dim and sink toward the forest floor — so freshness is readable at a glance
+        /// instead of every print looking identical right up to the instant it vanishes. This is
+        /// what makes Wren's longer clue window and Mara's casting deadline mean something in-world.
+        /// Driven by the host's own (escalating) lifetime, so the visuals can't drift from the
+        /// replicated trail.
+        /// </summary>
         private void Update()
         {
-            // Slow bob so a castable print reads as workable, not as scenery.
+            float life = GameManager.Instance != null ? GameManager.Instance.ClueLifetimeSec.Value : 50f;
+            float age01 = Mathf.Clamp01((Time.time - Born) / Mathf.Max(1f, life));
+            float cold = Mathf.InverseLerp(HoldFraction, 1f, age01); // 0 = fresh, 1 = gone
+            float strength = 1f - cold;
+
+            for (int i = 0; i < _mats.Count; i++)
+            {
+                _mats[i].SetColor("_BaseColor", Color.Lerp(_baseCols[i], ColdCol, cold * 0.85f));
+                _mats[i].SetColor("_EmissionColor", _emisCols[i] * strength);
+            }
+
+            // Slow bob so a castable print reads as workable, not as scenery — and it shrinks as the
+            // print goes cold, which is Mara's cue that this one is about to stop being castable.
             if (_glint != null)
+            {
                 _glint.localPosition = new Vector3(0f, 0.5f + Mathf.Sin(Time.time * 1.7f) * 0.07f, 0.2f);
+                _glint.localScale = _glintScale * Mathf.Max(0.15f, strength);
+            }
         }
 
         private static void AddPad(Transform parent, Vector3 pos, Vector3 size, Material mat)
