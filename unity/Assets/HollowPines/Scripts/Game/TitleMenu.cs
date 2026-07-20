@@ -1,7 +1,7 @@
 // The title card + main menu shown when the exe opens — mechanical structure borrowed from
 // R.E.P.O.: a vertical stack of START NEW GAME / JOIN GAME / SETTINGS / QUIT over a live 3D
 // backdrop (a slow drift around the dark camp clearing; the forest is already built by
-// WorldBuilder). Replaces the R1 debug LocalNetworkHud in the Forest scene.
+// WorldBuilder). This is the only pre-connection UI — it drives hosting and joining directly.
 //
 // Visible whenever no connection is up, so a disconnect (host quit, kicked, cancel) lands you
 // back here automatically. JOIN is direct address (Tugboat) until Path B adds Steam invites —

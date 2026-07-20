@@ -1,6 +1,6 @@
 // R1 vertical slice — throwaway on-screen controls for the STEAM path (host/join/invite). Real UI
 // comes in R5. Dormant until you opt in: wrapped in `#if HP_STEAM` (install the Steam packages + add
-// the HP_STEAM define). For the local no-Steam build, use LocalNetworkHud instead.
+// the HP_STEAM define). The no-Steam build uses TitleMenu, which hosts/joins over Tugboat directly.
 #if HP_STEAM
 using FishNet;
 using UnityEngine;

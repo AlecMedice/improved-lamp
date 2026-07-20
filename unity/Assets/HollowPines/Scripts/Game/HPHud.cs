@@ -162,7 +162,7 @@ namespace HollowPines.Game
         private void OnGUI()
         {
             var gm = GameManager.Instance;
-            if (gm == null || !InstanceFinder.IsClientStarted) return; // LocalNetworkHud handles connecting
+            if (gm == null || !InstanceFinder.IsClientStarted) return; // TitleMenu owns the pre-connection UI
             var me = HPPlayer.Local;
 
             // A fresh match start raises the dusk briefing.
