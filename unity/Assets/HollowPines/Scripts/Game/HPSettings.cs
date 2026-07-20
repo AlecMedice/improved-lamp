@@ -11,6 +11,7 @@ namespace HollowPines.Game
         private const string KeySens = "hp_sensitivity";
         private const string KeyVolume = "hp_volume";
         private const string KeyRenderScale = "hp_renderscale";
+        private const string KeyDevSpecialty = "hp_dev_specialty";
 
         public static string PlayerName = "";
         public static float MouseSensMul = 1f;   // multiplier over the sim's base sensitivity
@@ -23,6 +24,15 @@ namespace HollowPines.Game
         /// </summary>
         public static float RenderScale = 0.7f;
 
+        /// <summary>
+        /// DEV ONLY — force which searcher persona you're dealt ("" = the normal random deal).
+        /// Exists because several systems are gated behind a single character (casting is Mara's,
+        /// the flash is Eli's, the battery is Sam's), so testing them by rerolling matches is a
+        /// 1-in-5 lottery. Persisted, so it survives the restarts a test session is made of.
+        /// The host still re-validates the id; an unknown value just falls back to a random deal.
+        /// </summary>
+        public static string DevSpecialty = "";
+
         private static bool _loaded;
 
         public static void Load()
@@ -33,6 +43,7 @@ namespace HollowPines.Game
             MouseSensMul = Mathf.Clamp(PlayerPrefs.GetFloat(KeySens, 1f), 0.2f, 3f);
             MasterVolume = Mathf.Clamp01(PlayerPrefs.GetFloat(KeyVolume, 0.85f));
             RenderScale = Mathf.Clamp(PlayerPrefs.GetFloat(KeyRenderScale, 0.7f), 0.4f, 1f);
+            DevSpecialty = PlayerPrefs.GetString(KeyDevSpecialty, "");
             Apply();
         }
 
@@ -42,6 +53,7 @@ namespace HollowPines.Game
             PlayerPrefs.SetFloat(KeySens, MouseSensMul);
             PlayerPrefs.SetFloat(KeyVolume, MasterVolume);
             PlayerPrefs.SetFloat(KeyRenderScale, RenderScale);
+            PlayerPrefs.SetString(KeyDevSpecialty, DevSpecialty);
             PlayerPrefs.Save();
             Apply();
         }

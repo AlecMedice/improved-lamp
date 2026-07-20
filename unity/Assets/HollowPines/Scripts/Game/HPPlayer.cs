@@ -45,6 +45,8 @@ namespace HollowPines.Game
         public readonly SyncVar<float> FilmProgress = new SyncVar<float>(0f);
         public readonly SyncVar<int> GrabberObjectId = new SyncVar<int>(-1);
         public readonly SyncVar<bool> WantsBigfoot = new SyncVar<bool>(false);
+        /// <summary>DEV: the persona this player asked to be dealt ("" = normal random deal).</summary>
+        public readonly SyncVar<string> DevSpecialty = new SyncVar<string>("");
         /// <summary>Bigfoot only: seconds until the next roar is available (HUD cooldown).</summary>
         public readonly SyncVar<float> RoarReadyIn = new SyncVar<float>(0f);
         /// <summary>Incapacitated only: 0..1 revive progress a teammate has accrued on this player.</summary>
@@ -165,6 +167,9 @@ namespace HollowPines.Game
                 // it for walking (HandleCursor); the match-start teleport locks it for real.
                 if (!string.IsNullOrWhiteSpace(HPSettings.PlayerName))
                     ServerSetName(HPSettings.PlayerName);
+                // Chosen on the title screen, before we connected — send it once on spawn.
+                if (!string.IsNullOrEmpty(HPSettings.DevSpecialty))
+                    ServerSetDevSpecialty(HPSettings.DevSpecialty);
             }
         }
 
@@ -922,6 +927,13 @@ namespace HollowPines.Game
         public void ServerSetWantsBigfoot(bool wants)
         {
             WantsBigfoot.Value = wants;
+        }
+
+        /// <summary>DEV persona request. Validated here so a client can't invent a specialty id.</summary>
+        [ServerRpc]
+        private void ServerSetDevSpecialty(string id)
+        {
+            DevSpecialty.Value = Specialties.IsSpecialtyId(id) ? id : "";
         }
 
         [ServerRpc]

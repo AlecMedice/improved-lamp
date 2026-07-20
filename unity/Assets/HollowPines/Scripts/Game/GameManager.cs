@@ -229,7 +229,18 @@ namespace HollowPines.Game
                 if (p != bigfoot) searcherIds.Add(p.ObjectId.ToString());
             }
 
-            var deal = Specialties.DealSpecialties(searcherIds, null, _rng.NextDouble);
+            // DEV persona overrides (title-screen picker). DealSpecialties honours forced picks and
+            // pulls them out of the random pool, so the remaining searchers still get distinct
+            // characters. Ids were validated when they were set (HPPlayer.ServerSetDevSpecialty).
+            Dictionary<string, string> forced = null;
+            foreach (var p in players)
+            {
+                if (p == bigfoot || !Specialties.IsSpecialtyId(p.DevSpecialty.Value)) continue;
+                if (forced == null) forced = new Dictionary<string, string>();
+                forced[p.ObjectId.ToString()] = p.DevSpecialty.Value;
+            }
+
+            var deal = Specialties.DealSpecialties(searcherIds, forced, _rng.NextDouble);
             foreach (var p in players)
             {
                 if (p == bigfoot || !deal.TryGetValue(p.ObjectId.ToString(), out string spec))

@@ -371,6 +371,19 @@ one — priority **downed teammate → evidence → battery** (life-critical fir
 prompt string, which `HPHud.DrawPrompts` displays verbatim. **One resolver for both the input and
 the prompt**, so the HUD can never advertise an action the key won't perform.
 
+### Dev persona picker *(Unity, 2026-07-19)*
+
+The Unity equivalent of §2.5's `?devSpecialty` debug switch: a **DEV — force persona** strip on the
+title screen (random / Mara / Eli / Wren / Theo / Sam), persisted in PlayerPrefs
+(`HPSettings.DevSpecialty`) so it survives the restarts a test session is made of. The client sends
+it once on spawn; `HPPlayer.ServerSetDevSpecialty` validates the id, and `ServerStartMatch` feeds it
+to `DealSpecialties`'s existing `forced` parameter — which pulls forced picks out of the random pool,
+so everyone else still gets distinct characters.
+
+**Why it was needed:** casting is Mara's, the flash is Eli's and the spare battery is Sam's, so
+testing any one of them otherwise means restarting until the deal hands you that character — a
+1-in-5 lottery per match, and worse when a test needs a specific pair.
+
 ### Not done
 - Hair samples / scat as additional evidence types. Only castable prints ship. Hair caught on a
   branch is the one kind Bigfoot genuinely *would* shed, so it's the natural next addition — and it
