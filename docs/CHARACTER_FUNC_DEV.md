@@ -214,9 +214,30 @@ export const SPECIALTIES = {
 Verify per `CLAUDE.md` after each step (`client tsc + vite build`, `server tsc + npm test`, two-tab feel
 pass); add a server test for any new validation.
 
+## 5b. Briefing-card copy: numbers vs. plain language *(open UX task)*
+
+The Unity dusk-briefing cards (`HPHud.CardFor`) currently **derive every figure from the live
+constants** — Wren's clue window from `MapView.ClueWindow × clueWindowMul`, Sam's revive from
+`GameManager.ReviveSeconds × reviveMul`, and so on. That was deliberate: a hand-typed card silently
+starts lying the moment anyone retunes a specialty, and these values *will* be retuned.
+
+**But raw numbers are not player-facing copy.** "×1.5 clue window" or even "tracks stay readable
+for 22.5 s" is spec language; a player reads *"you can follow a trail long after it has gone cold
+for everyone else."* The owner's call (2026-07-19): **cards should read as plain language about
+what you can DO, not as a stat block.**
+
+Wanted, next pass on the cards:
+- Lead each perk with the *capability*, in the player's words. Numbers become supporting detail, or
+  disappear entirely where the comparison ("farther than anyone", "twice as fast") carries it.
+- Keep the derived values in code as the source of truth so copy can't drift — e.g. pick the phrase
+  from a threshold on the live value, rather than printing the value raw.
+- The Bigfoot card is already close to this voice; the searcher cards are the ones to bring up.
+- Same applies to the in-game prompts and the `[H]` controls card.
+
 ## 6. Decisions
 
-- ✅ **Mara** — identity-only for now; her specialty ships with the non-film evidence system.
+- ✅ **Mara** — ~~identity-only for now~~ **SUPERSEDED 2026-07-19 (owner call): the non-film evidence
+  system was built, and Mara's analysis specialty shipped with it.** See §8.
 - ✅ **Stamina ceiling** — per-player clamp; everyone 100, Sam 150.
 - ✅ **Assignment** — **pure random each match** (distinct deal at match start, per the story). No lobby
   pick/lock; the `?devSpecialty` debug switch covers forcing a persona for testing.
@@ -246,3 +267,119 @@ base constants in §3 are the **Standard** column. Representative dials:
 - **Bold** — specialties are build-defining; the team plans around who they got. Highest swing / risk.
 
 *(Sam's stamina is already set to 150 = Standard here per your call.)*
+
+---
+
+## 8. Non-film evidence + the last two abilities *(built 2026-07-19, Unity)*
+
+Owner call: build the deferred abilities for real rather than shipping cards that describe nothing.
+All three landed together, because Mara's specialty only exists if physical evidence does.
+**Implemented in the Unity build only** — the TypeScript build does not have this system.
+
+### Casting tracks (new second win path)
+
+**Corrected 2026-07-19 after owner review.** The first pass had Bigfoot *shedding plaster casts*,
+which is nonsense — a cast is something a **person makes from a track**. The model now is:
+
+- Some footprints land in ground soft and deep enough to be worth working. The server flags them
+  (`ClueMarker.Castable`, `CastableChance` 16% of dropped prints); they render bigger and darker,
+  ringed with displaced earth and a pale glint so they read as workable from a distance.
+- **Only `MaxCastablePrints` (4) are live at once** — a newer workable print *overrides* the oldest,
+  and they also go cold on the normal clue lifetime. "Available for a time," not forever.
+- **Only Mara can cast one** (`CasterSpecialty = "analysis"`). Holding the interact key runs a
+  `CastSeconds` (6 s) stationary channel; progress lives on the PRINT, so an interrupted cast bleeds
+  off rather than resetting. Completing it is +1 proof and consumes the print.
+- Bigfoot **ruins a workable print by treading on it** (`CastStompRadius`) — its own trail is its
+  liability, and it now has a reason to walk back down it.
+
+**Why Mara and not Wren** (the owner asked; worth recording): Wren *finds* prints — her doubled
+evidence sight and longer clue window are exactly the "which of these is worth anything" skill — but
+casting is lab work with a kit, which is Mara's. The pairing is deliberate and hands the two
+trail-focused personas complementary halves of one loop: **Wren leads the team to the print, Mara
+works it.** A non-Mara searcher standing on a castable print is told what it is and why they can't
+act on it, rather than getting no prompt at all.
+
+**Win condition is PROOF:** `VideosCaptured + EvidenceCollected >= VideosRequired` (still 3). The
+HUD breaks it out as "1 film · 2 casts".
+
+| | Filming | Casting |
+|---|---|---|
+| Speed | fast (3 s in frame) | slow (6 s stationary channel) |
+| Risk | must close on Bigfoot | never requires seeing it |
+| Who | anyone | **Mara only** |
+| Counterplay | Bigfoot hunts the filmer | Bigfoot treads out its own deep tracks |
+
+Both paths then share the same second half: **carry it home to the duffel** (below).
+
+### The duffel — carry, then store *(owner design, 2026-07-19; supersedes both earlier rules)*
+
+Asking what "bagging" meant surfaced that instant banking was the weakest part of the design. The
+owner's replacement is an **extraction loop**, and it's a real improvement:
+
+- Every piece of proof a searcher gathers — a finished video, a cast, **and any evidence type added
+  later** — goes into that player's **carried inventory** (`HPPlayer.CarriedFilm` / `CarriedCasts`;
+  `CarriedTotal` sums whatever exists). It counts for **nothing** while carried.
+- Proof is banked only by walking it to the **evidence duffel beside the RV** and holding the
+  interact key for ~1.2 s (`GameManager.TryDeposit`, `WorldBuilder.DuffelPosition()`). Stored proof
+  is **permanent**.
+- **Bigfoot cannot touch the duffel.** There is no RPC, no radius check, nothing — the bag is not
+  interactable by Bigfoot in any way, by construction.
+- **A grab destroys only what that searcher was carrying.** Stored proof is untouched.
+
+This replaces BOTH earlier rules — the original "a grab wipes all team footage" and the interim
+"a grab wipes everything including casts". The punishment is now proportional to how greedy one
+player chose to be, which is a decision they made, instead of a team-wide reset nobody could
+influence. It also finally gives Bigfoot a *positional* strategy — camp the walk home, when their
+hands are full — without letting it attack the safe zone itself. `TryDeposit` is deliberately
+type-agnostic: a new evidence kind needs a carried counter and no change to the deposit path.
+
+**Win condition:** *stored* proof (`VideosCaptured + EvidenceCollected`) `>= VideosRequired`,
+**raised 3 → 6** (owner call) now that there are two ways to gather proof and more evidence types
+planned — 3 was reachable far too quickly. The HUD top bar says **STORED n/6**, and carried proof
+gets its own pulsing "CARRYING … — UNSAVED" banner, because it's the most decision-relevant number a
+searcher has. *Never hardcode the target in copy — read `VideosRequired` (`HPHud.NeededProof()`).*
+
+**The duffel is readable, not just a drop-off.** Standing at it opens a manifest panel
+(`HPHud.DrawDuffelManifest`): tapes and casts broken out separately, `SECURED n/6`, how many pieces
+are still missing, and what's still unsaved in your own pack. A write-only container gave the team
+no way to check their own case without doing the arithmetic off the top bar.
+
+**Still open:** carry capacity is unlimited (risk scales naturally — more carried, more to lose, so
+a cap may be unnecessary); a grabbed searcher's proof is *destroyed* rather than **dropped as a
+recoverable pile**, which would be the more interesting version and is the obvious next iteration.
+
+### Eli's camera flash (`HPAction.Flash`, default G)
+
+Per §3: range 22 m, ~29° cone, LOS-checked, **3 s dazzle** (reuses the torch-dazzle state, so it
+locks roar + grab), **1 charge per night**. The cost is the ability: firing sets `RevealedFor` on
+Eli, and Bigfoot sees him blazing through the trees for **5 s** — drawn by `HPHud.DrawRevealed`,
+deliberately **independent of the senses overlay**, because the reveal is something the flash did to
+Eli, not something Bigfoot chose to switch on. Everyone near the flash gets a white screen bloom.
+
+### Sam's spare battery (hold interact near a teammate)
+
++50 battery, 1 charge per night (the doc said `charges: 1`; per-night chosen to match Eli and
+because "carries spare batteries" reads plural — flag if you disagree).
+**Gotcha worth remembering:** this is the ONLY place a battery goes *up*, and `ServerVitals` enforces
+battery-only-decreases. The server therefore also sends `TargetGrantBattery` so the receiver raises
+its **local sim** value — without it the client's next vitals push would immediately undo the gift.
+
+### Hold-key disambiguation
+
+Revive, collect, and battery hand-off share one key. `HPPlayer.HoldActionTarget()` resolves exactly
+one — priority **downed teammate → evidence → battery** (life-critical first) — and returns the
+prompt string, which `HPHud.DrawPrompts` displays verbatim. **One resolver for both the input and
+the prompt**, so the HUD can never advertise an action the key won't perform.
+
+### Not done
+- Hair samples / scat as additional evidence types. Only castable prints ship. Hair caught on a
+  branch is the one kind Bigfoot genuinely *would* shed, so it's the natural next addition — and it
+  could sensibly be collectable by **anyone**, unlike casting.
+- Carrying evidence physically rather than banking it instantly (see "bagging" above).
+- No server-side unit tests — the TS `server/test/` suite doesn't cover the Unity build. If this
+  system ever ports back to TS, `filmVisible`-style validation tests should come with it.
+- Balance is untested: `CastableChance` (0.16), `MaxCastablePrints` (4), `CastSeconds` (6) and
+  `CastStompRadius` (2.2) are first guesses. The specific risk to watch: gating the whole second win
+  path behind ONE persona makes it dead weight whenever Mara is downed, absent, or simply not in the
+  deal (fewer than 5 searchers). If that bites, the fallback is letting anyone cast at, say, double
+  the time — keeping Mara's edge without making the path conditional on her.

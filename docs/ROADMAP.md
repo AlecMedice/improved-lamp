@@ -111,7 +111,7 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
   is replaced by the Unity/Steam plan below — the target is a downloadable Steam game with
   host-authoritative relay play (R.E.P.O.-style), not a hosted web build.
 
-## Phase 8 — Unity / Steam migration ⬜ → see [`UNITY_MIGRATION.md`](./UNITY_MIGRATION.md)
+## Phase 8 — Unity / Steam migration 🟡 → see [`UNITY_PORT_NOTES.md`](./UNITY_PORT_NOTES.md)
 The engine pivot: a downloadable Steam game, host-authoritative with Steam Datagram Relay. Sequenced
 **netcode-first, sim-port-last**. Steps R1–R6 in the migration doc. Done so far: **R1** (Unity + FishNet +
 Steam relay "moving cube" slice) scaffolded in [`unity/`](../unity); **R3** — the deterministic
