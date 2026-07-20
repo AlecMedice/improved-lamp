@@ -4,10 +4,17 @@ Asymmetric 1‑vs‑5 multiplayer horror game. Five **searchers** hunt a Pacific
 for proof of **Bigfoot** (played by the 6th player). Browser game: **Three.js client +
 Colyseus server, TypeScript everywhere**. Stylized low‑poly, smooth‑shaded, dusk‑to‑dawn.
 
-Read `docs/` for the full picture: `GAME_DESIGN.md` (GDD, the source of truth for
-rules), `ROADMAP.md` (what's done / next), `PROMPT.md`, `STORY.md`,
-`CHARACTER_FUNC_DEV.md` (searcher-specialty design + build plan). This file is the
-fast orientation + conventions.
+Read `docs/` for the full picture — every file there is current, nothing is a stale plan:
+- `GAME_DESIGN.md` — the GDD, source of truth for rules · `STORY.md` — world + the five characters
+- `CHARACTER_FUNC_DEV.md` — searcher specialties, the evidence/casting system, the duffel
+- `ROADMAP.md` — phases · `July19Work.md` — the Unity port's build log (historical record)
+- `UNITY_PORT_NOTES.md` — Unity traps, conventions and remaining work;
+  **read before touching the Unity build**
+
+This file is the fast orientation + conventions.
+
+**Note:** the game is mid-migration to a **Unity + FishNet desktop build** (`unity/`, `csharp/`).
+The web build below is still the behavioural spec, but new gameplay work lands in Unity.
 
 ## Working style (owner preference)
 On collaborative design/spec sessions (story, mechanics, planning), **pause at decision
