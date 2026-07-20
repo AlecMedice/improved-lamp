@@ -129,6 +129,12 @@ namespace HollowPines.Game
         public readonly SyncVar<float> EscBattery = new SyncVar<float>(1f);
         public readonly SyncVar<float> EscStamina = new SyncVar<float>(1f);
         public readonly SyncVar<float> RoarCooldownSec = new SyncVar<float>((float)RoarCooldown);
+        /// <summary>
+        /// How long a clue survives on the CURRENT night (escalation shortens it: 50 → 40 → 32.5 s).
+        /// Replicated so clients can fade the trail on exactly the host's window — otherwise a print
+        /// looks as fresh at 49 s as at 1 s and then simply vanishes.
+        /// </summary>
+        public readonly SyncVar<float> ClueLifetimeSec = new SyncVar<float>((float)Clue.Lifetime);
 
         // --- Server-only working state ---
         private double _elapsed, _nightElapsed;
@@ -824,6 +830,7 @@ namespace HollowPines.Game
             EscBattery.Value = (float)e.Battery;
             EscStamina.Value = (float)e.Stamina;
             RoarCooldownSec.Value = (float)(RoarCooldown * e.RoarCd);
+            ClueLifetimeSec.Value = (float)(Clue.Lifetime * e.ClueLife);
 
             var players = LivePlayers();
             var bigfoots = players.FindAll(p => p.IsBigfoot);
