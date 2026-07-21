@@ -251,6 +251,10 @@ settings from the pause menu will overwrite it. Fine for a dev toggle, just don'
 
 - **Edit in the repo** (`unity/Assets/HollowPines/`), then `robocopy /E` into
   `C:\Users\amedi\HollowPines\Assets\HollowPines`. Robocopy exit codes < 8 are success.
+  **There are now THREE trees to sync, not one** — `Scripts/`, `Shaders/`, and `Sim/` (which comes
+  from `csharp/HollowPines.Sim`, not from `unity/`). A sync script that only copies `Scripts/` will
+  silently leave the shader or a new sim file behind, and the failure shows up as a magenta sky or a
+  missing type rather than as a copy error.
 - **Smoke-compile outside Unity** before handing over — a scratch csproj (netstandard2.1, LangVersion
   9, `ENABLE_INPUT_SYSTEM`, plus `UNITY_EDITOR` and `UnityEditor*.dll` for a second editor pass)
   against `Library/ScriptAssemblies/*.dll` and the Unity Managed DLLs. This has caught real errors

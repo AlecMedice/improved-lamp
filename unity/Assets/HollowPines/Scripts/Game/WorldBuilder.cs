@@ -724,11 +724,29 @@ namespace HollowPines.Game
             fire.intensity = 3.5f;
         }
 
+        /// <summary>
+        /// Where the moon sits this session, as a unit vector pointing FROM the world TOWARD the moon.
+        /// Seeded, so the sky differs between sessions like everything else, but the elevation is kept
+        /// well up (35°–70°) — a moon near the horizon spends the night behind the treeline, and the
+        /// long shadows it casts read as a bug rather than as atmosphere.
+        /// </summary>
+        private Vector3 _moonDir = new Vector3(0.35f, 0.62f, -0.7f).normalized;
+
         private void BuildLighting()
         {
+            var rand = Rng.Mulberry32(World.Seed ^ 0x11007a11u);
+            float azimuth = (float)(rand() * System.Math.PI * 2.0);
+            float elevation = Mathf.Deg2Rad * (35f + (float)rand() * 35f);
+            _moonDir = new Vector3(
+                Mathf.Cos(elevation) * Mathf.Sin(azimuth),
+                Mathf.Sin(elevation),
+                Mathf.Cos(elevation) * Mathf.Cos(azimuth)).normalized;
+
             var moonGo = new GameObject("Moon");
             moonGo.transform.parent = transform;
-            moonGo.transform.rotation = Quaternion.Euler(52f, -28f, 0f);
+            // Point the light FROM the moon, so the shadows on the ground agree with the disc the
+            // skybox draws. These were unrelated before — there was no disc to disagree with.
+            moonGo.transform.rotation = Quaternion.LookRotation(-_moonDir, Vector3.up);
             _moon = moonGo.AddComponent<Light>();
             _moon.type = LightType.Directional;
             _moon.color = MeshUtil.Rgb(0x9fb6ff);
@@ -740,7 +758,36 @@ namespace HollowPines.Game
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.ExponentialSquared;
             RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+
+            BuildSky();
         }
+
+        /// <summary>
+        /// The procedural skybox (Shaders/NightSky.shader). Replaces what used to be a FLAT SOLID
+        /// COLOUR camera clear — there was no sky and no moon at all, only a directional light
+        /// named "Moon". Colours, star brightness and the moon's position are driven per-frame from
+        /// the same palette that drives the fog, so the sky and the haze can never disagree.
+        /// </summary>
+        private void BuildSky()
+        {
+            var shader = Shader.Find("HollowPines/NightSky");
+            if (shader == null)
+            {
+                // Don't fail silently into a black void — this is exactly the "menu button that does
+                // nothing" failure mode from §4. Keep the old flat fill and say why.
+                Debug.LogWarning("[WorldBuilder] HollowPines/NightSky shader not found — " +
+                                 "falling back to a flat sky. Is Shaders/NightSky.shader imported?");
+                _skyMat = null;
+                return;
+            }
+
+            _skyMat = new Material(shader);
+            RenderSettings.skybox = _skyMat;
+            var cam = Camera.main;
+            if (cam != null) cam.clearFlags = CameraClearFlags.Skybox;
+        }
+
+        private Material _skyMat;
 
         // --- Day-night ------------------------------------------------------------
 
@@ -753,17 +800,22 @@ namespace HollowPines.Game
             public Color Ambient;
             public float FogDensity;
             public float Moon;
-            public SkyKey(float t, int sky, int fog, int amb, float dens, float moon)
-            { T = t; Sky = MeshUtil.Rgb(sky); Fog = MeshUtil.Rgb(fog); Ambient = MeshUtil.Rgb(amb); FogDensity = dens; Moon = moon; }
+            /// <summary>How much of the star field shows — washed out at dusk/dawn, full at 3am.</summary>
+            public float Stars;
+            public SkyKey(float t, int sky, int fog, int amb, float dens, float moon, float stars)
+            {
+                T = t; Sky = MeshUtil.Rgb(sky); Fog = MeshUtil.Rgb(fog); Ambient = MeshUtil.Rgb(amb);
+                FogDensity = dens; Moon = moon; Stars = stars;
+            }
         }
 
         private static readonly SkyKey[] SkyKeys =
         {
-            new SkyKey(0.00f, 0x3a3550, 0x453a4a, 0x40384a, 0.0075f, 0.30f), // dusk
-            new SkyKey(0.25f, 0x141a2e, 0x18202e, 0x1c2434, 0.0100f, 0.38f), // nightfall
-            new SkyKey(0.60f, 0x0a0e1c, 0x0c1220, 0x121a28, 0.0125f, 0.42f), // deep night
-            new SkyKey(0.88f, 0x141a2e, 0x1a2030, 0x1c2434, 0.0105f, 0.36f), // pre-dawn
-            new SkyKey(1.00f, 0x4a4258, 0x584a52, 0x4a4456, 0.0080f, 0.26f), // dawn
+            new SkyKey(0.00f, 0x3a3550, 0x453a4a, 0x40384a, 0.0075f, 0.30f, 0.05f), // dusk
+            new SkyKey(0.25f, 0x141a2e, 0x18202e, 0x1c2434, 0.0100f, 0.38f, 0.65f), // nightfall
+            new SkyKey(0.60f, 0x0a0e1c, 0x0c1220, 0x121a28, 0.0125f, 0.42f, 1.00f), // deep night
+            new SkyKey(0.88f, 0x141a2e, 0x1a2030, 0x1c2434, 0.0105f, 0.36f, 0.70f), // pre-dawn
+            new SkyKey(1.00f, 0x4a4258, 0x584a52, 0x4a4456, 0.0080f, 0.26f, 0.05f), // dawn
         };
 
         /// <summary>Blend the sky/fog/light palette for a 0..1 night progress. Called by GameManager.</summary>
@@ -797,13 +849,41 @@ namespace HollowPines.Game
             RenderSettings.fogDensity = fogDensity;
             RenderSettings.ambientLight = ambient;
             if (_moon != null) _moon.intensity = moon;
-            var cam = Camera.main;
-            if (cam != null)
+
+            if (_skyMat != null)
             {
-                cam.clearFlags = CameraClearFlags.SolidColor;
-                cam.backgroundColor = sky;
+                // Horizon takes the palette's sky colour so it meets the fog seamlessly at the
+                // treeline; the zenith is DARKER, which is the way a real night sky runs — brightest
+                // low down, deepest overhead. Getting that inverted is the usual tell that a sky is
+                // a lerped gradient rather than an observed one.
+                _skyMat.SetColor(SkyHorizonId, sky);
+                _skyMat.SetColor(SkyZenithId, sky * 0.42f);
+                _skyMat.SetColor(SkyGroundId, sky * 0.30f);
+                _skyMat.SetFloat(SkyStarsId, Mathf.Lerp(a.Stars, b.Stars, k) * (TitleMode ? 1.25f : 1f));
+                _skyMat.SetVector(SkyMoonDirId, _moonDir);
+                // The moon dims with the same curve as its light, so the disc and the ground
+                // brightness rise and fall together.
+                _skyMat.SetFloat(SkyMoonBrightId, Mathf.Lerp(1.6f, 3.2f, Mathf.InverseLerp(0.24f, 0.44f, moon)));
+            }
+            else
+            {
+                var cam = Camera.main;
+                if (cam != null)
+                {
+                    cam.clearFlags = CameraClearFlags.SolidColor;
+                    cam.backgroundColor = sky;
+                }
             }
         }
+
+        // Cached shader property ids — SetColor(string) hashes the name on every call, and this runs
+        // every frame from GameManager's clock.
+        private static readonly int SkyHorizonId = Shader.PropertyToID("_HorizonColor");
+        private static readonly int SkyZenithId = Shader.PropertyToID("_ZenithColor");
+        private static readonly int SkyGroundId = Shader.PropertyToID("_GroundColor");
+        private static readonly int SkyStarsId = Shader.PropertyToID("_StarBrightness");
+        private static readonly int SkyMoonDirId = Shader.PropertyToID("_MoonDir");
+        private static readonly int SkyMoonBrightId = Shader.PropertyToID("_MoonBrightness");
 
         // --- helpers ----------------------------------------------------------------
 

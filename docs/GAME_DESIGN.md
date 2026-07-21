@@ -146,6 +146,14 @@ The hunt is **3 nights**, each a compressed **8pm → 8am** (`NIGHT_SECONDS`, da
 - **Materials:** `MeshStandardMaterial`, low‑saturation palette, subtle emissive on lights/eyes.
 - **Atmosphere:** `FogExp2` distance fog tuned per phase; `ACESFilmicToneMapping`; post‑processing pass for **bloom** (flashlights), **vignette**, and light **film grain**.
 - **Sky:** gradient skydome / hemisphere light driven by `timeOfDay` from dusk → night → dawn.
+  > **Unity build (2026‑07‑20):** a procedural skybox shader (`Shaders/NightSky.shader`) —
+  > horizon‑to‑zenith gradient (brightest low, darkest overhead, which is the way a real night sky
+  > runs), a seeded twinkling star field with a milky‑way band that fades out toward dawn, and an
+  > actual **moon** with phase, limb darkening, maria and a halo. The directional "moon" light is
+  > aimed down the same vector the disc is drawn at, so the shadows agree with where the moon is.
+  > It has to be a skybox rather than geometry: `RenderSettings.fog` would erase a world‑space moon
+  > at any believable distance. Before this the sky was a flat solid camera‑clear colour and there
+  > was no moon at all — only a light named after one.
 - **Performance:** instanced trees/ferns, LODs, baked where possible, shadow only from key lights + the local flashlight.
 - **Landmarks (navigation):** the base‑camp clearing (campfire + lit **RV**) anchors the searchers; **cave entrances** (rounded boulder horseshoes with a dark mouth and a faint inner glow) mark Bigfoot's lairs and fast‑travel nodes. Distinct silhouettes help players orient in the dark.
 - **Logging trails — *implemented (Unity)*:** four seed‑derived trails meander out of the camp clearing. They are **real terrain, not decoration**: no trees grow in the corridor, so a trail is a genuinely open lane. Taking one is a **speed‑for‑exposure trade** — fast going and easy navigation, bought with long sightlines that make you simple to spot and simple to film.
