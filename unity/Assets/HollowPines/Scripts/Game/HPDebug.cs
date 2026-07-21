@@ -52,6 +52,15 @@ namespace HollowPines.Game
         // the other one is active?" — is answered by a peak, not by a sample.
         private float _peakDx, _peakDy, _peakResetAt;
 
+        /// <summary>
+        /// Mirror the look readout to the Console while the overlay is open.
+        ///
+        /// The on-screen panel is anchored at (8,8), which is useless if the Game view is scrolled or
+        /// scaled — the panel then sits outside the visible area and the numbers can't be read at all.
+        /// The Console is never clipped, and its output can be copied into a bug report verbatim.
+        /// </summary>
+        private float _nextLogAt;
+
         private void Update()
         {
 #if ENABLE_INPUT_SYSTEM
@@ -83,6 +92,17 @@ namespace HollowPines.Game
                     _peakDy = Mathf.Abs(me.DbgLookDelta.y);
                     _peakResetAt = Time.unscaledTime;
                 }
+            }
+
+            if (_open && me != null && Time.unscaledTime >= _nextLogAt)
+            {
+                _nextLogAt = Time.unscaledTime + 0.5f;
+                Debug.Log($"[look] delta({me.DbgLookDelta.x:0.0},{me.DbgLookDelta.y:0.0}) " +
+                          $"peak/s x{_peakDx:0.0} y{_peakDy:0.0} | " +
+                          $"yaw {me.DbgYawDeg:0.0}->body {me.DbgBodyYawDeg:0.0} | " +
+                          $"pitch {me.DbgPitchDeg:0.0}->cam {me.DbgCamPitchDeg:0.0} | " +
+                          $"moving {me.OwnMoving} camParent {me.DbgCamParent} " +
+                          (me.DbgLookGated ? "GATED" : ""));
             }
 
             float ms = Time.unscaledDeltaTime * 1000f;
