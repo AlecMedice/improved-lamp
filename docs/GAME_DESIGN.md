@@ -154,6 +154,22 @@ The hunt is **3 nights**, each a compressed **8pm → 8am** (`NIGHT_SECONDS`, da
   > It has to be a skybox rather than geometry: `RenderSettings.fog` would erase a world‑space moon
   > at any believable distance. Before this the sky was a flat solid camera‑clear colour and there
   > was no moon at all — only a light named after one.
+  >
+  > **The moon wanes across the three nights, and is a difficulty dial.** Moonlight is the only thing
+  > that lets searchers cross the forest without burning flashlight battery, so dimming it raises the
+  > cost of moving — on top of the battery‑drain escalation already in the `ESCALATION` table.
+  >
+  > | Night | Phase | Moon sets at | Moonless | Light |
+  > |---|---|---|---|---|
+  > | 1 | full | 0.95 | 5% | 0.42 |
+  > | 2 | gibbous | 0.70 | 30% | 0.34 |
+  > | 3 | half | 0.45 | **55%** | 0.24 |
+  >
+  > Every night moves at the **same angular rate**; only the moon's starting point on its rise→set
+  > arc differs (`MoonNight.ArcStart`), so night 3 opens with it already past its peak and descending.
+  > Modelling it as a per‑night *speed* instead would make short nights look like the sky was running
+  > fast. After moonset a starlight floor keeps the map navigable, ambient drops to 62%, the light
+  > stops casting shadows, and the **stars brighten** — night 3 loses its moon and gains its sky.
 - **Performance:** instanced trees/ferns, LODs, baked where possible, shadow only from key lights + the local flashlight.
 - **Landmarks (navigation):** the base‑camp clearing (campfire + lit **RV**) anchors the searchers; **cave entrances** (rounded boulder horseshoes with a dark mouth and a faint inner glow) mark Bigfoot's lairs and fast‑travel nodes. Distinct silhouettes help players orient in the dark.
 - **Logging trails — *implemented (Unity)*:** four seed‑derived trails meander out of the camp clearing. They are **real terrain, not decoration**: no trees grow in the corridor, so a trail is a genuinely open lane. Taking one is a **speed‑for‑exposure trade** — fast going and easy navigation, bought with long sightlines that make you simple to spot and simple to film.

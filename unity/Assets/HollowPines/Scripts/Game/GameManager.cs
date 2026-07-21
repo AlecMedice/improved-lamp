@@ -1444,7 +1444,11 @@ namespace HollowPines.Game
             _displayTod = Mathf.Abs(TimeOfDay.Value - _displayTod) > 0.1f
                 ? TimeOfDay.Value
                 : Mathf.Lerp(_displayTod, TimeOfDay.Value, Time.deltaTime * 1.5f);
-            WorldBuilder.Instance.SetTimeOfDay(MatchPhase.Value == PhasePlaying ? _displayTod : 0.05f);
+            // Night number drives the moon's phase and arc; the lobby/results sky holds night 1's
+            // full moon, which is the brightest and reads best as a backdrop.
+            WorldBuilder.Instance.SetTimeOfDay(
+                MatchPhase.Value == PhasePlaying ? _displayTod : 0.05f,
+                MatchPhase.Value == PhasePlaying ? NightNumber.Value : 1);
         }
 
         /// <summary>
