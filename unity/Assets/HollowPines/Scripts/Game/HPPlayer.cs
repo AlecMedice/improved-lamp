@@ -461,9 +461,29 @@ namespace HollowPines.Game
 #endif
         }
 
+        // --- look diagnostics (F3 overlay) -----------------------------------------
+        // Deliberately raw. The point is to tell apart three failures that look identical in play:
+        //   * the mouse delta itself losing an axis        -> DbgLookDelta stops changing
+        //   * _pitch updating but the camera not following -> DbgPitchDeg moves, DbgCamPitchDeg doesn't
+        //   * _yaw updating but the body not following     -> DbgYawDeg moves, DbgBodyYawDeg doesn't
+        /// <summary>Raw mouse delta this frame, captured before any gating.</summary>
+        public Vector2 DbgLookDelta { get; private set; }
+        public float DbgYawDeg => _yaw * Mathf.Rad2Deg;
+        public float DbgPitchDeg => _pitch * Mathf.Rad2Deg;
+        public float DbgBodyYawDeg => transform.eulerAngles.y;
+        public float DbgCamPitchDeg => _cam == null ? 0f : _cam.transform.localEulerAngles.x;
+        public string DbgCamParent =>
+            _cam == null ? "none" : _cam.transform.parent == null ? "UNPARENTED" : _cam.transform.parent.name;
+        public bool DbgLookGated { get; private set; }
+
         private void HandleLook()
         {
 #if ENABLE_INPUT_SYSTEM
+            // Capture the delta BEFORE the gate, so the overlay can distinguish "the mouse reported
+            // nothing" from "we chose to ignore it" — those need completely different fixes.
+            if (Mouse.current != null) DbgLookDelta = Mouse.current.delta.ReadValue();
+            DbgLookGated = Cursor.lockState != CursorLockMode.Locked;
+
             if (Cursor.lockState != CursorLockMode.Locked || Mouse.current == null) return;
             Vector2 d = Mouse.current.delta.ReadValue();
             float sens = (float)Sim.Player.MouseSensitivity * HPSettings.MouseSensMul;
@@ -845,6 +865,8 @@ namespace HollowPines.Game
         public bool OwnGrounded => _sim == null || _sim.Grounded;
         /// <summary>True while the sim is actually sprinting this frame (not merely holding the key).</summary>
         public bool OwnSprinting => _lastStep.Sprinting;
+        /// <summary>True while the sim is actually moving this frame (the F3 look readout uses it).</summary>
+        public bool OwnMoving => _lastStep.Moving;
         /// <summary>Stamina hit 0 — no sprinting until it regenerates past the recovery threshold.</summary>
         public bool OwnExhausted => _sim != null && _sim.Exhausted;
         public float OwnBattery => _sim != null ? (float)_sim.Battery : Battery.Value;

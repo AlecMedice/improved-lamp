@@ -128,6 +128,21 @@ namespace HollowPines.Game
                                  $"proof {gm.StoredProof}/{gm.VideosRequired.Value}");
             }
             lines.AppendLine($"players {HPPlayer.All.Count}   tick {TickRateLabel()}");
+
+            // LOOK — chasing the "axis sticks while walking" report. Read it as three comparisons:
+            //   delta stops changing while you move the mouse   -> the input is losing the axis
+            //   pitch moves but cam doesn't                     -> the camera write is being lost
+            //   yaw moves but body doesn't                      -> something overwrites rotation
+            var me = HPPlayer.Local;
+            if (me != null)
+            {
+                lines.AppendLine();
+                lines.AppendLine($"look  delta ({me.DbgLookDelta.x,6:0.0},{me.DbgLookDelta.y,6:0.0})" +
+                                 (me.DbgLookGated ? "   [GATED: cursor unlocked]" : ""));
+                lines.AppendLine($"      yaw {me.DbgYawDeg,7:0.0} -> body {me.DbgBodyYawDeg,6:0.0}" +
+                                 $"    pitch {me.DbgPitchDeg,6:0.0} -> cam {me.DbgCamPitchDeg,6:0.0}");
+                lines.AppendLine($"      cam parent {me.DbgCamParent}   moving {(me.OwnMoving ? "yes" : "no")}");
+            }
             lines.AppendLine();
             lines.AppendLine("COST LEVERS — in the order §7 says to pull them");
             lines.AppendLine($"  [1] bloom        {OnOff(_bloom)}   (most expensive single effect)");
