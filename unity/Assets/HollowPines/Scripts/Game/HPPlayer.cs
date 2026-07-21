@@ -278,25 +278,78 @@ namespace HollowPines.Game
             UpdateOwnFootsteps();
             UpdateStatusStings();
 
-            // Only drive the LOCAL pose while the camera is actually parented to us. During the lobby
-            // blend it is un-parented and positioned in world space, where a local-space write would
-            // fling it to the world origin.
-            if (_cam != null && _cam.transform.parent == transform)
+            // Camera posing happens in LateUpdate — see ApplyCameraPose.
+        }
+
+        /// <summary>
+        /// The camera's pose is written HERE, in LateUpdate, and nowhere else.
+        ///
+        /// Two bugs came out of doing it inside Update. First, whatever ran later in the frame won
+        /// — and in the lobby that was the cinematic, which re-posed the camera every frame and
+        /// slerped your aim back toward its shot, so looking around while walking fought a moving
+        /// target and felt like the view was stuck on one axis. Second, the lobby pose was built
+        /// from the PREVIOUS frame's yaw/pitch, because it ran before HandleLook.
+        ///
+        /// LateUpdate fixes both: it is after all input and simulation, so the pose is always built
+        /// from this frame's values and nothing can overwrite it afterwards. This is the standard
+        /// place to drive a camera and it should have been here from the start.
+        /// </summary>
+        private void LateUpdate()
+        {
+            if (!base.IsOwner || _cam == null) return;
+
+            if (_lobbyPosing)
             {
+                ApplyLobbyCameraPose();
+            }
+            else if (_cam.transform.parent == transform)
+            {
+                // Local-space write, valid only while parented — un-parented, a localPosition write
+                // would fling the camera to the world origin.
                 _cam.transform.localPosition = new Vector3(0f, (float)_sim.CurEye + _bobOffset, 0f);
                 _cam.transform.localRotation = Quaternion.Euler(_pitch * Mathf.Rad2Deg, 0f, 0f);
             }
         }
 
         /// <summary>
+        /// The lobby shot. Once the player has fully taken control the cinematic is NOT evaluated at
+        /// all: calling it and slerping against it means every mouse movement is competing with a
+        /// camera that is still flying its own path, which is precisely what made the look feel
+        /// stuck. It only runs while the blend is actually in progress.
+        /// </summary>
+        private void ApplyLobbyCameraPose()
+        {
+            Vector3 fpPos = transform.position + Vector3.up * (float)_sim.CurEye;
+            Quaternion fpRot = Quaternion.Euler(_pitch * Mathf.Rad2Deg, _yaw * Mathf.Rad2Deg + 180f, 0f);
+
+            if (_lobbyCam01 >= 0.999f)
+            {
+                _cam.transform.SetPositionAndRotation(fpPos, fpRot);
+                return;
+            }
+
+            TitleMenu.OrbitCamp(_cam);
+            Vector3 orbitPos = _cam.transform.position;
+            Quaternion orbitRot = _cam.transform.rotation;
+            float k = Mathf.SmoothStep(0f, 1f, _lobbyCam01);
+            _cam.transform.SetPositionAndRotation(
+                Vector3.Lerp(orbitPos, fpPos, k), Quaternion.Slerp(orbitRot, fpRot, k));
+        }
+
+        /// <summary>True while the lobby cinematic owns the camera; read by LateUpdate's posing.</summary>
+        private bool _lobbyPosing;
+
+        /// <summary>
         /// While waiting in the camp lobby, let the camera fly the title-card orbit. Returns true if
         /// the cinematic is driving this frame (so the owner loop skips look/move/abilities entirely).
         /// The camera is un-parented for the orbit and re-parented the moment control is taken back or
         /// the match starts, which is also what makes the hand-off to first-person seamless.
+        /// This decides STATE only — LateUpdate writes the pose.
         /// </summary>
+
         private bool UpdateLobbyCinematic(bool playing)
         {
-            if (_cam == null) return false;
+            if (_cam == null) { _lobbyPosing = false; return false; }
 
             bool wantsControl = false;
 #if ENABLE_INPUT_SYSTEM
@@ -308,6 +361,7 @@ namespace HollowPines.Game
             {
                 // Match (or a menu) owns the camera: re-attach and hand back to the normal path.
                 _lobbyCam01 = 1f;
+                _lobbyPosing = false;
                 if (_cam.transform.parent != transform)
                 {
                     _cam.transform.SetParent(transform, false);
@@ -325,21 +379,9 @@ namespace HollowPines.Game
 
             // Drive the camera in world space for the whole blend; parenting would snap it.
             if (_cam.transform.parent != null) _cam.transform.SetParent(null, true);
+            _lobbyPosing = true; // LateUpdate does the actual posing, after this frame's look input
 
-            var orbitCam = _cam;
-            TitleMenu.OrbitCamp(orbitCam);
-            Vector3 orbitPos = orbitCam.transform.position;
-            Quaternion orbitRot = orbitCam.transform.rotation;
-
-            Vector3 fpPos = transform.position + Vector3.up * (float)_sim.CurEye;
-            Quaternion fpRot = Quaternion.Euler(_pitch * Mathf.Rad2Deg, _yaw * Mathf.Rad2Deg + 180f, 0f);
-
-            float k = Mathf.SmoothStep(0f, 1f, _lobbyCam01);
-            _cam.transform.SetPositionAndRotation(
-                Vector3.Lerp(orbitPos, fpPos, k), Quaternion.Slerp(orbitRot, fpRot, k));
-
-            // Holding RMB means you're driving: fall through to the normal look/move path (which
-            // runs this same frame — the pose above just trails it by one frame during the blend).
+            // Holding RMB means you're driving: fall through to the normal look/move path.
             return !wantsControl;
         }
 
