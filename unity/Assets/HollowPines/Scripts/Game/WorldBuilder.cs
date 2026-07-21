@@ -19,6 +19,7 @@ namespace HollowPines.Game
 
         private Light _moon;
         private float _lastTod = -1f;
+        private float _appliedTod;  // last time-of-day handed to SetTimeOfDay (survives a reseed)
 
         /// <summary>
         /// Local fog-density multiplier. Bigfoot's trade-off (web Phase 3): brighter near vision
@@ -49,6 +50,9 @@ namespace HollowPines.Game
         private static readonly Color LogCol = MeshUtil.Rgb(0x5a4030);
         private static readonly Color GroundCol = MeshUtil.Rgb(0x2e4023);
         private static readonly Color LakeCol = MeshUtil.Rgb(0x2a5a6a);
+        private static readonly Color FernCol = MeshUtil.Rgb(0x35521f);  // undergrowth, a shade under the crowns
+        private static readonly Color BushCol = MeshUtil.Rgb(0x2b4a26);
+        private static readonly Color TrailCol = MeshUtil.Rgb(0x51452f); // packed dirt, warmer than the ground
 
         /// <summary>
         /// The evidence duffel beside the RV — the only place proof becomes permanent, and the one
@@ -72,12 +76,82 @@ namespace HollowPines.Game
             return World;
         }
 
+        /// <summary>
+        /// Swap the whole forest to a different seed and rebuild the geometry.
+        ///
+        /// The host rolls a seed per hosting session and replicates it (GameManager.WorldSeed), so no
+        /// two sessions share a forest — the caves in particular have to move, or a group that plays
+        /// twice already knows every lair. Everything here derives from the seed, so a reseed is
+        /// literally "throw the meshes away and run the builders again".
+        ///
+        /// Anything that CACHES world-derived data has to be invalidated with it. There are only two:
+        /// the map's baked terrain background, and the palette's `_lastTod` early-out. Nothing holds a
+        /// <see cref="GameWorld"/> reference across a reseed — <see cref="HPPlayer"/> and
+        /// <see cref="GameManager"/> both read this static through a property for exactly that reason.
+        /// </summary>
+        public static void SetSeed(uint seed)
+        {
+            if (World != null && World.Seed == seed) return;
+            World = GameWorld.MakeWorld(seed);
+            MapView.InvalidateBackground();
+            if (Instance != null) Instance.Rebuild();
+        }
+
         private void Awake()
         {
             Instance = this;
             EnsureWorld();
+            Build();
+            PostFX.Ensure(gameObject);
+            HPAudio.Ensure(gameObject); // synthesizes every cue + starts the wind/creek beds
+            HPDebug.Ensure(gameObject); // F3 diagnostics overlay (costs nothing while hidden)
+            SetTimeOfDay(0f);
+        }
+
+        /// <summary>Tear the built geometry down and lay it out again from the current World.</summary>
+        private void Rebuild()
+        {
+            // Every mesh, prop and light the builders make is parented to this transform, so the
+            // children ARE the world. PostFX/HPAudio are components on this GameObject rather than
+            // children, so they survive — which matters: re-synthesizing the cues would cut the beds.
+            for (int i = transform.childCount - 1; i >= 0; i--) Destroy(transform.GetChild(i).gameObject);
+            Build();
+            InvalidatePalette();      // _lastTod would otherwise early-out and leave the new moon unlit
+            SetTimeOfDay(_appliedTod);
+        }
+
+        // --- Dev cost levers (the F3 overlay toggles these live) ------------------
+        //
+        // Collected during Build so the overlay never has to search the scene by name, and CLEARED
+        // first because a reseed destroys and recreates every one of these objects — a stale list
+        // here would be a fistful of MissingReferenceExceptions the next time you pressed a key.
+        private readonly List<Renderer> _undergrowthRenderers = new List<Renderer>();
+        private readonly List<Light> _propLights = new List<Light>();
+
+        /// <summary>Undergrowth is ~5,200 scattered meshes; hiding it isolates its cost from the trees'.</summary>
+        public void SetUndergrowthVisible(bool on)
+        {
+            foreach (var r in _undergrowthRenderers) if (r != null) r.enabled = on;
+        }
+
+        /// <summary>The warm prop lights (campfire, RV, cave glows). Realtime point lights are the
+        /// second lever in the §7 perf order, after bloom.</summary>
+        public void SetPropLightsEnabled(bool on)
+        {
+            foreach (var l in _propLights) if (l != null) l.enabled = on;
+        }
+
+        public int PropLightCount => _propLights.Count;
+        public int UndergrowthMeshCount => _undergrowthRenderers.Count;
+
+        private void Build()
+        {
+            _undergrowthRenderers.Clear();
+            _propLights.Clear();
             BuildTerrain();
             BuildForest();
+            BuildUndergrowth();
+            BuildTrails();
             BuildLogs();
             BuildLake();
             BuildRv();
@@ -86,9 +160,12 @@ namespace HollowPines.Game
             BuildTower();
             BuildCamp();
             BuildLighting();
-            PostFX.Ensure(gameObject);
-            HPAudio.Ensure(gameObject); // synthesizes every cue + starts the wind/creek beds
-            SetTimeOfDay(0f);
+
+            // Sweep up the prop lights rather than registering them at each creation site: they're
+            // made by four different builders, and a scan can't be forgotten when a fifth is added.
+            // The moon is Directional and stays out of it — killing that would black out the world.
+            foreach (var l in GetComponentsInChildren<Light>(true))
+                if (l.type != LightType.Directional) _propLights.Add(l);
         }
 
         // --- Terrain -----------------------------------------------------------
@@ -132,11 +209,25 @@ namespace HollowPines.Game
 
         // --- Forest --------------------------------------------------------------
 
+        /// <summary>
+        /// The forest is chunked into a <see cref="ForestGrid"/>×<see cref="ForestGrid"/> grid of
+        /// combined meshes rather than three map-sized ones.
+        ///
+        /// Why: a single combined mesh has a map-sized bounding box, so Unity can never frustum-cull
+        /// any of it — every trunk in the forest is submitted every frame no matter where you look.
+        /// That was survivable at 700 trees and is not at 2,400. Per-cell meshes let the camera throw
+        /// away everything behind it and everything past the fog, which is most of the map. The cost
+        /// is more draw calls (cells × 3 materials), and draw calls are the cheap side of that trade.
+        /// </summary>
+        private const int ForestGrid = 8;
+
         private void BuildForest()
         {
             // MUST mirror WorldData.BuildColliders' rand() call order exactly so the rendered trees
-            // sit precisely on their colliders (same skips, same draws, same seed).
-            var rand = Rng.Mulberry32(Sim.World.Seed ^ 0x9e3779b9u);
+            // sit precisely on their colliders (same skips, same draws, same seed). Note the skips
+            // below are the same four, in the same order — a mismatch here silently desyncs the
+            // visible trunks from the invisible colliders players actually collide with.
+            var rand = Rng.Mulberry32(World.Seed ^ 0x9e3779b9u);
             double half = Sim.World.Size / 2 - 6;
 
             Mesh trunk = MeshUtil.TaperedCylinder(0.4f, 0.22f, 3f, 7);
@@ -144,9 +235,10 @@ namespace HollowPines.Game
             Mesh cone2 = MeshUtil.Cone(1.5f, 2.6f, 8);
             Mesh cone3 = MeshUtil.Cone(1.0f, 2.0f, 8);
 
-            var trunkC = new List<CombineInstance>();
-            var crownDarkC = new List<CombineInstance>();
-            var crownLightC = new List<CombineInstance>();
+            int cells = ForestGrid * ForestGrid;
+            var trunkC = NewCombineBuckets(cells);
+            var crownDarkC = NewCombineBuckets(cells);
+            var crownLightC = NewCombineBuckets(cells);
             int treeIndex = 0;
 
             for (int i = 0; i < Sim.World.TreeCount; i++)
@@ -155,6 +247,8 @@ namespace HollowPines.Game
                 double z = (rand() * 2 - 1) * half;
                 if (System.Math.Sqrt(x * x + z * z) < Sim.World.BaseCampRadius + 4) continue;
                 if (NearCave(x, z, 7)) continue;
+                if (InLake(x, z, 3)) continue;
+                if (Paths.PathDepth(World.Paths, x, z, PathGen.TreeMargin) > 0) continue;
                 double s = 0.7 + rand() * 0.9;
                 double rot = rand() * System.Math.PI * 2; // same draw the collider builder discards
 
@@ -163,17 +257,40 @@ namespace HollowPines.Game
                 var rotQ = Quaternion.Euler(0f, (float)(rot * Mathf.Rad2Deg), 0f);
                 var scale = Vector3.one * (float)s;
 
-                trunkC.Add(CI(trunk, pos, rotQ, scale));
+                int cell = CellOf(x, z);
+                trunkC[cell].Add(CI(trunk, pos, rotQ, scale));
                 var crowns = (treeIndex % 2 == 0) ? crownDarkC : crownLightC;
-                crowns.Add(CI(cone1, pos + Vector3.up * (2.2f * (float)s), rotQ, scale));
-                crowns.Add(CI(cone2, pos + Vector3.up * (4.0f * (float)s), rotQ, scale));
-                crowns.Add(CI(cone3, pos + Vector3.up * (5.6f * (float)s), rotQ, scale));
+                crowns[cell].Add(CI(cone1, pos + Vector3.up * (2.2f * (float)s), rotQ, scale));
+                crowns[cell].Add(CI(cone2, pos + Vector3.up * (4.0f * (float)s), rotQ, scale));
+                crowns[cell].Add(CI(cone3, pos + Vector3.up * (5.6f * (float)s), rotQ, scale));
                 treeIndex++;
             }
 
-            NewCombinedGo("Trunks", trunkC, MeshUtil.Lit(TrunkCol));
-            NewCombinedGo("CrownsDark", crownDarkC, MeshUtil.Lit(CrownDark));
-            NewCombinedGo("CrownsLight", crownLightC, MeshUtil.Lit(CrownLight));
+            var trunkMat = MeshUtil.Lit(TrunkCol);
+            var darkMat = MeshUtil.Lit(CrownDark);
+            var lightMat = MeshUtil.Lit(CrownLight);
+            for (int c = 0; c < cells; c++)
+            {
+                NewCombinedGo($"Trunks{c}", trunkC[c], trunkMat);
+                NewCombinedGo($"CrownsDark{c}", crownDarkC[c], darkMat);
+                NewCombinedGo($"CrownsLight{c}", crownLightC[c], lightMat);
+            }
+        }
+
+        private static List<CombineInstance>[] NewCombineBuckets(int n)
+        {
+            var buckets = new List<CombineInstance>[n];
+            for (int i = 0; i < n; i++) buckets[i] = new List<CombineInstance>();
+            return buckets;
+        }
+
+        /// <summary>Which forest chunk (x,z) falls in. Clamped, so the world edge can't index out.</summary>
+        private static int CellOf(double x, double z)
+        {
+            double size = Sim.World.Size;
+            int cx = Mathf.Clamp((int)((x + size / 2) / size * ForestGrid), 0, ForestGrid - 1);
+            int cz = Mathf.Clamp((int)((z + size / 2) / size * ForestGrid), 0, ForestGrid - 1);
+            return cz * ForestGrid + cx;
         }
 
         private static bool NearCave(double x, double z, double r)
@@ -181,6 +298,143 @@ namespace HollowPines.Game
             foreach (var c in World.Caves)
                 if ((c.X - x) * (c.X - x) + (c.Z - z) * (c.Z - z) < r * r) return true;
             return false;
+        }
+
+        /// <summary>Mirrors WorldData's private lake test — trees don't grow in open water.</summary>
+        private static bool InLake(double x, double z, double margin)
+        {
+            double nx = (x - WorldData.Lake.X) / (WorldData.Lake.Rx + margin);
+            double nz = (z - WorldData.Lake.Z) / (WorldData.Lake.Rz + margin);
+            return nx * nx + nz * nz < 1;
+        }
+
+        // --- Undergrowth + trails -------------------------------------------------
+
+        /// <summary>
+        /// Ferns, bushes and mossy rocks — the layer that makes 2,400 trunks read as a *forest*
+        /// floor rather than a mown field with poles in it.
+        ///
+        /// Deliberately RENDER-ONLY, and deliberately low (knee-to-waist). Undergrowth is not in the
+        /// shared sim at all: it has no collider, so it never blocks a searcher, and it is short
+        /// enough that it can't hide a standing player the line-of-sight check thinks is visible.
+        /// Anything tall enough to break that promise belongs in the sim as a real collider, where
+        /// both the host and every client agree on it.
+        ///
+        /// It draws from its own RNG stream (seed ^ a private xor), so adding or retuning clutter can
+        /// never shift the tree stream and move a collider.
+        /// </summary>
+        private void BuildUndergrowth()
+        {
+            var rand = Rng.Mulberry32(World.Seed ^ 0x5eedb115u);
+            double half = Sim.World.Size / 2 - 6;
+            int cells = ForestGrid * ForestGrid;
+
+            Mesh fern = MeshUtil.Cone(0.55f, 0.75f, 5);
+            Mesh bush = MeshUtil.Cone(0.9f, 1.15f, 6);
+            Mesh rock = MeshUtil.TaperedCylinder(0.5f, 0.34f, 0.42f, 5);
+
+            var fernC = NewCombineBuckets(cells);
+            var bushC = NewCombineBuckets(cells);
+            var rockC = NewCombineBuckets(cells);
+
+            for (int i = 0; i < UndergrowthCount; i++)
+            {
+                double x = (rand() * 2 - 1) * half;
+                double z = (rand() * 2 - 1) * half;
+                double kind = rand();
+                double s = 0.65 + rand() * 0.8;
+                double rot = rand() * System.Math.PI * 2;
+
+                // Keep the camp clearing, the water and the trails themselves clear. Trails get only
+                // the tree margin, so scrub creeps to the edge of a lane without closing it.
+                if (System.Math.Sqrt(x * x + z * z) < Sim.World.BaseCampRadius + 2) continue;
+                if (InLake(x, z, 1)) continue;
+                if (Paths.PathDepth(World.Paths, x, z) > 0) continue;
+
+                float y = (float)World.GetHeight(x, z);
+                var pos = new Vector3((float)x, y, (float)z);
+                var rotQ = Quaternion.Euler(0f, (float)(rot * Mathf.Rad2Deg), 0f);
+                var scale = Vector3.one * (float)s;
+                int cell = CellOf(x, z);
+
+                if (kind < 0.5) fernC[cell].Add(CI(fern, pos, rotQ, scale));
+                else if (kind < 0.85) bushC[cell].Add(CI(bush, pos, rotQ, scale));
+                else rockC[cell].Add(CI(rock, pos - Vector3.up * 0.05f, rotQ, scale));
+            }
+
+            var fernMat = MeshUtil.Lit(FernCol);
+            var bushMat = MeshUtil.Lit(BushCol);
+            var rockMat = MeshUtil.Lit(RockCol);
+            for (int c = 0; c < cells; c++)
+            {
+                TrackUndergrowth(NewCombinedGo($"Ferns{c}", fernC[c], fernMat));
+                TrackUndergrowth(NewCombinedGo($"Bushes{c}", bushC[c], bushMat));
+                TrackUndergrowth(NewCombinedGo($"Rocks{c}", rockC[c], rockMat));
+            }
+        }
+
+        private void TrackUndergrowth(GameObject go)
+        {
+            if (go == null) return; // empty grid cell — NewCombinedGo skips those
+            var r = go.GetComponent<Renderer>();
+            if (r != null) _undergrowthRenderers.Add(r);
+        }
+
+        /// <summary>How many clutter candidates to scatter (rejections thin it, as with the trees).</summary>
+        private const int UndergrowthCount = 5200;
+
+        /// <summary>
+        /// The logging trails as visible ground: a packed-dirt ribbon laid along each seeded polyline.
+        ///
+        /// The corridor is already real to the sim (no trees grow in it) — this is what makes it
+        /// legible, so "follow the trail" is something a player can actually decide to do. Drawn as a
+        /// quad strip that conforms to the terrain and floats a few centimetres over it, the same
+        /// trick the lake sheet uses: the ground is analytic and can't be carved.
+        /// </summary>
+        private void BuildTrails()
+        {
+            var mat = MeshUtil.Lit(TrailCol);
+            foreach (var path in World.Paths)
+            {
+                var verts = new List<Vector3>();
+                var tris = new List<int>();
+                for (int i = 0; i < path.Pts.Count; i++)
+                {
+                    // Segment direction, averaged at the joints so corners don't pinch.
+                    Vec2 prev = path.Pts[Mathf.Max(i - 1, 0)];
+                    Vec2 next = path.Pts[Mathf.Min(i + 1, path.Pts.Count - 1)];
+                    float dx = (float)(next.X - prev.X);
+                    float dz = (float)(next.Z - prev.Z);
+                    float len = Mathf.Sqrt(dx * dx + dz * dz);
+                    if (len < 1e-4f) { dx = 1f; dz = 0f; len = 1f; }
+                    float nx = -dz / len, nz = dx / len; // left normal in XZ
+
+                    // Narrow toward the far end so a trail fades out instead of stopping dead.
+                    float taper = Mathf.Lerp(1f, 0.55f, i / (float)Mathf.Max(1, path.Pts.Count - 1));
+                    float w = (float)path.HalfWidth * taper;
+                    for (int side = -1; side <= 1; side += 2)
+                    {
+                        double px = path.Pts[i].X + nx * w * side;
+                        double pz = path.Pts[i].Z + nz * w * side;
+                        verts.Add(new Vector3((float)px, (float)World.GetHeight(px, pz) + 0.04f, (float)pz));
+                    }
+                }
+                for (int i = 0; i + 1 < path.Pts.Count; i++)
+                {
+                    // Winding matters: vertex `a` is the RIGHT edge (the side loop runs -1 first), so
+                    // (a,b,c) is the order whose normal points up. Get it backwards and the ribbon is
+                    // lit from underneath and backface-culled from above — an invisible trail.
+                    int a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+                    tris.Add(a); tris.Add(b); tris.Add(c);
+                    tris.Add(b); tris.Add(d); tris.Add(c);
+                }
+                var mesh = new Mesh();
+                mesh.SetVertices(verts);
+                mesh.SetTriangles(tris, 0);
+                mesh.RecalculateNormals();
+                mesh.RecalculateBounds();
+                NewMeshGo("Trail", mesh, mat);
+            }
         }
 
         // --- Props ---------------------------------------------------------------
@@ -515,6 +769,7 @@ namespace HollowPines.Game
         /// <summary>Blend the sky/fog/light palette for a 0..1 night progress. Called by GameManager.</summary>
         public void SetTimeOfDay(float t)
         {
+            _appliedTod = t; // remembered so a reseed rebuild resumes the same palette, not dusk
             if (Mathf.Abs(t - _lastTod) < 0.0005f) return;
             _lastTod = t;
             SkyKey a = SkyKeys[0], b = SkyKeys[SkyKeys.Length - 1];
@@ -559,6 +814,10 @@ namespace HollowPines.Game
 
         private GameObject NewCombinedGo(string name, List<CombineInstance> combines, Material mat)
         {
+            // Chunking leaves empty buckets (a grid cell that is all lake, or all camp clearing).
+            // An empty combine yields a zero-vertex mesh and a renderer that costs culling work for
+            // nothing, so skip them outright.
+            if (combines.Count == 0) return null;
             var mesh = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
             mesh.CombineMeshes(combines.ToArray(), true, true);
             mesh.RecalculateBounds();

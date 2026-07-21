@@ -90,24 +90,17 @@ namespace HollowPines.Sim
                            * (st.IsBigfoot ? Player.BigfootSpeedMul : 1) * mods.SpeedMul;
             if (crouching) speed *= Player.CrouchSpeedMul;
 
-            // Terrain obstacles: fallen logs slow hunters only; lake slows everyone (less so Bigfoot).
-            // A hunter can VAULT a log — a stamina-gated hop that clambers over it instead of wading.
-            // While airborne over the log (a vault in progress) the slow doesn't apply.
-            if (!st.IsBigfoot)
+            // Terrain obstacles: fallen logs BLOCK hunters (see the push-out below); the lake slows
+            // everyone. The only way through a log on foot is a VAULT — a stamina-gated hop over it.
+            // Reach is measured with a padded radius because the push-out means a grounded hunter can
+            // never actually stand inside a log: the prompt has to fire from alongside it, not on top.
+            if (!st.IsBigfoot && st.Grounded && input.Vault && st.Stamina >= Player.VaultStaminaCost)
             {
-                double logOvl = Collision.LogOverlap(world.FallenLogs, st.X, st.Z, Player.Radius);
-                if (logOvl > 0 && st.Grounded)
+                if (Collision.LogOverlap(world.FallenLogs, st.X, st.Z, Player.Radius + Player.VaultReach) > 0)
                 {
-                    if (input.Vault && st.Stamina >= Player.VaultStaminaCost)
-                    {
-                        st.Vy = Player.VaultHopSpeed;
-                        st.Grounded = false;
-                        st.Stamina -= Player.VaultStaminaCost;
-                    }
-                    else
-                    {
-                        speed *= SimMath.Lerp(1, Player.LogSlowFactor, logOvl);
-                    }
+                    st.Vy = Player.VaultHopSpeed;
+                    st.Grounded = false;
+                    st.Stamina -= Player.VaultStaminaCost;
                 }
             }
             double lakeDep = Collision.LakeDepth(st.X, st.Z);
@@ -129,6 +122,14 @@ namespace HollowPines.Sim
             double half = PlayerWorldHalf;
             st.X = SimMath.Clamp(st.X, -half, half);
             st.Z = SimMath.Clamp(st.Z, -half, half);
+            // Logs first, so the position the tree pass and the auto-step both work from is already
+            // log-legal — otherwise auto-step could hand the player back a spot inside a trunk.
+            if (!st.IsBigfoot && st.Grounded)
+            {
+                var cleared = Collision.ResolveLogs(world.FallenLogs, st.X, st.Z, Player.Radius);
+                st.X = cleared.X;
+                st.Z = cleared.Z;
+            }
             // Save intended position (post-clamp) so the step check can compare it.
             double ix = st.X;
             double iz = st.Z;

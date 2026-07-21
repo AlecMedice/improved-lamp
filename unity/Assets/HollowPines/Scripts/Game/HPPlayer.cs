@@ -56,16 +56,18 @@ namespace HollowPines.Game
         /// <summary>0..1 progress on the evidence this searcher is currently collecting.</summary>
         public readonly SyncVar<float> CollectProgress01 = new SyncVar<float>(0f);
         /// <summary>
-        /// Proof this searcher is CARRYING and has not yet stored in the duffel — tapes and casts
-        /// counted separately for the HUD, but they behave identically: unsafe until deposited, and
-        /// destroyed if Bigfoot takes you. Any future evidence type joins these and needs no change
-        /// to the deposit path (see GameManager.TryDeposit / CarriedTotal).
+        /// Proof this searcher is CARRYING and has not yet stored in the duffel — tapes, casts and
+        /// hair counted separately for the HUD, but they behave identically: unsafe until deposited,
+        /// and SPILLED on the ground as a recoverable pile if Bigfoot takes you (GameManager.TryGrab
+        /// → SpawnProofPile). Any future evidence type joins these and needs no change to the deposit
+        /// path (see GameManager.TryDeposit / CarriedTotal).
         /// </summary>
         public readonly SyncVar<int> CarriedFilm = new SyncVar<int>(0);
         public readonly SyncVar<int> CarriedCasts = new SyncVar<int>(0);
+        public readonly SyncVar<int> CarriedHair = new SyncVar<int>(0);
 
         /// <summary>Everything unsaved on this player, whatever kind it is.</summary>
-        public int CarriedTotal => CarriedFilm.Value + CarriedCasts.Value;
+        public int CarriedTotal => CarriedFilm.Value + CarriedCasts.Value + CarriedHair.Value;
         /// <summary>Per-night ability charges — Eli's flash, Sam's spare battery. 0 for everyone else.</summary>
         public readonly SyncVar<int> AbilityCharges = new SyncVar<int>(0);
         /// <summary>
@@ -85,7 +87,13 @@ namespace HollowPines.Game
         private const float MaxStepDt = 0.1f;
 
         private PlayerSimState _sim;
-        private GameWorld _world;
+
+        /// <summary>
+        /// The live world. A PROPERTY, not a cached field: the forest is rebuilt when the host's
+        /// replicated seed arrives, and a reference captured in OnStartClient would keep stepping
+        /// this player against the throwaway default world's colliders.
+        /// </summary>
+        private GameWorld _world => WorldBuilder.EnsureWorld();
         private float _yaw;    // radians, sim convention
         private float _pitch;  // radians, camera only
         private bool _pressedJump, _pressedLeap, _pressedVault;
@@ -108,6 +116,7 @@ namespace HollowPines.Game
         private int _reviveTargetSent = -1;
         private int _collectTargetSent = -1;
         private float _depositHeld; // how long the store-at-duffel hold has been running
+        private float _recoverHeld; // ...and the gather-up-a-spilled-pack hold
         private Camera _cam;
 
         // --- Visuals ---
@@ -146,7 +155,7 @@ namespace HollowPines.Game
 
         public override void OnStartClient()
         {
-            _world = WorldBuilder.EnsureWorld();
+            WorldBuilder.EnsureWorld();
             BuildVisuals();
             Role.OnChange += OnRoleChanged;
 
@@ -605,7 +614,7 @@ namespace HollowPines.Game
                 // Hold-E resolves to ONE of three actions. Priority is life-critical first, and
                 // HoldActionTarget() is shared with the HUD prompt so what you're told is exactly
                 // what will happen — never a guess that disagrees with the server.
-                int reviveTarget = -1, collectTarget = -1, batteryTarget = -1;
+                int reviveTarget = -1, collectTarget = -1, batteryTarget = -1, recoverTarget = -1;
                 bool depositing = false;
                 if (playing && HPKeybinds.Down(kb, HPAction.Revive))
                 {
@@ -613,12 +622,18 @@ namespace HollowPines.Game
                     reviveTarget = hold.Kind == HoldAction.Revive ? hold.ObjectId : -1;
                     collectTarget = hold.Kind == HoldAction.Collect ? hold.ObjectId : -1;
                     batteryTarget = hold.Kind == HoldAction.Battery ? hold.ObjectId : -1;
+                    recoverTarget = hold.Kind == HoldAction.Recover ? hold.ObjectId : -1;
                     depositing = hold.Kind == HoldAction.Deposit;
                 }
 
                 // Storing takes a beat of standing at the bag, so it can't be tapped mid-sprint.
                 _depositHeld = depositing ? _depositHeld + Time.deltaTime : 0f;
-                if (_depositHeld >= 1.2f) { _depositHeld = 0f; ServerDeposit(); }
+                if (_depositHeld >= GameManager.DepositSeconds) { _depositHeld = 0f; ServerDeposit(); }
+
+                // Gathering up a spilled pack is the same shape — a beat of standing still, which is
+                // exactly the beat Bigfoot is waiting for if it chose to guard the spill.
+                _recoverHeld = recoverTarget >= 0 ? _recoverHeld + Time.deltaTime : 0f;
+                if (_recoverHeld >= GameManager.PileRecoverSeconds) { _recoverHeld = 0f; ServerRecoverPile(recoverTarget); }
 
                 if (reviveTarget != _reviveTargetSent)
                 {
@@ -682,7 +697,7 @@ namespace HollowPines.Game
             ServerVitals(_sim.FlashlightOn, (float)_sim.Battery, (float)_sim.Stamina, _crouching);
         }
 
-        public enum HoldAction { None, Revive, Deposit, Collect, Battery }
+        public enum HoldAction { None, Revive, Deposit, Collect, Battery, Recover }
 
         /// <summary>What the hold-action key will do right now, and to what.</summary>
         public struct HoldTarget
@@ -717,9 +732,30 @@ namespace HollowPines.Game
                     Label = $"hold {reviveKey} — store {CarriedTotal} in the duffel (safe for good)",
                 };
 
+            // A spilled pack outranks fresh evidence: it's proof someone already paid for, and it's
+            // on a timer. Picking it up is pure upside — the work is done, only the walk is left.
+            ProofPile pile = null;
+            float bestP = GameManager.PileRadius * GameManager.PileRadius;
+            foreach (var pl in ProofPile.All)
+            {
+                if (pl == null) continue;
+                float d = (pl.transform.position - transform.position).sqrMagnitude;
+                if (d <= bestP) { bestP = d; pile = pl; }
+            }
+            if (pile != null)
+            {
+                string whose = pile.OwnerName.Value == "" ? "a dropped" : $"{pile.OwnerName.Value}'s";
+                return new HoldTarget
+                {
+                    Kind = HoldAction.Recover, ObjectId = pile.ObjectId,
+                    Label = $"hold {reviveKey} — recover {whose} pack ({pile.Total} unsaved)",
+                };
+            }
+
             // Casting a print is Mara's work — she carries the kit. (Wren FINDS prints, and her
             // longer evidence sight is what leads the team to them; the casting itself is lab work,
-            // which is why it sits with the scientist rather than the tracker.)
+            // which is why it sits with the scientist rather than the tracker.) Hair needs no kit at
+            // all, so anyone can bag it — that's the whole point of it existing.
             ClueMarker nearest = null;
             float bestD = 2.2f * 2.2f;
             foreach (var c in ClueMarker.Castables)
@@ -728,16 +764,23 @@ namespace HollowPines.Game
                 float d = (c.transform.position - transform.position).sqrMagnitude;
                 if (d <= bestD) { bestD = d; nearest = c; }
             }
+            foreach (var c in ClueMarker.Hairs)
+            {
+                if (c == null) continue;
+                float d = (c.transform.position - transform.position).sqrMagnitude;
+                if (d <= bestD) { bestD = d; nearest = c; }
+            }
             if (nearest != null)
             {
-                bool isCaster = Specialty.Value == "analysis";
+                bool isHair = nearest.CType.Value == ClueMarker.TypeHair;
+                bool canWork = isHair || Specialty.Value == "analysis";
                 return new HoldTarget
                 {
-                    Kind = isCaster ? HoldAction.Collect : HoldAction.None,
-                    ObjectId = isCaster ? nearest.ObjectId : -1,
-                    Label = isCaster
-                        ? $"hold {reviveKey} — cast this print"
-                        : "a castable print — only Mara carries the kit",
+                    Kind = canWork ? HoldAction.Collect : HoldAction.None,
+                    ObjectId = canWork ? nearest.ObjectId : -1,
+                    Label = !canWork ? "a castable print — only Mara carries the kit"
+                        : isHair ? $"hold {reviveKey} — bag this hair sample"
+                        : $"hold {reviveKey} — cast this print",
                 };
             }
 
@@ -878,6 +921,12 @@ namespace HollowPines.Game
         private void ServerDeposit()
         {
             if (GameManager.Instance != null) GameManager.Instance.TryDeposit(this);
+        }
+
+        [ServerRpc]
+        private void ServerRecoverPile(int pileObjectId)
+        {
+            if (GameManager.Instance != null) GameManager.Instance.TryRecoverPile(this, pileObjectId);
         }
 
         [ServerRpc]

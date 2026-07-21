@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
-import { WORLD, DUSK, CAVES } from "../config";
+import { WORLD, DUSK, CAVES, PATHS } from "../config";
 import { mulberry32 } from "../util/rng";
 import {
   makeTerrain, buildColliders, FALLEN_LOGS, LOG_TABLE, LAKE, RV as RV_CFG,
@@ -50,7 +50,7 @@ export class Environment {
    * Static circle colliders (trees, the RV, cave boulders, tower) used for movement + LOS.
    * Built from the shared sim so the client and the authoritative server share one collider set.
    */
-  readonly colliders: Collider[] = buildColliders(WORLD.seed, CAVES);
+  readonly colliders: Collider[] = buildColliders(WORLD.seed, CAVES, PATHS);
 
   private height = makeTerrain(WORLD.seed); // shared terrain sampler
   private creekPoints: THREE.Vector3[] = []; // sampled centre-line, for proximity audio
@@ -105,6 +105,7 @@ export class Environment {
     return (this._simWorld ??= {
       seed: WORLD.seed,
       caves: CAVES,
+      paths: PATHS,
       getHeight: this.height,
       colliders: this.colliders,
       climbables: this.colliders.filter((c) => c.climbH !== undefined),

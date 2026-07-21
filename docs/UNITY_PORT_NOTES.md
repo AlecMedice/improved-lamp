@@ -35,11 +35,31 @@ that is fine for friends-play. Steam relay is a transport swap plus Steamworks.N
 friend invites — revisit when shipping is actually on the table, not before.
 
 **Known bugs, unverified against the Unity build:**
-- Fallen logs **slow** the player; the design calls for them to **block** (vault over, or go around).
+- ~~Fallen logs **slow** the player; the design calls for them to **block**.~~ **Fixed 2026‑07‑20.**
+  `Collision.ResolveLogs` pushes a *grounded hunter* out of the log capsule in both sims; Bigfoot
+  strides over untouched and a vaulter is airborne, so the trunk passes beneath. The vault trigger
+  moved to a **padded reach** (`Player.VaultReach`) — with the push-out in place a hunter can never
+  stand inside a log, so a prompt tested at the bare radius would be one that could never appear.
 - A large dark polygonal artifact was reported near cave mouths in the web build. Caves were rebuilt
   in Unity with a deliberately dark recess sphere — check whether the two are the same thing.
 - The lake was reported as not slowing players. `Collision.LakeDepth` does apply a slow in the shared
   sim, so this may already be fixed in the port — worth confirming in a play pass.
+
+**Planned: a bigger map** (owner, 2026‑07‑20). `World.Size` is 800 m and is the one number the whole
+world scales from, so raising it is cheap — but these do **not** follow automatically, and each is a
+silent degradation rather than an error:
+
+| Also raise | Why |
+|---|---|
+| `World.TreeCount` | It is a fixed number of *placement draws* over a larger area, so density falls as the square of the size increase. 2,500 draws over 800 m ≈ 8 m spacing; the same 2,500 over 1,600 m is 16 m — back to the meadow this pass just fixed. |
+| `PathGen.MaxSteps` | Trails walk `StepLength` (26 m) per step until they leave the map. At 40 steps they exit an 800 m map comfortably; on a bigger one they stop dead in open forest. |
+| `CaveGen.MinRadius` / `RadiusSpan` / `MinSpacing` | Caves sit on a fixed 150–340 m ring, so on a larger map they'd cluster in the middle and leave the rim empty. |
+| `ForestGrid` (WorldBuilder) | 8×8 chunks are sized for an 800 m map (100 m cells). Keep cells near 100 m or frustum culling gets coarse. |
+| `MapView.BgRes` | Baked map background resolution — fixed pixels over a larger world means a blurrier map. |
+
+Terrain, the lake and the lookout are **fixed coordinates** near the origin and will simply sit in one
+corner of a much larger map; they need moving or scaling by hand. Any change here means regenerating
+`golden.json` and re-running the parity harness (see §3).
 
 ---
 
@@ -106,6 +126,36 @@ and cave mouths. `BuildForest` mirrors that RNG stream exactly, so skipping them
 leave invisible tree colliders in the water. Fixing it properly means a lake exclusion in **both**
 sims plus a re-run parity check.
 
+## 3b. The world is rebuilt at runtime now — nothing may cache a `GameWorld`
+
+The host rolls a **per-session seed** (`GameManager.WorldSeed`) and clients rebuild the forest when it
+arrives, so `WorldBuilder.World` is no longer a build-once constant. Two rules fall out, and both
+failures are silent:
+
+- **Never cache the world in a field.** `HPPlayer._world` and `GameManager._world` were
+  `= WorldBuilder.EnsureWorld()` assignments in `Awake`/`OnStartClient`; both are now **properties**
+  that read the static. A captured reference keeps stepping players against the *default* world's
+  colliders — you collide with trees that aren't drawn and walk through ones that are.
+- **Anything baked from the world must be invalidated with it.** `MapView` bakes a terrain image once
+  (`_bg`); without `InvalidateBackground()` the map draws last session's ridges under this session's
+  markers. Same failure class as the mirrored-map bug in §2: internally consistent, quietly wrong.
+
+The reseed itself is just "destroy the children, run the builders again" — every mesh is parented to
+the `WorldBuilder` transform, while `PostFX`/`HPAudio` are *components* on that GameObject and so
+survive (re-synthesizing the audio cues would cut the wind beds).
+
+## 3c. Adding a rejection to the tree loop is safe; adding a *draw* is not
+
+`WorldData.BuildColliders` and `WorldBuilder.BuildForest` walk the same RNG stream in lockstep so the
+rendered trunks land exactly on the invisible colliders. This pass added two rejections (lake, trail
+corridor) to **both**. That is safe *only* because every `continue` sits **before** the scale and
+rotation draws — rejecting a candidate consumes no extra numbers, so later candidates are unaffected.
+
+Insert a `rand()` call, or move a rejection below the draws in one file and not the other, and the two
+loops desync partway through: the first few hundred trees look right and the rest of the forest has
+its colliders offset from its trunks. **Undergrowth deliberately uses its own stream**
+(`seed ^ 0x5eedb115`) so clutter can be retuned freely without ever touching tree placement.
+
 ## 4. A ported mechanic isn't ported until its FEEDBACK is
 
 Five separate "bugs" this session were working mechanics with missing or misleading feedback:
@@ -163,12 +213,39 @@ between choppy and smooth — fill rate scales with the *square* of resolution.
 `HPQuality` is the Unity counterpart: URP `renderScale` (default 0.7, live slider in the pause menu),
 MSAA off, shadow distance 50 → 35 m. If more is needed, in order: **bloom** in `PostFX` (full-screen,
 multi-pass — the most expensive single effect), then the realtime point lights in `WorldBuilder`,
-then `World.TreeCount`. **Do not start with the IMGUI HUD** — it is not the bottleneck.
+then `UndergrowthCount`, then `World.TreeCount`. **Do not start with the IMGUI HUD** — it is not the
+bottleneck.
+
+**The forest is chunked, and it has to stay that way.** Trees and undergrowth build into an 8×8 grid
+of combined meshes (`ForestGrid`) rather than one mesh per material. A single combined mesh has a
+map-sized bounding box, so Unity **can never frustum-cull any of it** — every trunk is submitted every
+frame regardless of where you look. That was survivable at 700 trees and is not at 2,400. Per-cell
+meshes let the camera discard everything behind it and everything past the fog, which is most of the
+map; the cost is more draw calls, which is the cheap side of that trade. If you ever "simplify" this
+back to one combine, the frame time will not show it in a small test scene and will show it badly on
+integrated graphics at native resolution.
 
 Separately, input latency: stepping the sim at a fixed 20 Hz and rendering an interpolation between
 the last two states parks the camera a full step (50 ms) in the past. `StepPlayer` is pure and takes
 `dt`, so the owner steps **once per frame with the real frame delta** (hitch-clamped). This reverts
 when FishNet prediction is adopted (see §0), which owns the cadence itself.
+
+## 7b. Play-testing tools (F3 overlay + seed pin)
+
+Two dev affordances exist specifically so a play-test produces *data* instead of impressions:
+
+- **`F3` — diagnostics overlay** (`HPDebug`). Frame time + worst frame in the last second, render
+  scale, the world seed, tree/trail/undergrowth/light counts, match phase, player count, tick rate.
+  Number keys flip the **cost levers live, in the §7 order**: `1` bloom, `2` prop lights,
+  `3` undergrowth, `4` shadows. The point is that "it felt slow" doesn't distinguish four causes with
+  four different fixes, and toggling beats rebuilding.
+- **Seed pin** (title screen, under the dev persona strip). The forest is rolled per hosting session,
+  so **a bug found in one map is otherwise unreproducible** — the map is gone when you restart. The
+  overlay prints the live seed; paste it into the field to get that exact forest back. Blank/`0` =
+  random. Ignored when joining, since the host owns the seed.
+
+Note `4` writes `QualitySettings.shadowDistance`, the same knob `HPQuality` owns — re-applying
+settings from the pause menu will overwrite it. Fine for a dev toggle, just don't read it as sticky.
 
 ## 8. Workflow
 

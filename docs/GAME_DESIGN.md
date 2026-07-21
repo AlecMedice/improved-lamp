@@ -23,6 +23,7 @@
 - **Filming:** Hold the camera on Bigfoot, in frame and in range, to build a clip; ~3s in frame = one solid video. You must actually *see* Bigfoot — usually by lighting it with your flashlight or catching its eye-shine.
 - **Roared → frozen:** Bigfoot's roar **freezes** every nearby searcher in fear for 30s — you can still look around, but you can't move or film.
 - **Grabbed → incapacitated:** if Bigfoot reaches a frozen searcher and grabs them, they're **incapacitated for 60s** (screen fades to black, Bigfoot can drag them anywhere) and the **team's collected footage is erased**. After that they **recover**, but move **25% slower for 30s**. No permanent elimination.
+  > **Superseded in the Unity build (2026-07-20).** Proof is now *carried* and only banked at the camp duffel, so a grab **spills what that one searcher was carrying** as a recoverable pile on the ground — it never touches the team's banked total, and it destroys nothing. See `CHARACTER_FUNC_DEV.md` §8. The rule above is the **web build's** behaviour and is retained because the web build is still the behavioural spec for everything else.
 - **Cooperative tools:** Each searcher has one specialty (see `STORY.md`), but all share the same base verbs: move, sprint, flashlight, film, ping.
 - **Resources:** Stamina (sprint — hitting empty leaves you winded until it recovers), flashlight battery.
 
@@ -31,7 +32,7 @@
 - **Start:** Bigfoot begins at one of several **cave** lairs out in the forest — never at the searchers' camp.
 - **Strengths:** ~1.2× searcher speed and better night vision.
 - **Roar (right-click):** an AoE fear blast (~25m) that **freezes** nearby searchers for 30s. ~25s cooldown.
-- **Grab (left-click):** grab a **frozen** searcher to incapacitate them for 60s — **drag them anywhere** and **erase the team's footage**. Left-click again to drop them.
+- **Grab (left-click):** grab a **frozen** searcher to incapacitate them for 60s — **drag them anywhere** and **erase the team's footage** *(Unity build: spills their carried proof as a recoverable pile instead — see §2.1)*. Left-click again to drop them.
 - **Cave network (fast travel):** the caves form a tunnel network. In a cave mouth, open the **map (`M`) and click a destination cave** to emerge there — flank the team or escape a stakeout. (~2s cooldown.)
 - **The trail problem:** Bigfoot **leaves a trail** — footprints and broken branches — that hunters follow. Moving more = a longer, fresher trail; standing still hides you.
 - **Senses:** sees who is currently **filming** (their recording light) and which searchers are **frozen** (a grab target) vs **incapacitated**.
@@ -86,7 +87,7 @@ The hunt is **3 nights**, each a compressed **8pm → 8am** (`NIGHT_SECONDS`, da
 | `W A S D` | Move |
 | Mouse | Look |
 | `Shift` | Sprint (drains stamina) |
-| `Space` | Jump / vault low obstacles |
+| `Space` | Jump / **vault a fallen log** (stamina‑gated — logs are solid, so vaulting or going around are the only ways past) |
 | `F` | Toggle flashlight |
 | Right Mouse (hold) | Raise camera & **film** Bigfoot (build a video clip) |
 | `M` | Toggle the **map** (your position, base camp, caves, teammates, the clue trail) |
@@ -147,6 +148,8 @@ The hunt is **3 nights**, each a compressed **8pm → 8am** (`NIGHT_SECONDS`, da
 - **Sky:** gradient skydome / hemisphere light driven by `timeOfDay` from dusk → night → dawn.
 - **Performance:** instanced trees/ferns, LODs, baked where possible, shadow only from key lights + the local flashlight.
 - **Landmarks (navigation):** the base‑camp clearing (campfire + lit **RV**) anchors the searchers; **cave entrances** (rounded boulder horseshoes with a dark mouth and a faint inner glow) mark Bigfoot's lairs and fast‑travel nodes. Distinct silhouettes help players orient in the dark.
+- **Logging trails — *implemented (Unity)*:** four seed‑derived trails meander out of the camp clearing. They are **real terrain, not decoration**: no trees grow in the corridor, so a trail is a genuinely open lane. Taking one is a **speed‑for‑exposure trade** — fast going and easy navigation, bought with long sightlines that make you simple to spot and simple to film.
+- **Undergrowth:** ferns, bushes and mossy rocks fill the forest floor. Deliberately **render‑only and knee‑to‑waist height** — clutter never blocks a searcher, and it is too low to hide a standing player that the line‑of‑sight check believes is visible. Anything tall enough to break that promise has to be a real collider in the shared sim instead.
 
 ---
 
@@ -167,6 +170,14 @@ The hunt is **3 nights**, each a compressed **8pm → 8am** (`NIGHT_SECONDS`, da
 
 - **Minimal in‑world HUD:** flashlight battery, stamina, footage captured/required, current phase clock, contextual prompt, filming viewfinder + clip bar.
 - **Map (`M`) — *implemented*:** top‑down overlay for both roles showing the player's position + heading, base camp, and caves. Hunters also see teammates, **stakeout pings**, and the **recent clue trail — but only while in contact** (Bigfoot heard nearby, or recent footprints in sight). For Bigfoot in a cave mouth, caves become **clickable fast‑travel destinations** (with a fade‑to‑black transition). Opening the map frees the cursor and pauses local movement.
+  > **Unity build divergence (2026‑07‑20): caves start hidden from searchers.** The map used to hand
+  > the team all five lairs at spawn, which deleted the exploration half of the game — you could stake
+  > out Bigfoot's front doors on night 1 without having seen the forest. A mouth now appears only once
+  > a searcher physically walks within ~22 m of it. Discovery is **per cave** (finding one says nothing
+  > about the others) and **team‑wide** (all five searchers get it, so scouting is worth calling out),
+  > and it **resets at the start of each match**. Bigfoot always sees its own network. The map footer
+  > counts them off — `caves found 2/5` — so a blank map reads as "not found yet" rather than "this
+  > map doesn't show caves".
 - **Stakeout pings (`Q` / map click) — *implemented*:** hunters drop a shared marker (one active per hunter; ~35s lifetime) to coordinate. Pings show on every hunter's map and as an in‑world beacon; they're hidden from Bigfoot.
 - **Bigfoot HUD:** *(planned)* ability cooldowns, senses toggle, searchers‑caught counter.
 - **Diegetic where possible** (battery on the flashlight model, footage in a field journal).

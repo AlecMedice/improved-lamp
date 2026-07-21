@@ -20,6 +20,8 @@ import {
   generateCaves,
   nearestCaveIndex,
   caveEmergePoint,
+  generatePaths,
+  pathDepth,
   buildColliders,
   makeWorld,
   stepPlayer,
@@ -73,8 +75,27 @@ const nearestProbes = [
   { x: caves[0].x + CAVE.triggerRadius + 0.5, z: caves[0].z, i: nearestCaveIndex(caves, caves[0].x + CAVE.triggerRadius + 0.5, caves[0].z) },
 ];
 
+// 4c) forest trails — the tree-free corridors out of camp. Pinned by shape (point counts + the
+// first/last point of each) plus a few pathDepth probes, since the full polylines are large.
+const paths = generatePaths(SEED);
+const pathSummary = {
+  count: paths.length,
+  shapes: paths.map((p) => ({
+    n: p.pts.length,
+    halfWidth: p.halfWidth,
+    first: p.pts[0],
+    last: p.pts[p.pts.length - 1],
+  })),
+  depthProbes: [
+    { x: paths[0].pts[0].x, z: paths[0].pts[0].z },
+    { x: paths[1].pts[2].x, z: paths[1].pts[2].z },
+    { x: 0, z: 0 },
+    { x: 399, z: 399 },
+  ].map(({ x, z }) => ({ x, z, d: pathDepth(paths, x, z), dm: pathDepth(paths, x, z, 1.2) })),
+};
+
 // 5) colliders
-const colliders = buildColliders(SEED, caves);
+const colliders = buildColliders(SEED, caves, paths);
 const colliderSummary = {
   count: colliders.length,
   first3: colliders.slice(0, 3),
@@ -152,7 +173,7 @@ const dealForced = dealSpecialties(dealSids, { c: "photo" }, mulberry32(999));
 
 const golden = {
   seed: SEED, rngStream, noiseSamples, terrainSamples, caves, caveEmerge, nearestProbes,
-  colliderSummary, worldSummary, hunterTrajectory, bigfootTrajectory,
+  pathSummary, colliderSummary, worldSummary, hunterTrajectory, bigfootTrajectory,
   specialties: { specialtyIds, characterNames, getterProbe, dealSids, dealPlain, dealForced },
 };
 

@@ -1,6 +1,6 @@
 import { PLAYER } from "./constants";
 import { clamp, lerp } from "./math";
-import { resolveCollision, logOverlap, lakeDepth, groundHeightAt, climbSupport } from "./collision";
+import { resolveCollision, resolveLogs, logOverlap, lakeDepth, groundHeightAt, climbSupport } from "./collision";
 import type { World } from "./index";
 
 /** Per-player physics state the sim owns. Presentation (bob, audio, light) lives in LocalPlayer. */
@@ -79,19 +79,15 @@ export function stepPlayer(st: PlayerSimState, input: MoveInput, world: World, m
   let speed = (sprinting ? PLAYER.sprintSpeed : PLAYER.walkSpeed) * (st.isBigfoot ? PLAYER.bigfootSpeedMul : 1) * mods.speedMul;
   if (crouching) speed *= PLAYER.crouchSpeedMul;
 
-  // Terrain obstacles: fallen logs slow hunters only; lake slows everyone (less so Bigfoot).
-  // A hunter can VAULT a log — a stamina-gated hop that clambers over it instead of wading (slowed).
-  // While airborne over the log (a vault in progress) the slow doesn't apply.
-  if (!st.isBigfoot) {
-    const logOvl = logOverlap(world.fallenLogs, st.x, st.z, PLAYER.radius);
-    if (logOvl > 0 && st.grounded) {
-      if (input.vault && st.stamina >= PLAYER.vaultStaminaCost) {
-        st.vy = PLAYER.vaultHopSpeed;
-        st.grounded = false;
-        st.stamina -= PLAYER.vaultStaminaCost;
-      } else {
-        speed *= lerp(1, PLAYER.logSlowFactor, logOvl);
-      }
+  // Terrain obstacles: fallen logs BLOCK hunters (see the push-out below); the lake slows everyone.
+  // The only way through a log on foot is a VAULT — a stamina-gated hop that carries you over it.
+  // Reach is measured with a padded radius because the push-out means a grounded hunter can never
+  // actually stand inside a log: the prompt has to fire from alongside it, not on top of it.
+  if (!st.isBigfoot && st.grounded && input.vault && st.stamina >= PLAYER.vaultStaminaCost) {
+    if (logOverlap(world.fallenLogs, st.x, st.z, PLAYER.radius + PLAYER.vaultReach) > 0) {
+      st.vy = PLAYER.vaultHopSpeed;
+      st.grounded = false;
+      st.stamina -= PLAYER.vaultStaminaCost;
     }
   }
   const lakeDep = lakeDepth(st.x, st.z);
@@ -111,6 +107,13 @@ export function stepPlayer(st: PlayerSimState, input: MoveInput, world: World, m
   const half = PLAYER_WORLD_HALF;
   st.x = clamp(st.x, -half, half);
   st.z = clamp(st.z, -half, half);
+  // Logs first, so the position the tree pass and the auto-step both work from is already
+  // log-legal — otherwise auto-step could hand the player back a spot inside a trunk.
+  if (!st.isBigfoot && st.grounded) {
+    const cleared = resolveLogs(world.fallenLogs, st.x, st.z, PLAYER.radius);
+    st.x = cleared.x;
+    st.z = cleared.z;
+  }
   // Save intended position (post-clamp) so the step check can compare it.
   const ix = st.x;
   const iz = st.z;

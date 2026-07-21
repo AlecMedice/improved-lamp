@@ -15,6 +15,7 @@ namespace HollowPines.Game
 
         private ColorAdjustments _colorAdjustments;
         private Vignette _vignette;
+        private Bloom _bloom;
         // Two independent reasons to lift exposure. Tracked separately and composed in ApplyExposure
         // so neither can clobber the other (the title screen ends exactly when a role is assigned).
         private bool _bigfootVision;
@@ -33,10 +34,10 @@ namespace HollowPines.Game
 
             var profile = ScriptableObject.CreateInstance<VolumeProfile>();
 
-            var bloom = profile.Add<Bloom>();
-            bloom.intensity.Override(0.9f);
-            bloom.threshold.Override(0.85f);
-            bloom.scatter.Override(0.65f);
+            _bloom = profile.Add<Bloom>();
+            _bloom.intensity.Override(0.9f);
+            _bloom.threshold.Override(0.85f);
+            _bloom.scatter.Override(0.65f);
 
             _vignette = profile.Add<Vignette>();
             _vignette.intensity.Override(0.33f);
@@ -87,6 +88,19 @@ namespace HollowPines.Game
             if (_vignette != null) _vignette.intensity.Override(on ? 0.18f : 0.33f);
             ApplyExposure();
         }
+
+        /// <summary>
+        /// DEV — toggle bloom at runtime (the F3 overlay drives this). Bloom is full-screen and
+        /// multi-pass, the single most expensive effect we run, so it is the first thing to switch
+        /// off when hunting a frame-rate problem. Toggling the OVERRIDE rather than the effect's
+        /// active flag keeps the tuned values intact for when it goes back on.
+        /// </summary>
+        public void SetBloomEnabled(bool on)
+        {
+            if (_bloom != null) _bloom.active = on;
+        }
+
+        public bool BloomEnabled => _bloom == null || _bloom.active;
 
         private void ApplyExposure()
         {

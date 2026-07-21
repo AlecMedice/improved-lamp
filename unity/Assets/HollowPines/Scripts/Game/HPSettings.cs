@@ -12,6 +12,7 @@ namespace HollowPines.Game
         private const string KeyVolume = "hp_volume";
         private const string KeyRenderScale = "hp_renderscale";
         private const string KeyDevSpecialty = "hp_dev_specialty";
+        private const string KeyDevWorldSeed = "hp_dev_worldseed";
 
         public static string PlayerName = "";
         public static float MouseSensMul = 1f;   // multiplier over the sim's base sensitivity
@@ -33,6 +34,15 @@ namespace HollowPines.Game
         /// </summary>
         public static string DevSpecialty = "";
 
+        /// <summary>
+        /// DEV ONLY — force the world seed when HOSTING (0 = roll a fresh forest each session).
+        /// The forest, the trail network and the cave positions all derive from this, so without an
+        /// override a bug you hit in one session's map is unreproducible: the map is gone the moment
+        /// you restart. Set it to the seed the F3 overlay printed and you get that exact forest back.
+        /// Ignored when joining — the host owns the seed and replicates it.
+        /// </summary>
+        public static uint DevWorldSeed;
+
         private static bool _loaded;
 
         public static void Load()
@@ -44,6 +54,8 @@ namespace HollowPines.Game
             MasterVolume = Mathf.Clamp01(PlayerPrefs.GetFloat(KeyVolume, 0.85f));
             RenderScale = Mathf.Clamp(PlayerPrefs.GetFloat(KeyRenderScale, 0.7f), 0.4f, 1f);
             DevSpecialty = PlayerPrefs.GetString(KeyDevSpecialty, "");
+            // Stored as a string: PlayerPrefs has no uint, and seeds run past int.MaxValue.
+            uint.TryParse(PlayerPrefs.GetString(KeyDevWorldSeed, "0"), out DevWorldSeed);
             Apply();
         }
 
@@ -54,6 +66,7 @@ namespace HollowPines.Game
             PlayerPrefs.SetFloat(KeyVolume, MasterVolume);
             PlayerPrefs.SetFloat(KeyRenderScale, RenderScale);
             PlayerPrefs.SetString(KeyDevSpecialty, DevSpecialty);
+            PlayerPrefs.SetString(KeyDevWorldSeed, DevWorldSeed.ToString());
             PlayerPrefs.Save();
             Apply();
         }

@@ -37,6 +37,7 @@ namespace HollowPines.Parity
             TerrainSamples(g, seed);
             CavesCheck(g, seed);
             CaveHelpers(g, seed);
+            PathsCheck(g, seed);
             CollidersCheck(g, seed);
             WorldCheck(g, seed);
             HunterTrajectory(g, seed);
@@ -114,10 +115,41 @@ namespace HollowPines.Parity
                     probe.GetProperty("i").GetInt32());
         }
 
+        private static void PathsCheck(JsonElement g, uint seed)
+        {
+            var paths = Paths.GeneratePaths(seed);
+            var ps = g.GetProperty("pathSummary");
+            ExactI("path count", paths.Count, ps.GetProperty("count").GetInt32());
+
+            var shapes = ps.GetProperty("shapes");
+            for (int i = 0; i < paths.Count && i < shapes.GetArrayLength(); i++)
+            {
+                var s = shapes[i];
+                // Point COUNT is exact-integer: it depends on where the meander crosses the map edge,
+                // so an off-by-one here means the heading walk diverged, not that a float drifted.
+                ExactI($"path[{i}].pts", paths[i].Pts.Count, s.GetProperty("n").GetInt32());
+                Near($"path[{i}].halfWidth", paths[i].HalfWidth, s.GetProperty("halfWidth").GetDouble());
+                Near($"path[{i}].first.x", paths[i].Pts[0].X, s.GetProperty("first").GetProperty("x").GetDouble());
+                Near($"path[{i}].first.z", paths[i].Pts[0].Z, s.GetProperty("first").GetProperty("z").GetDouble());
+                var last = paths[i].Pts[paths[i].Pts.Count - 1];
+                Near($"path[{i}].last.x", last.X, s.GetProperty("last").GetProperty("x").GetDouble());
+                Near($"path[{i}].last.z", last.Z, s.GetProperty("last").GetProperty("z").GetDouble());
+            }
+
+            foreach (var p in ps.GetProperty("depthProbes").EnumerateArray())
+            {
+                double x = p.GetProperty("x").GetDouble();
+                double z = p.GetProperty("z").GetDouble();
+                Near($"pathDepth({x},{z})", Paths.PathDepth(paths, x, z), p.GetProperty("d").GetDouble());
+                Near($"pathDepth({x},{z},margin)", Paths.PathDepth(paths, x, z, 1.2), p.GetProperty("dm").GetDouble());
+            }
+        }
+
         private static void CollidersCheck(JsonElement g, uint seed)
         {
             var caves = Caves.GenerateCaves(seed);
-            var colliders = WorldData.BuildColliders(seed, caves);
+            var paths = Paths.GeneratePaths(seed);
+            var colliders = WorldData.BuildColliders(seed, caves, paths);
             var cs = g.GetProperty("colliderSummary");
             ExactI("collider count", colliders.Count, cs.GetProperty("count").GetInt32());
             var first3 = cs.GetProperty("first3");

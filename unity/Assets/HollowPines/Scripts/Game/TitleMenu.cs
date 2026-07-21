@@ -58,18 +58,79 @@ namespace HollowPines.Game
         }
 
         /// <summary>
-        /// The slow cinematic drift around the campfire. Shared with the camp lobby (HPPlayer keeps
-        /// it running there whenever the player isn't holding right-mouse to take control), so the
-        /// game never drops from a moving title card to a motionless first-person shot.
+        /// The title cinematic. Shared with the camp lobby (HPPlayer keeps it running there whenever
+        /// the player isn't holding right-mouse to take control), so the game never drops from a
+        /// moving title card to a motionless first-person shot.
+        ///
+        /// Three shots on a loop rather than one endless orbit. Camp is still the anchor — it opens
+        /// and closes there, and it is the only lit thing in the frame — but the forest is now the
+        /// thing the camera moves THROUGH and looks AT, because there is finally a forest to show:
+        /// the treeline used to be a thin scatter of poles that looked better ignored.
+        ///
+        /// Every shot is derived from the seeded world, so the title card is this session's actual
+        /// map. Cuts, not blends: a hard cut costs nothing and reads as intent, where a slow blend
+        /// between two moving shots just reads as drift.
         /// </summary>
         public static void OrbitCamp(Camera cam)
         {
-            // A close, low orbit so the fire and the RV fill the frame and the treeline sits behind
-            // them — the original wide 26 m arc read as an empty dark field.
-            float a = Time.time * 0.05f;
-            var target = new Vector3(0f, 1.2f, 0f); // the campfire
-            cam.transform.position = target + new Vector3(Mathf.Sin(a) * 12f, 3.2f, Mathf.Cos(a) * 12f);
-            cam.transform.LookAt(target + new Vector3(0f, 0.6f, 0f));
+            const float shot = 11f; // seconds per shot
+            float t = Time.time % (shot * 3f);
+            int which = (int)(t / shot);
+            float k = (t - which * shot) / shot; // 0..1 within the shot
+
+            var world = WorldBuilder.EnsureWorld();
+            float campY = world != null ? (float)world.GetHeight(0, 0) : 0f;
+            var fire = new Vector3(0f, campY + 1.2f, 0f);
+
+            switch (which)
+            {
+                case 0:
+                {
+                    // Shot 1 — the camp itself: a close, low orbit so the fire and the RV fill the
+                    // frame with the treeline standing behind them.
+                    float a = k * 1.5f;
+                    cam.transform.position = fire + new Vector3(Mathf.Sin(a) * 12f, 2.0f, Mathf.Cos(a) * 12f);
+                    cam.transform.LookAt(fire + new Vector3(0f, 0.6f, 0f));
+                    break;
+                }
+                case 1:
+                {
+                    // Shot 2 — down a logging trail, at head height, drifting along the corridor.
+                    // This is the shot that only works now: it needs walls of trunks on both sides
+                    // to read as a path through anything.
+                    var pts = world != null && world.Paths.Count > 0 ? world.Paths[0].Pts : null;
+                    if (pts != null && pts.Count > 3)
+                    {
+                        float f = Mathf.Lerp(1f, Mathf.Min(5f, pts.Count - 2), k);
+                        int i = Mathf.Clamp((int)f, 1, pts.Count - 2);
+                        float frac = f - i;
+                        // Vector2 carries world (x, z) here — .y IS the world z, not a height.
+                        Vector2 here = LerpXZ(pts[i], pts[i + 1], frac);
+                        Vector2 ahead = LerpXZ(pts[Mathf.Min(i + 1, pts.Count - 1)], pts[Mathf.Min(i + 2, pts.Count - 1)], frac);
+                        float y = (float)world.GetHeight(here.x, here.y);
+                        cam.transform.position = new Vector3(here.x, y + 1.9f, here.y);
+                        cam.transform.LookAt(new Vector3(ahead.x, (float)world.GetHeight(ahead.x, ahead.y) + 1.6f, ahead.y));
+                    }
+                    else goto case 0; // no trails (shouldn't happen) — fall back to the camp orbit
+                    break;
+                }
+                default:
+                {
+                    // Shot 3 — a high, slow push back toward camp over the canopy, so the last thing
+                    // you see before the menu settles is the one warm light in a very large forest.
+                    float dist = Mathf.Lerp(95f, 46f, k * k); // ease in: fast at first, settling late
+                    var from = new Vector3(Mathf.Sin(2.1f) * dist, campY + 34f, Mathf.Cos(2.1f) * dist);
+                    cam.transform.position = from;
+                    cam.transform.LookAt(fire);
+                    break;
+                }
+            }
+        }
+
+        /// <summary>Interpolate two sim trail points. The result packs world (x, z) into (x, y).</summary>
+        private static Vector2 LerpXZ(HollowPines.Sim.Vec2 a, HollowPines.Sim.Vec2 b, float k)
+        {
+            return new Vector2(Mathf.Lerp((float)a.X, (float)b.X, k), Mathf.Lerp((float)a.Z, (float)b.Z, k));
         }
 
         /// <summary>Raise the world's brightness while the menu is up, and restore it on connect.</summary>
@@ -199,6 +260,42 @@ namespace HollowPines.Game
                 }
                 GUI.color = old;
                 x += bw + gap;
+            }
+
+            DrawDevSeed(cx, y + 26f);
+        }
+
+        /// <summary>
+        /// DEV — pin the world seed when HOSTING (blank/0 = a fresh forest each session).
+        /// The forest, trails and cave positions all derive from the seed, so without this a bug you
+        /// hit in one map can never be revisited — the map is gone the moment you restart. The F3
+        /// overlay prints the live seed; paste it here to get that exact forest back. Ignored when
+        /// joining: the host owns the seed and replicates it.
+        /// </summary>
+        private void DrawDevSeed(float cx, float y)
+        {
+            var head = new GUIStyle(GUI.skin.label) { fontSize = 11, alignment = TextAnchor.MiddleCenter };
+            head.normal.textColor = new Color(0.55f, 0.6f, 0.58f);
+            GUI.Label(new Rect(cx - 220f, y, 440f, 18f),
+                "DEV — pin world seed when hosting (blank = random each session)", head);
+            y += 20f;
+
+            var field = new GUIStyle(GUI.skin.textField) { fontSize = 11, alignment = TextAnchor.MiddleCenter };
+            string shown = HPSettings.DevWorldSeed == 0 ? "" : HPSettings.DevWorldSeed.ToString();
+            string typed = GUI.TextField(new Rect(cx - 90f, y, 120f, 22f), shown, 10, field);
+            if (typed != shown)
+            {
+                // Empty or unparseable => 0 => random. Never reject a keystroke: a field you can't
+                // clear because it won't accept "" is worse than one that quietly means "random".
+                if (!uint.TryParse(typed, out uint parsed)) parsed = 0;
+                HPSettings.DevWorldSeed = parsed;
+                HPSettings.Save();
+            }
+            var small = new GUIStyle(GUI.skin.button) { fontSize = 11 };
+            if (GUI.Button(new Rect(cx + 36f, y, 54f, 22f), "clear", small))
+            {
+                HPSettings.DevWorldSeed = 0;
+                HPSettings.Save();
             }
         }
 

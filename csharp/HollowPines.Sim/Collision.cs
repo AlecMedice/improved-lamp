@@ -105,7 +105,49 @@ namespace HollowPines.Sim
             return false;
         }
 
-        /// <summary>Capsule overlap against all fallen logs, 0 = clear, 1 = fully inside (hunter slow).</summary>
+        /// <summary>
+        /// Push an (x,z) point out of every fallen log it overlaps — logs are SOLID to a grounded hunter.
+        ///
+        /// Called only for grounded hunters: Bigfoot strides over logs untouched, and a hunter
+        /// mid-vault is airborne, so the trunk passes harmlessly beneath. That is the whole mechanic —
+        /// a log is a wall you go around or spend stamina to clear, not a patch of mud you wade through.
+        /// </summary>
+        public static Vec2 ResolveLogs(IReadOnlyList<FallenLog> logs, double x, double z, double radius)
+        {
+            double nx = x;
+            double nz = z;
+            foreach (var log in logs)
+            {
+                double dx = nx - log.Cx;
+                double dz = nz - log.Cz;
+                double t = System.Math.Max(-log.HalfLen, System.Math.Min(log.HalfLen, dx * log.Ax + dz * log.Az));
+                double px = log.Cx + t * log.Ax;
+                double pz = log.Cz + t * log.Az;
+                double ox = nx - px;
+                double oz = nz - pz;
+                double min = log.R + radius;
+                double d = System.Math.Sqrt(ox * ox + oz * oz);
+                if (d >= min) continue;
+                if (d > 1e-6)
+                {
+                    ox /= d;
+                    oz /= d;
+                }
+                else
+                {
+                    // Dead on the centreline (landed astride it): shove out along the trunk's normal
+                    // rather than dividing by zero. Fixed choice, so every client resolves it the same.
+                    ox = -log.Az;
+                    oz = log.Ax;
+                }
+                double push = min - d;
+                nx += ox * push;
+                nz += oz * push;
+            }
+            return new Vec2(nx, nz);
+        }
+
+        /// <summary>Capsule overlap against all fallen logs, 0 = clear, 1 = fully inside (drives the vault prompt).</summary>
         public static double LogOverlap(IReadOnlyList<FallenLog> logs, double x, double z, double playerRadius)
         {
             double best = 0;

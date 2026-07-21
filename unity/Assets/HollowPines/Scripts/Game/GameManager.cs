@@ -67,15 +67,61 @@ namespace HollowPines.Game
         private const double CastSeconds = 6;         // a cast takes real time to set
         private const double CastRadius = 2.2;
         private const double CastDecay = 2;           // progress bleeds off if you stop working
-        private const double CastStompRadius = 2.2;   // Bigfoot ruins a print by treading on it
         private const string CasterSpecialty = "analysis"; // Mara — see the note in HoldActionTarget
+
+        // --- Hair samples — the second evidence type, and the one ANYONE can take ---
+        // Casting is deliberately Mara's, but gating the whole second win path behind one persona made
+        // it dead weight whenever she was downed, absent, or simply not in the deal. Hair is the
+        // hedge, and it sheds two ways (owner design, 2026-07-20):
+        //
+        //   1. AT RANDOM along the trail, rolled per stride like a castable print — Bigfoot is simply
+        //      shedding as it moves, so a trail is worth following even when no branch snapped.
+        //   2. GUARANTEED wherever it shoulders past a TREE. This is the good one: it turns the
+        //      forest's own density into evidence, and it means the thing Bigfoot does constantly
+        //      (weave through trunks at speed) is the thing that incriminates it. Running the tight
+        //      lines is fast and leaves a bright trail; the open ground is clean but exposed.
+        //
+        // Both are suppressed by crouching, like every other kind of track.
+        private const double HairChance = 0.09;        // per stride, rolled alongside the print
+        private const int MaxHairSamples = 3;          // newer tufts override older, as with prints
+        private const double HairCollectSeconds = 2.5; // quick next to a 6 s cast, but not a tap
+        /// <summary>Contact slack past tree radius + body radius — a brush, not a dead-on collision.</summary>
+        private const double TreeBrushSlack = 0.25;
+        /// <summary>
+        /// Minimum gap between tree-shed tufts. Without it, standing inside a trunk's collider is a
+        /// hair farm, and worse, a Bigfoot pinned against a tree in a chase would carpet the spot.
+        /// </summary>
+        private const double TreeHairCooldown = 7;
+
+        // --- Dropped proof piles (CHARACTER_FUNC_DEV §8, "still open" → shipped) ---
+        // A grab used to DELETE what the victim was carrying. It now spills it on the ground instead,
+        // which turns the worst moment in a searcher's night into a decision for everyone else rather
+        // than a silent subtraction. Crucially Bigfoot cannot destroy a pile — same rule as the duffel
+        // — it can only GUARD one. That's the positional strategy the extraction loop was missing:
+        // camp the spill and dare them to come back for it. The pile's only enemy is the clock.
+        private const double PileLifetime = 120;   // long enough for a real recovery run, short enough to hurt
+        /// <summary>How close you must be to gather a spill. Public so the PROMPT uses the same reach
+        /// the server enforces — a prompt must never offer an action the server will refuse.</summary>
+        public const float PileRadius = 2.5f;
+        /// <summary>A beat of standing still, like the duffel. Public because the CLIENT runs the hold
+        /// timer — the two must be one number or the bar fills at a different rate than the rule.</summary>
+        public const float PileRecoverSeconds = 1.5f;
+
+        /// <summary>
+        /// How close a searcher must get to a cave mouth to put it on the team's map. Generous on
+        /// purpose — it should fire when you can SEE the mouth, so the reveal reads as "we found it"
+        /// rather than as a proximity trigger you have to hunt for by walking into rocks.
+        /// </summary>
+        private const float CaveDiscoverRadius = 22f;
 
         // --- The evidence duffel (camp) ---
         // Proof is only ever WON here. Everything a searcher gathers is carried, unsafe, until they
         // walk it back and store it; the duffel itself is untouchable by Bigfoot, which makes the trip
         // home the risk rather than the bag. Accepts every evidence type, present and future.
         private const double DuffelRadius = 3.0;
-        private const double DepositSeconds = 1.2; // brief, deliberate — not an instant tap
+        /// <summary>Brief, deliberate — not an instant tap. Public for the same reason as
+        /// PileRecoverSeconds: the client owns the hold timer, so there can only be one value.</summary>
+        public const float DepositSeconds = 1.2f;
 
         // --- Eli's camera flash (SPECIALTIES.photo.flash) ---
         private const double FlashRange = 22;                            // short reach (< dazzle's 40)
@@ -103,10 +149,25 @@ namespace HollowPines.Game
         [SerializeField] private NetworkObject _cluePrefab;
         [SerializeField] private NetworkObject _markPrefab;
         [SerializeField] private NetworkObject _pingPrefab;
+        [SerializeField] private NetworkObject _pilePrefab;
         [Tooltip("Real seconds per night (8pm -> 8am). 600 = the web build's pace; lower for quick tests.")]
         [SerializeField] private float _nightSeconds = 600f;
 
         // --- Replicated match state ---
+        /// <summary>
+        /// This session's forest. Everything seed-derived hangs off it — terrain, tree placement,
+        /// the trail network and, most importantly, WHERE THE CAVES ARE. A fixed seed meant a group
+        /// that played twice already knew every lair; rolling it per session puts Bigfoot's map back
+        /// in play. Clients rebuild their world when this lands (see the OnChange wiring below).
+        /// </summary>
+        public readonly SyncVar<uint> WorldSeed = new SyncVar<uint>(Sim.World.Seed);
+        /// <summary>
+        /// Bitmask of cave mouths the searchers have physically found (bit i = world.Caves[i]).
+        /// Team-wide and permanent for the match; Bigfoot ignores it and always sees all five.
+        /// </summary>
+        public readonly SyncVar<int> CavesFound = new SyncVar<int>(0);
+        /// <summary>True if searchers have discovered cave <paramref name="index"/> — the map asks this.</summary>
+        public bool IsCaveFound(int index) => index >= 0 && index < 31 && (CavesFound.Value & (1 << index)) != 0;
         public readonly SyncVar<byte> MatchPhase = new SyncVar<byte>(PhaseLobby);
         public readonly SyncVar<float> TimeOfDay = new SyncVar<float>(0f);
         public readonly SyncVar<int> NightNumber = new SyncVar<int>(1);
@@ -124,6 +185,16 @@ namespace HollowPines.Game
         /// patient path: it never requires closing on Bigfoot, but it is no safer once banked.
         /// </summary>
         public readonly SyncVar<int> EvidenceCollected = new SyncVar<int>(0);
+        /// <summary>Hair samples stored. Counted apart from casts only so the duffel manifest can
+        /// itemise the case; every proof type is worth exactly the same one point.</summary>
+        public readonly SyncVar<int> HairCollected = new SyncVar<int>(0);
+        /// <summary>
+        /// The ONE place proof is totalled. Every evidence type counts the same, so adding another
+        /// means adding a counter here and nowhere else — the win check, the top bar and the manifest
+        /// all read this. (Three call sites each adding their own terms is exactly how a HUD ends up
+        /// disagreeing with the win condition.)
+        /// </summary>
+        public int StoredProof => VideosCaptured.Value + EvidenceCollected.Value + HairCollected.Value;
         public readonly SyncVar<byte> Winner = new SyncVar<byte>(WinnerNone);
         public readonly SyncVar<float> EscSpeed = new SyncVar<float>(1f);
         public readonly SyncVar<float> EscBattery = new SyncVar<float>(1f);
@@ -155,13 +226,22 @@ namespace HollowPines.Game
         private readonly List<(NetworkObject nob, double born)> _marks = new List<(NetworkObject, double)>();
         private readonly List<(NetworkObject nob, double born)> _pings = new List<(NetworkObject, double)>();
         private readonly List<NetworkObject> _castablePrints = new List<NetworkObject>();
+        private readonly List<NetworkObject> _hairSamples = new List<NetworkObject>();
+        private readonly Dictionary<HPPlayer, double> _treeHairReadyAt = new Dictionary<HPPlayer, double>();
+        private readonly List<(NetworkObject nob, double born)> _piles = new List<(NetworkObject, double)>();
         private readonly Dictionary<HPPlayer, NetworkObject> _collectIntent = new Dictionary<HPPlayer, NetworkObject>();
         private readonly Dictionary<NetworkObject, double> _collectProgress = new Dictionary<NetworkObject, double>();
         private readonly Dictionary<HPPlayer, double> _revealedUntil = new Dictionary<HPPlayer, double>();
         private readonly Dictionary<HPPlayer, NetworkObject> _pingOwner = new Dictionary<HPPlayer, NetworkObject>();
         private readonly Dictionary<HPPlayer, double> _caveReadyAt = new Dictionary<HPPlayer, double>();
         private readonly System.Random _rng = new System.Random();
-        private GameWorld _world;
+
+        /// <summary>
+        /// The live world. A PROPERTY, not a cached field: the forest is rebuilt when the replicated
+        /// seed arrives, and a field captured in Awake would go on pointing at the throwaway default
+        /// world — colliders and cave positions silently one session out of date.
+        /// </summary>
+        private GameWorld _world => WorldBuilder.EnsureWorld();
         private float _displayTod; // client-side smoothed clock for the sky
         private int _lastVideos, _lastNightHeard;   // client-side audio edge detection
         private byte _lastWinnerHeard = WinnerNone;
@@ -169,12 +249,22 @@ namespace HollowPines.Game
         private void Awake()
         {
             Instance = this;
-            _world = WorldBuilder.EnsureWorld();
+            WorldBuilder.EnsureWorld();
         }
 
         public override void OnStartServer()
         {
             InstanceFinder.SceneManager.OnClientLoadedStartScenes += OnClientLoadedStartScenes;
+
+            // Roll this session's forest. Rolled ONCE per hosting session rather than per match:
+            // players stand in the camp lobby in the same world they'll play in, and swapping the
+            // ground out from under a lobby full of people to save one re-roll is a bad trade.
+            // (Per-match instead is a one-line move into StartMatch, if replay variety ever wants it.)
+            // A dev override (title screen) pins the seed so a bug found in one forest is reproducible.
+            WorldSeed.Value = HPSettings.DevWorldSeed != 0
+                ? HPSettings.DevWorldSeed
+                : (uint)_rng.Next(1, int.MaxValue);
+            WorldBuilder.SetSeed(WorldSeed.Value);
         }
 
         public override void OnStopServer()
@@ -186,11 +276,27 @@ namespace HollowPines.Game
         public override void OnStartNetwork()
         {
             base.TimeManager.OnTick += OnTick;
+
+            // Adopt the host's forest. Both halves are needed: OnChange catches the value arriving
+            // later, and the direct call catches the case where it was already in the spawn payload
+            // (a client joining an in-progress session), which fires no change at all.
+            WorldSeed.OnChange += OnWorldSeedChanged;
+            WorldBuilder.SetSeed(WorldSeed.Value);
         }
 
         public override void OnStopNetwork()
         {
             if (base.TimeManager != null) base.TimeManager.OnTick -= OnTick;
+            WorldSeed.OnChange -= OnWorldSeedChanged;
+        }
+
+        private void OnWorldSeedChanged(uint prev, uint next, bool asServer)
+        {
+            // The host already rebuilt in OnStartServer; rebuilding again on its own write would
+            // throw away the geometry it just made. SetSeed early-outs on an unchanged seed anyway,
+            // but being explicit keeps the intent readable.
+            if (asServer) return;
+            WorldBuilder.SetSeed(next);
         }
 
         private void OnClientLoadedStartScenes(NetworkConnection conn, bool asServer)
@@ -300,6 +406,9 @@ namespace HollowPines.Game
             NightNumber.Value = 1;
             TimeOfDay.Value = 0f;
             VideosCaptured.Value = 0;
+            // The map goes blank again: a new match re-hides every lair, so night 1 is always a hunt
+            // for the caves even when the group replays the same seeded forest.
+            CavesFound.Value = 0;
             _elapsed = 0;
             _nightElapsed = 0;
             _recording.Clear();
@@ -327,10 +436,16 @@ namespace HollowPines.Game
             _pingOwner.Clear();
             _caveReadyAt.Clear();
             _castablePrints.Clear(); // the clue despawn loop above already removed the objects
+            _hairSamples.Clear();    // ...likewise: hair samples are clues
+            _treeHairReadyAt.Clear();
             _collectIntent.Clear();
             _collectProgress.Clear();
             _revealedUntil.Clear();
+            foreach (var (nob, _) in _piles)
+                if (nob != null) InstanceFinder.ServerManager.Despawn(nob);
+            _piles.Clear();
             EvidenceCollected.Value = 0;
+            HairCollected.Value = 0;
             foreach (var p in players)
             {
                 p.Status.Value = HPPlayer.StatusActive;
@@ -348,6 +463,7 @@ namespace HollowPines.Game
                 p.AbilityCharges.Value = 0;
                 p.CarriedFilm.Value = 0;
                 p.CarriedCasts.Value = 0;
+                p.CarriedHair.Value = 0;
                 p.Battery.Value = 100f;
                 p.FlashOn.Value = false;
                 p.Specialty.Value = "";
@@ -424,33 +540,53 @@ namespace HollowPines.Game
             _incapUntil[best] = _elapsed + IncapSeconds;
             _grabbedBy[best] = bf;
             best.GrabberObjectId.Value = bf.ObjectId;
-            // A grab destroys everything this searcher was CARRYING — and only that. Proof already
-            // stored in the duffel is untouchable, because the duffel is. This replaces the old
-            // wipe-the-whole-team's-footage rule: the punishment is now proportional to how greedy
-            // that one person was being, which is a decision they made, rather than a team-wide
-            // reset nobody could influence.
-            int lost = best.CarriedTotal;
-            best.CarriedFilm.Value = 0;
-            best.CarriedCasts.Value = 0;
-            if (lost > 0) RpcProofLost(best.transform.position, lost);
+            // A grab SPILLS everything this searcher was carrying — it doesn't destroy it. The pack
+            // bursts where they went down and the proof lies there, recoverable, until it goes cold.
+            // Proof already stored in the duffel is untouchable, because the duffel is.
+            //
+            // This is the third and best version of the rule. The original wiped the whole team's
+            // footage (swingy, and nobody but the victim could influence it); the interim version
+            // deleted just the victim's carry (proportional, but still a silent subtraction the
+            // moment you were downed). Spilling keeps the proportionality AND gives the loss a
+            // second act: the team can mount a recovery run, Bigfoot can stand over the spill and
+            // dare them, and the downed player watches their own night hang in the balance.
+            int spilled = best.CarriedTotal;
+            if (spilled > 0)
+            {
+                SpawnProofPile(best.transform.position, best.CarriedFilm.Value, best.CarriedCasts.Value,
+                               best.CarriedHair.Value, best.PlayerName.Value);
+                best.CarriedFilm.Value = 0;
+                best.CarriedCasts.Value = 0;
+                best.CarriedHair.Value = 0;
+                RpcProofSpilled(best.transform.position, spilled);
+            }
         }
 
         // ------------------------------------------------------------------ casting tracks
 
-        /// <summary>Mara declares intent to cast a specific print (held action, like revive).</summary>
+        /// <summary>
+        /// A searcher declares intent to work a specific piece of evidence (held action, like revive).
+        /// Accepts both workable prints and hair samples; the specialty gate lives in UpdateCasting,
+        /// so this only has to answer "is that a real, still-live piece of evidence".
+        /// </summary>
         public void SetCollectTarget(HPPlayer p, int clueObjectId)
         {
             if (clueObjectId < 0) { _collectIntent.Remove(p); return; }
             foreach (var nob in _castablePrints)
-            {
                 if (nob != null && nob.ObjectId == clueObjectId) { _collectIntent[p] = nob; return; }
-            }
+            foreach (var nob in _hairSamples)
+                if (nob != null && nob.ObjectId == clueObjectId) { _collectIntent[p] = nob; return; }
             _collectIntent.Remove(p);
         }
 
         /// <summary>
-        /// Drive every in-progress cast. Progress lives on the PRINT, not the caster, so if Mara is
-        /// interrupted and comes back the work isn't lost outright — it bleeds off, it doesn't reset.
+        /// Drive every in-progress collection — plaster casts and hair samples both. Progress lives on
+        /// the EVIDENCE, not the collector, so if the work is interrupted and someone comes back it
+        /// isn't lost outright: it bleeds off, it doesn't reset.
+        ///
+        /// The two kinds differ only in who may work them and how long it takes. Keeping them on one
+        /// channel means the progress bar, the bleed-off, the prompt and the interrupt rules can
+        /// never disagree between evidence types.
         /// </summary>
         private void UpdateCasting(double dt)
         {
@@ -463,13 +599,17 @@ namespace HollowPines.Game
                 NetworkObject nob = kv.Value;
                 if (p == null || nob == null) continue;
                 if (p.IsBigfoot || p.Status.Value != HPPlayer.StatusActive) continue;
-                if (p.Specialty.Value != CasterSpecialty) continue; // only Mara carries the casting kit
+
+                bool hair = IsHairSample(nob);
+                // Only Mara carries the casting kit. Hair needs no kit — you just bag it.
+                if (!hair && p.Specialty.Value != CasterSpecialty) continue;
                 if (Vector3.Distance(p.transform.position, nob.transform.position) > CastRadius) continue;
 
+                double needed = hair ? HairCollectSeconds : CastSeconds;
                 double prog = (_collectProgress.TryGetValue(nob, out double v) ? v : 0) + dt;
                 advanced.Add(nob);
 
-                if (prog >= CastSeconds)
+                if (prog >= needed)
                 {
                     finished.Add(nob);
                     _collectProgress.Remove(nob);
@@ -477,17 +617,22 @@ namespace HollowPines.Game
                 else
                 {
                     _collectProgress[nob] = prog;
-                    p.CollectProgress01.Value = (float)(prog / CastSeconds);
+                    p.CollectProgress01.Value = (float)(prog / needed);
                 }
             }
 
             foreach (NetworkObject nob in finished)
             {
-                // Like footage: Mara now CARRIES the cast until she stores it in the duffel.
+                // Like footage: the collector CARRIES it until they store it in the duffel.
+                bool hair = IsHairSample(nob);
                 foreach (var kv in _collectIntent)
-                    if (kv.Value == nob && kv.Key != null) { kv.Key.CarriedCasts.Value++; break; }
+                {
+                    if (kv.Value != nob || kv.Key == null) continue;
+                    if (hair) kv.Key.CarriedHair.Value++; else kv.Key.CarriedCasts.Value++;
+                    break;
+                }
                 RpcCastTaken(nob.transform.position);
-                RemoveCastablePrint(nob, despawn: true);
+                RemoveEvidence(nob, despawn: true);
 
                 var clear = new List<HPPlayer>();
                 foreach (var kv in _collectIntent) if (kv.Value == nob) clear.Add(kv.Key);
@@ -514,28 +659,24 @@ namespace HollowPines.Game
             }
         }
 
-        /// <summary>Bigfoot ruins a workable print by treading on it — its own trail is its liability.</summary>
-        private void StompPrintsUnderBigfoot(List<HPPlayer> bigfoots)
+        // (Bigfoot used to RUIN a workable print by treading on it — removed 2026-07-20, owner call.
+        // Evidence now leaves play exactly two ways: it goes cold on the clue lifetime, or a searcher
+        // collects it. Bigfoot has no delete button anywhere in the evidence loop — not on prints, not
+        // on hair, not on a spilled pack. Its answer to evidence is positional: be where the evidence
+        // is. That is one rule instead of three exceptions, and it means a searcher who finds a
+        // workable print can always trust that getting there in time is enough.)
+
+        private bool IsHairSample(NetworkObject nob)
         {
-            for (int i = _castablePrints.Count - 1; i >= 0; i--)
-            {
-                NetworkObject nob = _castablePrints[i];
-                if (nob == null) { _castablePrints.RemoveAt(i); continue; }
-                foreach (var bf in bigfoots)
-                {
-                    if (bf.Status.Value != HPPlayer.StatusActive) continue;
-                    if (Vector3.Distance(bf.transform.position, nob.transform.position) > CastStompRadius) continue;
-                    RpcPrintRuined(nob.transform.position);
-                    RemoveCastablePrint(nob, despawn: true);
-                    break;
-                }
-            }
+            foreach (var h in _hairSamples) if (h == nob) return true;
+            return false;
         }
 
-        /// <summary>Forget a print (and optionally despawn it). Clue expiry also routes through here.</summary>
-        private void RemoveCastablePrint(NetworkObject nob, bool despawn)
+        /// <summary>Forget a piece of evidence (and optionally despawn it). Clue expiry routes here too.</summary>
+        private void RemoveEvidence(NetworkObject nob, bool despawn)
         {
             _castablePrints.Remove(nob);
+            _hairSamples.Remove(nob);
             _collectProgress.Remove(nob);
             if (!despawn || nob == null) return;
             for (int i = _clues.Count - 1; i >= 0; i--) if (_clues[i].nob == nob) _clues.RemoveAt(i);
@@ -548,11 +689,6 @@ namespace HollowPines.Game
             if (HPAudio.Instance != null) HPAudio.Instance.PlayOnce(HPAudio.EvidenceBanked, 0.6f);
         }
 
-        [ObserversRpc]
-        private void RpcPrintRuined(Vector3 at)
-        {
-            if (HPAudio.Instance != null) HPAudio.Instance.PlayAt(HPAudio.EvidenceDestroyed, at, 0.55f, 20f);
-        }
 
         // ------------------------------------------------------------------ the evidence duffel
 
@@ -577,17 +713,138 @@ namespace HollowPines.Game
 
             VideosCaptured.Value += p.CarriedFilm.Value;
             EvidenceCollected.Value += p.CarriedCasts.Value;
+            HairCollected.Value += p.CarriedHair.Value;
             int stored = p.CarriedTotal;
             p.CarriedFilm.Value = 0;
             p.CarriedCasts.Value = 0;
+            p.CarriedHair.Value = 0;
             RpcDeposited(p.transform.position, stored);
         }
 
-        [ObserversRpc]
-        private void RpcProofLost(Vector3 at, int count)
+        // ------------------------------------------------------------------ dropped proof piles
+
+        /// <summary>Spill a searcher's pack where they went down. Contents are set before Spawn so
+        /// they arrive with the payload and the visual can build the right scatter first frame.</summary>
+        private void SpawnProofPile(Vector3 at, int film, int casts, int hair, string ownerName)
         {
-            HPHud.NotifyProofLost(count);
+            if (_pilePrefab == null) return;
+            float y = (float)_world.GetHeight(at.x, at.z);
+            NetworkObject nob = Instantiate(_pilePrefab, new Vector3(at.x, y, at.z), Quaternion.identity);
+            var pile = nob.GetComponent<ProofPile>();
+            pile.Film.Value = film;
+            pile.Casts.Value = casts;
+            pile.Hair.Value = hair;
+            pile.OwnerName.Value = ownerName;
+            InstanceFinder.ServerManager.Spawn(nob);
+            _piles.Add((nob, _elapsed));
+        }
+
+        /// <summary>
+        /// Pick a spill back up. Any active searcher can — including the one who dropped it, if their
+        /// team gets them up in time. It goes straight back into the carrier's pack, still unsafe:
+        /// recovering proof is not the same as saving it, and the walk home still has to happen.
+        /// </summary>
+        public void TryRecoverPile(HPPlayer p, int pileObjectId)
+        {
+            if (MatchPhase.Value != PhasePlaying || p.IsBigfoot) return;
+            if (p.Status.Value != HPPlayer.StatusActive) return;
+
+            for (int i = 0; i < _piles.Count; i++)
+            {
+                NetworkObject nob = _piles[i].nob;
+                if (nob == null || nob.ObjectId != pileObjectId) continue;
+                if (Vector3.Distance(p.transform.position, nob.transform.position) > PileRadius) return;
+
+                var pile = nob.GetComponent<ProofPile>();
+                if (pile == null) return;
+                p.CarriedFilm.Value += pile.Film.Value;
+                p.CarriedCasts.Value += pile.Casts.Value;
+                p.CarriedHair.Value += pile.Hair.Value;
+                RpcProofRecovered(nob.transform.position, pile.Total);
+                _piles.RemoveAt(i);
+                InstanceFinder.ServerManager.Despawn(nob);
+                return;
+            }
+        }
+
+        /// <summary>
+        /// Cave mouths are UNKNOWN to the searchers until somebody walks up to one.
+        ///
+        /// The map used to hand the team all five lairs at spawn, which quietly deleted the entire
+        /// exploration half of the game: you could stake out Bigfoot's front doors on night 1 without
+        /// ever having seen the forest. Discovery is TEAM-WIDE and permanent for the match — one
+        /// scout's find lights it up for everyone, so scouting is worth doing and worth shouting
+        /// about, and a downed searcher's knowledge isn't lost with them.
+        ///
+        /// Host-side from replicated positions, never client-reported: movement is still
+        /// client-authoritative, so a self-reported "I found a cave" would be a free full map.
+        /// Bigfoot is not involved — it always sees its own lairs.
+        /// </summary>
+        private void DiscoverCaves(List<HPPlayer> hunters)
+        {
+            var world = _world;
+            if (world == null) return;
+            int found = CavesFound.Value;
+            for (int i = 0; i < world.Caves.Count && i < 31; i++)
+            {
+                int bit = 1 << i;
+                if ((found & bit) != 0) continue;
+                foreach (var h in hunters)
+                {
+                    if (h.Status.Value != HPPlayer.StatusActive) continue;
+                    Vector3 p = h.transform.position;
+                    double dx = p.x - world.Caves[i].X, dz = p.z - world.Caves[i].Z;
+                    if (dx * dx + dz * dz > CaveDiscoverRadius * CaveDiscoverRadius) continue;
+                    found |= bit;
+                    RpcCaveFound(i, h.CharacterName.Value != "" ? h.CharacterName.Value : h.PlayerName.Value);
+                    break;
+                }
+            }
+            if (found != CavesFound.Value) CavesFound.Value = found;
+        }
+
+        [ObserversRpc]
+        private void RpcCaveFound(int index, string by)
+        {
+            HPHud.NotifyCaveFound(index + 1, by);
+            if (HPAudio.Instance != null) HPAudio.Instance.PlayOnce(HPAudio.EvidenceBanked, 0.4f);
+        }
+
+        /// <summary>
+        /// Spills go cold. This is the pile's ONLY enemy — Bigfoot has no way to destroy one (the same
+        /// guarantee the duffel has), so guarding it and running out the clock is the play, and the
+        /// searchers' answer is to make Bigfoot choose which spill to stand over.
+        /// </summary>
+        private void ExpirePiles()
+        {
+            for (int i = _piles.Count - 1; i >= 0; i--)
+            {
+                if (_piles[i].nob == null) { _piles.RemoveAt(i); continue; }
+                if (_elapsed - _piles[i].born <= PileLifetime) continue;
+                RpcPileLost(_piles[i].nob.transform.position);
+                InstanceFinder.ServerManager.Despawn(_piles[i].nob);
+                _piles.RemoveAt(i);
+            }
+        }
+
+        [ObserversRpc]
+        private void RpcProofSpilled(Vector3 at, int count)
+        {
+            HPHud.NotifyProofSpilled(count);
             if (HPAudio.Instance != null) HPAudio.Instance.PlayAt(HPAudio.EvidenceDestroyed, at, 0.6f, 22f);
+        }
+
+        [ObserversRpc]
+        private void RpcProofRecovered(Vector3 at, int count)
+        {
+            HPHud.NotifyProofRecovered(count);
+            if (HPAudio.Instance != null) HPAudio.Instance.PlayOnce(HPAudio.EvidenceBanked, 0.6f);
+        }
+
+        [ObserversRpc]
+        private void RpcPileLost(Vector3 at)
+        {
+            if (HPAudio.Instance != null) HPAudio.Instance.PlayAt(HPAudio.EvidenceDestroyed, at, 0.45f, 26f);
         }
 
         [ObserversRpc]
@@ -854,7 +1111,9 @@ namespace HollowPines.Game
             ExpireClues(e);
             ExpireMarks();
             ExpirePings();
-            StompPrintsUnderBigfoot(bigfoots);
+            ExpirePiles();
+            ShedHairOnTrees(bigfoots);
+            DiscoverCaves(hunters);
             UpdateCasting(dt);
             UpdateRevives(dt, hunters);
             UpdateStatuses();
@@ -864,7 +1123,7 @@ namespace HollowPines.Game
             if (hunters.Count > 0)
             {
                 // Proof is footage PLUS physical evidence — either path, or any mix, gets there.
-                if (VideosCaptured.Value + EvidenceCollected.Value >= VideosRequired.Value) Winner.Value = WinnerHunters;
+                if (StoredProof >= VideosRequired.Value) Winner.Value = WinnerHunters;
                 else if (nightsComplete) Winner.Value = WinnerBigfoot;
                 if (Winner.Value != WinnerNone) MatchPhase.Value = PhaseResults;
             }
@@ -904,7 +1163,54 @@ namespace HollowPines.Game
                         pos.x + (_rng.NextDouble() - 0.5) * 1.6,
                         pos.z + (_rng.NextDouble() - 0.5) * 1.6,
                         (float)(_rng.NextDouble() * System.Math.PI * 2));
+
+                // Shedding as it goes — rolled per stride, independent of everything else, so a plain
+                // trail across open ground can still be worth something to a searcher who finds it.
+                if (_rng.NextDouble() < HairChance)
+                    SpawnClue(ClueMarker.TypeHair,
+                        pos.x + (_rng.NextDouble() - 0.5) * 1.2,
+                        pos.z + (_rng.NextDouble() - 0.5) * 1.2,
+                        (float)(_rng.NextDouble() * System.Math.PI * 2));
+
                 _lastTrack[bf] = new Vec2(pos.x, pos.z);
+            }
+        }
+
+        /// <summary>
+        /// Bigfoot sheds hair on any tree it shoulders past. Detected HOST-SIDE from the replicated
+        /// position rather than reported by the client: movement is still client-authoritative, so a
+        /// self-reported "I hit a tree" would be a free evidence-suppression switch for a cheater.
+        /// Nothing new goes over the wire for this — the host already knows where Bigfoot is standing.
+        ///
+        /// A tree is any collider with no ClimbH; every structure in the world (RV, cave boulders,
+        /// lookout tower) is climbable, so that test needs no change to the parity-locked sim.
+        /// </summary>
+        private void ShedHairOnTrees(List<HPPlayer> bigfoots)
+        {
+            if (_world == null) return;
+            foreach (var bf in bigfoots)
+            {
+                if (bf.Status.Value != HPPlayer.StatusActive) continue;
+                if (bf.Crouched.Value) continue;             // crouching leaves no trace of any kind
+                if (_elapsed < Get(_treeHairReadyAt, bf)) continue;
+
+                Vector3 pos = bf.transform.position;
+                foreach (var c in _world.Colliders)
+                {
+                    if (c.ClimbH.HasValue) continue;         // a structure, not a tree
+                    double dx = pos.x - c.X, dz = pos.z - c.Z;
+                    double reach = c.R + Player.Radius + TreeBrushSlack;
+                    if (dx * dx + dz * dz > reach * reach) continue;
+
+                    // Put the tuft on the trunk face it brushed, not at Bigfoot's feet — the searcher
+                    // should read it as "it squeezed past HERE", which is a direction as well as proof.
+                    double d = System.Math.Sqrt(dx * dx + dz * dz);
+                    double nx = d > 0.001 ? dx / d : 1, nz = d > 0.001 ? dz / d : 0;
+                    SpawnClue(ClueMarker.TypeHair, c.X + nx * (c.R + 0.1), c.Z + nz * (c.R + 0.1),
+                              (float)System.Math.Atan2(-nx, -nz));
+                    _treeHairReadyAt[bf] = _elapsed + TreeHairCooldown;
+                    break;
+                }
             }
         }
 
@@ -915,6 +1221,8 @@ namespace HollowPines.Game
                 if (_clues[0].nob != null)
                 {
                     _castablePrints.Remove(_clues[0].nob);
+                    _hairSamples.Remove(_clues[0].nob);
+                    _collectProgress.Remove(_clues[0].nob);
                     InstanceFinder.ServerManager.Despawn(_clues[0].nob);
                 }
                 _clues.RemoveAt(0);
@@ -928,12 +1236,22 @@ namespace HollowPines.Game
             InstanceFinder.ServerManager.Spawn(nob);
             _clues.Add((nob, _elapsed));
 
+            if (ctype == ClueMarker.TypeHair)
+            {
+                // Newer tufts override older, exactly as prints do — the map shows where the work is,
+                // and "where the work is" has to stay a short list or it stops meaning anything.
+                while (_hairSamples.Count >= MaxHairSamples)
+                    RemoveEvidence(_hairSamples[0], despawn: true);
+                _hairSamples.Add(nob);
+                return;
+            }
+
             if (!castable) return;
             // Newer workable prints override older ones, so the map never fills with them.
             while (_castablePrints.Count >= MaxCastablePrints)
             {
                 NetworkObject oldest = _castablePrints[0];
-                RemoveCastablePrint(oldest, despawn: true);
+                RemoveEvidence(oldest, despawn: true);
             }
             _castablePrints.Add(nob);
         }
@@ -946,8 +1264,9 @@ namespace HollowPines.Game
                 if (_clues[i].nob == null) { _clues.RemoveAt(i); continue; }
                 if (_elapsed - _clues[i].born > lifetime)
                 {
-                    // A workable print goes cold with the rest of the trail — "available for a time".
+                    // Workable evidence goes cold with the rest of the trail — "available for a time".
                     _castablePrints.Remove(_clues[i].nob);
+                    _hairSamples.Remove(_clues[i].nob);
                     _collectProgress.Remove(_clues[i].nob);
                     InstanceFinder.ServerManager.Despawn(_clues[i].nob);
                     _clues.RemoveAt(i);

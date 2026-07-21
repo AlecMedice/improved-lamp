@@ -28,6 +28,7 @@ namespace HollowPines.EditorTools
         private const string CluePrefabPath = PrefabDir + "/ClueMarker.prefab";
         private const string MarkPrefabPath = PrefabDir + "/TrailMark.prefab";
         private const string PingPrefabPath = PrefabDir + "/PingBeacon.prefab";
+        private const string PilePrefabPath = PrefabDir + "/ProofPile.prefab";
         private const string BuildPath = "Build/Windows/HollowPines.exe";
 
         [MenuItem("Hollow Pines/Set Up Game Scene (Forest)")]
@@ -69,6 +70,7 @@ SetInputHandlingToBoth();
             NetworkObject cluePrefab = CreateCluePrefab();
             NetworkObject markPrefab = CreateSimplePrefab<TrailMark>("TrailMark", MarkPrefabPath);
             NetworkObject pingPrefab = CreateSimplePrefab<PingBeacon>("PingBeacon", PingPrefabPath);
+            NetworkObject pilePrefab = CreateSimplePrefab<ProofPile>("ProofPile", PilePrefabPath);
 
             // GameManager — a SCENE NetworkObject; FishNet initializes it when the server starts.
             var gmGo = new GameObject("GameManager");
@@ -79,11 +81,12 @@ SetInputHandlingToBoth();
             gmSo.FindProperty("_cluePrefab").objectReferenceValue = cluePrefab;
             gmSo.FindProperty("_markPrefab").objectReferenceValue = markPrefab;
             gmSo.FindProperty("_pingPrefab").objectReferenceValue = pingPrefab;
+            gmSo.FindProperty("_pilePrefab").objectReferenceValue = pilePrefab;
             gmSo.ApplyModifiedPropertiesWithoutUndo();
 
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
-            StampAssetPathHashes(new[] { playerPrefab, cluePrefab, markPrefab, pingPrefab });
+            StampAssetPathHashes(new[] { playerPrefab, cluePrefab, markPrefab, pingPrefab, pilePrefab });
 AssignDefaultPrefabObjects(nm);
 
             Directory.CreateDirectory("Assets/Scenes");

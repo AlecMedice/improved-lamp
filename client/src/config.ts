@@ -1,5 +1,5 @@
 import { Color } from "three";
-import { WORLD, generateCaves } from "../../shared/sim";
+import { WORLD, generateCaves, generatePaths } from "../../shared/sim";
 
 // Movement/world sim constants now live in shared/sim so the client and the authoritative
 // server compute identical physics. Re-exported here so existing imports are unchanged.
@@ -111,6 +111,9 @@ export const POST = {
  * the fast-travel rules (`CAVE`) are shared too since the server validates the jump.
  */
 export const CAVES: ReadonlyArray<{ x: number; z: number }> = generateCaves(WORLD.seed);
+
+/** Logging trails out of camp — tree-free corridors, seed-derived like the caves. */
+export const PATHS = generatePaths(WORLD.seed);
 
 /** Initial dusk palette. Environment.setTimeOfDay() lerps toward night and dawn. */
 export const DUSK = {
