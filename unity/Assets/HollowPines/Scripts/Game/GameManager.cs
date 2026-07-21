@@ -1071,6 +1071,21 @@ namespace HollowPines.Game
 
         // ------------------------------------------------------------------ host tick
 
+        /// <summary>
+        /// DEV — end the current night immediately (F3 overlay, host only).
+        ///
+        /// Exists because verifying anything per-night — the moon's phase and arc, the escalation
+        /// table, Eli's flash and Sam's battery refilling at dusk — otherwise means sitting through
+        /// two full nights to reach night 3. It deliberately just runs the clock out rather than
+        /// duplicating the rollover: the next tick takes the normal path, so a skipped night is
+        /// identical to an elapsed one and this can't drift from the real logic.
+        /// </summary>
+        public void DevSkipNight()
+        {
+            if (!base.IsServerStarted || MatchPhase.Value != PhasePlaying) return;
+            _nightElapsed = _nightSeconds;
+        }
+
         private void OnTick()
         {
             if (!base.IsServerStarted) return;

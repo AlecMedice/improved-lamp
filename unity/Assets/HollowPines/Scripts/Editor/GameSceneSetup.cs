@@ -41,6 +41,7 @@ namespace HollowPines.EditorTools
             }
 
 SetInputHandlingToBoth();
+            EnableRunInBackground();
             PlayerSettings.productName = "Hollow Pines"; // window title + Build/Windows/HollowPines.exe
 
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
@@ -190,6 +191,20 @@ AssignDefaultPrefabObjects(nm);
         /// legacy UnityEngine.Input throws and IMGUI (our OnGUI HUDs) gets no input in a standalone
         /// player. Set it to "Both" (2). Needs one editor restart to take effect in Play mode.
         /// </summary>
+        /// <summary>
+        /// Unity pauses a player that loses focus. That makes two-instance testing on ONE PC
+        /// impossible: alt-tab to the other window and the first stops ticking, FishNet stops
+        /// sending, and the connection times out — which reads as "the build is broken" rather than
+        /// as a setting. Required for any host+client test on a single machine.
+        /// </summary>
+        internal static void EnableRunInBackground()
+        {
+            if (PlayerSettings.runInBackground) return;
+            PlayerSettings.runInBackground = true;
+            AssetDatabase.SaveAssets();
+            Debug.Log("[GameSceneSetup] Run In Background enabled — needed to run two instances on one PC.");
+        }
+
         internal static void SetInputHandlingToBoth()
         {
             var settings = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/ProjectSettings.asset").FirstOrDefault();

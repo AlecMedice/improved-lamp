@@ -230,6 +230,38 @@ the last two states parks the camera a full step (50 ms) in the past. `StepPlaye
 `dt`, so the owner steps **once per frame with the real frame delta** (hitch-clamped). This reverts
 when FishNet prediction is adopted (see §0), which owns the cadence itself.
 
+## 7a. Testing the whole game alone, on one PC
+
+**Solo works by design.** `ServerStartMatch` picks Bigfoot from whoever opted in; with nobody opted
+in it needs 2+ players, and with **one** player it assigns **no Bigfoot at all**. So:
+
+| Setup | You are | Covers |
+|---|---|---|
+| 1 instance, lobby toggle **off** | a searcher, alone | world, trails, cave discovery, evidence + duffel, logs, sky/moon, HUD, perf |
+| 1 instance, **"wants Bigfoot"** on | Bigfoot, alone | roar/leap/climb/cave travel, hair shedding, senses overlay |
+| 2 instances | one of each | the interactions only: grab → spill, dazzle, filming, revive |
+
+Most of what needs verifying is reachable **solo** — only grab/dazzle/film/revive need two.
+
+**Two instances on one machine needs `runInBackground`.** Unity pauses an unfocused player, so the
+moment you alt-tab, that instance stops ticking, FishNet stops sending and the connection times out
+— which reads as "the build is broken" rather than as a setting. `GameSceneSetup` now enables it
+(`EnableRunInBackground`). For the second instance, prefer **a standalone build over a second editor**:
+it starts faster and you can shrink it, which matters on integrated graphics already pushing ~2,400
+trees. Run it windowed and small:
+
+```
+HollowPines.exe -screen-width 1280 -screen-height 720 -screen-fullscreen 0
+```
+
+Host in the editor, JOIN from the build at `127.0.0.1`. Only the focused window takes input, so drive
+one, alt-tab, drive the other — fine for verifying an interaction, useless for testing a chase.
+
+**`N` skips to the next night** (host only, F3 overlay). Verifying anything per-night — the moon's
+phase and arc, the escalation table, Eli's flash and Sam's battery refilling at dusk — otherwise
+means sitting through two full nights to reach night 3. It runs the clock out rather than
+duplicating the rollover, so a skipped night is identical to an elapsed one.
+
 ## 7b. Play-testing tools (F3 overlay + seed pin)
 
 Two dev affordances exist specifically so a play-test produces *data* instead of impressions:

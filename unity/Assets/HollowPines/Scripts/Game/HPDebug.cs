@@ -76,6 +76,10 @@ namespace HollowPines.Game
             if (kb.digit2Key.wasPressedThisFrame) SetPropLights(!_propLights);
             if (kb.digit3Key.wasPressedThisFrame) SetUndergrowth(!_undergrowth);
             if (kb.digit4Key.wasPressedThisFrame) SetShadows(!_shadows);
+
+            // Host-only: run the current night out. The guard lives in GameManager, so a client
+            // pressing this does nothing rather than desyncing its own clock.
+            if (kb.nKey.wasPressedThisFrame && GameManager.Instance != null) GameManager.Instance.DevSkipNight();
 #endif
         }
 
@@ -191,6 +195,8 @@ namespace HollowPines.Game
             lines.AppendLine($"  [2] prop lights  {OnOff(_propLights)}");
             lines.AppendLine($"  [3] undergrowth  {OnOff(_undergrowth)}");
             lines.AppendLine($"  [4] shadows      {OnOff(_shadows)}");
+            lines.AppendLine();
+            lines.AppendLine("  [N] skip to next night (host only)");
             lines.AppendLine();
             lines.Append("[F3] closes  ·  renderScale lives in the Esc pause menu");
 
