@@ -47,6 +47,11 @@ namespace HollowPines.Game
 
         private GUIStyle _style;
 
+        // Peak-hold on each look axis, decaying over a second. Instantaneous delta flickers far too
+        // fast to read, and the question we're actually asking — "does this axis EVER report while
+        // the other one is active?" — is answered by a peak, not by a sample.
+        private float _peakDx, _peakDy, _peakResetAt;
+
         private void Update()
         {
 #if ENABLE_INPUT_SYSTEM
@@ -67,6 +72,19 @@ namespace HollowPines.Game
 
         private void LateUpdate()
         {
+            var me = HPPlayer.Local;
+            if (me != null)
+            {
+                _peakDx = Mathf.Max(_peakDx, Mathf.Abs(me.DbgLookDelta.x));
+                _peakDy = Mathf.Max(_peakDy, Mathf.Abs(me.DbgLookDelta.y));
+                if (Time.unscaledTime - _peakResetAt > 1f)
+                {
+                    _peakDx = Mathf.Abs(me.DbgLookDelta.x);
+                    _peakDy = Mathf.Abs(me.DbgLookDelta.y);
+                    _peakResetAt = Time.unscaledTime;
+                }
+            }
+
             float ms = Time.unscaledDeltaTime * 1000f;
             _smoothedMs = Mathf.Lerp(_smoothedMs, ms, 0.08f);
             if (ms > _worstMs) _worstMs = ms;
@@ -139,6 +157,10 @@ namespace HollowPines.Game
                 lines.AppendLine();
                 lines.AppendLine($"look  delta ({me.DbgLookDelta.x,6:0.0},{me.DbgLookDelta.y,6:0.0})" +
                                  (me.DbgLookGated ? "   [GATED: cursor unlocked]" : ""));
+                // THE decisive line. Sweep the mouse diagonally: if both peaks are non-zero the input
+                // is fine and the fault is downstream; if one sits at 0.0 the delta is losing an axis.
+                lines.AppendLine($"      peak/s  x {_peakDx,6:0.0}   y {_peakDy,6:0.0}" +
+                                 (_peakDx > 0.5f && _peakDy > 0.5f ? "   both axes OK" : "   <-- ONE AXIS DEAD"));
                 lines.AppendLine($"      yaw {me.DbgYawDeg,7:0.0} -> body {me.DbgBodyYawDeg,6:0.0}" +
                                  $"    pitch {me.DbgPitchDeg,6:0.0} -> cam {me.DbgCamPitchDeg,6:0.0}");
                 lines.AppendLine($"      cam parent {me.DbgCamParent}   moving {(me.OwnMoving ? "yes" : "no")}");
