@@ -82,6 +82,10 @@ SetInputHandlingToBoth();
             gmSo.FindProperty("_markPrefab").objectReferenceValue = markPrefab;
             gmSo.FindProperty("_pingPrefab").objectReferenceValue = pingPrefab;
             gmSo.FindProperty("_pilePrefab").objectReferenceValue = pilePrefab;
+            // Written explicitly, not left to the field's default: the scene serialises its OWN copy
+            // the moment the component is added, so raising the default in GameManager.cs would never
+            // reach an already-built Forest.unity. Anything tunable here has to be set here too.
+            gmSo.FindProperty("_nightSeconds").floatValue = GameManager.DefaultNightSeconds;
             gmSo.ApplyModifiedPropertiesWithoutUndo();
 
             AssetDatabase.SaveAssets();

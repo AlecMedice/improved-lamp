@@ -150,8 +150,20 @@ namespace HollowPines.Game
         [SerializeField] private NetworkObject _markPrefab;
         [SerializeField] private NetworkObject _pingPrefab;
         [SerializeField] private NetworkObject _pilePrefab;
-        [Tooltip("Real seconds per night (8pm -> 8am). 600 = the web build's pace; lower for quick tests.")]
-        [SerializeField] private float _nightSeconds = 600f;
+        /// <summary>
+        /// Real seconds per night. Raised 600 → 720 (2026-07-20): the forest went from 700 trees to
+        /// ~2,400, cave mouths must now be FOUND before they can be staked out, and the extraction
+        /// loop wants round trips rather than one-way runs — all of which spend time the old sparse
+        /// map didn't. A camp→cave→camp trip is ~100 s on foot and the map is ~1,130 m corner to
+        /// corner, so 600 s left very little room for anything going wrong on the way home.
+        ///
+        /// Public because GameSceneSetup writes it into the scene: the scene serialises its own copy,
+        /// so changing the field default alone would never reach an already-built Forest.unity.
+        /// </summary>
+        public const float DefaultNightSeconds = 720f;
+
+        [Tooltip("Real seconds per night (8pm -> 8am). 720 = the shipped pace; lower for quick tests.")]
+        [SerializeField] private float _nightSeconds = DefaultNightSeconds;
 
         // --- Replicated match state ---
         /// <summary>
