@@ -732,22 +732,27 @@ namespace HollowPines.Game
         /// </summary>
         private Vector3 _moonDir = new Vector3(0.35f, 0.62f, -0.7f).normalized;
 
-        /// <summary>Which compass direction the moon rises from this session (radians). Seeded.</summary>
+        /// <summary>
+        /// Small seeded wobble on the rise bearing (radians), so sessions aren't identical — real
+        /// moonrise wanders along the horizon through the year. Deliberately kept to ±10°: it must
+        /// never be large enough to disturb the east→west track, and it derives from the replicated
+        /// world seed, so every player sees the moon in the same place.
+        /// </summary>
         private float _moonRiseAz;
 
         /// <summary>
-        /// The moon's three nights. It WANES and sets progressively earlier, so night 1 is lit from
-        /// dusk to dawn and night 3 loses its moon before the night is half done.
+        /// The moon's three nights. It WANES and rides lower, but it is never gone — every night ends
+        /// with the moon still in the sky (owner's call, 2026-07-20).
+        ///
+        /// That constraint shapes the whole model: the moon must never finish its rise→set arc inside
+        /// a night, so `ArcStart + MoonArcRate` stays below 1 for all three. Escalation then comes
+        /// from PHASE, ALTITUDE and BRIGHTNESS instead of from the moon leaving — night 3 is a low,
+        /// half-lit moon at 0.24 against night 1's high full moon at 0.42.
         ///
         /// This is a difficulty dial, not decoration: moonlight is the only thing that lets searchers
         /// cross the forest without burning flashlight battery, and battery drain is *already*
-        /// escalated per night. The light column is therefore pulled back gently (0.42 → 0.24 rather
-        /// than to nothing) and a starlight floor keeps the map navigable after moonset — the dark
-        /// stretch is meant to raise the cost of moving, not to stop play.
-        ///
-        /// Strictly, a waning moon rises later rather than setting earlier; we set it earlier so the
-        /// darkness lands on the FINALE instead of the opening. Nobody who isn't tracking lunar
-        /// mechanics will notice, and the dramatic shape is worth the small cheat.
+        /// escalated per night. Taking the moon away entirely stacked a blackout on top of that;
+        /// dimming it to ~57% is the same pressure without ever making the map unreadable.
         /// </summary>
         private struct MoonNight
         {
@@ -760,60 +765,76 @@ namespace HollowPines.Game
             /// </summary>
             public float ArcStart;
             public float PeakElev;  // degrees at the top of the arc
-            public float Light;     // directional intensity while it's well up
-            public float AzOffset;  // degrees added to the seeded rise direction, so nights differ
+            public float Light;     // directional intensity at the top of the arc
         }
 
         private static readonly MoonNight[] MoonNights =
         {
-            new MoonNight { Phase = -0.90f, ArcStart = 0.00f, PeakElev = 68f, Light = 0.42f, AzOffset = 0f },
-            new MoonNight { Phase = -0.35f, ArcStart = 0.26f, PeakElev = 60f, Light = 0.34f, AzOffset = 42f },
-            new MoonNight { Phase = 0.05f, ArcStart = 0.53f, PeakElev = 52f, Light = 0.24f, AzOffset = 87f },
+            new MoonNight { Phase = -0.90f, ArcStart = 0.00f, PeakElev = 68f, Light = 0.42f },
+            new MoonNight { Phase = -0.35f, ArcStart = 0.12f, PeakElev = 60f, Light = 0.34f },
+            new MoonNight { Phase = 0.05f, ArcStart = 0.24f, PeakElev = 52f, Light = 0.24f },
         };
 
         /// <summary>
-        /// Arc fraction covered per unit of night — the moon's angular speed, identical every night.
-        /// Tuned so night 1 (ArcStart 0) sets just before dawn: moonset tod = (1 - ArcStart) / rate,
-        /// giving 0.95 / 0.70 / 0.45 for the three nights.
+        /// Arc fraction covered over one whole night — the moon's angular speed, identical every night
+        /// (only the starting point differs, so no night's sky appears to run faster than another's).
+        ///
+        /// Held so that `ArcStart + MoonArcRate` &lt; 1 for every night: the moon must never reach the
+        /// end of its arc while the night is still running, because no night is allowed to go
+        /// moonless. Night 3 is the binding case at 0.24 + 0.66 = 0.90 — low and sinking by dawn,
+        /// but still up.
         /// </summary>
-        private const float MoonArcRate = 1.053f;
+        private const float MoonArcRate = 0.66f;
 
         /// <summary>Elevation floor during the traverse — the "shallow drift". Below roughly this the
         /// moon rakes the 14 m hills and throws stretched shadows that read as a bug.</summary>
         private const float MoonMinElev = 35f;
-        /// <summary>Degrees of azimuth the moon sweeps between rise and set.</summary>
-        private const float MoonSweepDeg = 130f;
-        /// <summary>Ambient the world keeps once the moon is down. Starlight, not pitch black.</summary>
-        private const float MoonsetLightFloor = 0.07f;
+        /// <summary>
+        /// Bearing of due EAST in this sim's azimuth convention, where
+        /// `dir = (cos e · sin a, sin e, cos e · cos a)` gives a=0 → +Z, a=90° → +X.
+        ///
+        /// **Read the map's compass before trusting your instincts here.** `MapView.ToMap` MIRRORS
+        /// the x axis to match the sim's handedness (see §2), and its compass labels put **W at
+        /// world +X and E at world −X** — the opposite of the usual assumption. North is −Z. So east
+        /// is a = 270°, and the moon runs 270° → 360°(south) → 450°(west). Get this backwards and the
+        /// moon rises in the west, which is the classic internally-consistent-but-wrong bug.
+        /// </summary>
+        private const float MoonAzEastDeg = 270f;
+        /// <summary>Degrees swept across a full arc: east → south → west, the northern-sky path.</summary>
+        private const float MoonSweepDeg = 180f;
+        /// <summary>How much a low moon dims versus one overhead — atmospheric extinction, roughly.
+        /// This is the only altitude-driven dimming now; it never reaches zero.</summary>
+        private const float MoonLowDim = 0.72f;
 
         /// <summary>
-        /// Moon direction + how far "up" it still is (1 = well up, 0 = set) for a night and clock.
+        /// Moon direction + its normalised ALTITUDE (0 at the ends of the arc, 1 overhead) for a
+        /// night and clock. Altitude never reaches 0 during a night — see <see cref="MoonArcRate"/>.
         /// </summary>
-        private void MoonAt(int night, float tod, out Vector3 dir, out float up, out MoonNight cfg)
+        private void MoonAt(int night, float tod, out Vector3 dir, out float alt, out MoonNight cfg)
         {
             cfg = MoonNights[Mathf.Clamp(night - 1, 0, MoonNights.Length - 1)];
 
             // One shared angular rate; only the STARTING point differs per night.
             float q = Mathf.Clamp01(cfg.ArcStart + tod * MoonArcRate);
 
-            float az = _moonRiseAz + Mathf.Deg2Rad * (cfg.AzOffset + q * MoonSweepDeg);
-            // sin() arc: floor at both ends, peak mid-arc. Never dips below MoonMinElev, so the moon
+            // East at q=0, west at q=1, through the southern sky. Every night runs the same direction;
+            // only how far along it starts differs, so the moon always tracks E→W for every player.
+            float az = _moonRiseAz + Mathf.Deg2Rad * (MoonAzEastDeg + q * MoonSweepDeg);
+            // sin() arc: lowest at both ends, peak mid-arc. Never dips below MoonMinElev, so the moon
             // can't rake the hills and throw stretched shadows across the whole map.
-            float elev = Mathf.Deg2Rad * Mathf.Lerp(MoonMinElev, cfg.PeakElev, Mathf.Sin(q * Mathf.PI));
+            alt = Mathf.Sin(q * Mathf.PI);
+            float elev = Mathf.Deg2Rad * Mathf.Lerp(MoonMinElev, cfg.PeakElev, alt);
 
             dir = new Vector3(
                 Mathf.Cos(elev) * Mathf.Sin(az),
                 Mathf.Sin(elev),
                 Mathf.Cos(elev) * Mathf.Cos(az)).normalized;
-
-            // Fade over the last stretch of the arc rather than snapping off at the horizon.
-            up = 1f - Mathf.Clamp01(Mathf.InverseLerp(0.93f, 1f, q));
         }
 
         private void BuildLighting()
         {
             var rand = Rng.Mulberry32(World.Seed ^ 0x11007a11u);
-            _moonRiseAz = (float)(rand() * System.Math.PI * 2.0);
+            _moonRiseAz = Mathf.Deg2Rad * (float)((rand() * 2.0 - 1.0) * 10.0);
 
             var moonGo = new GameObject("Moon");
             moonGo.transform.parent = transform;
@@ -929,19 +950,18 @@ namespace HollowPines.Game
             RenderSettings.fogColor = fog;
             RenderSettings.fogDensity = fogDensity;
             // --- the moon: phase + arc for THIS night, and where it is on the clock ---------
-            MoonAt(night, t, out _moonDir, out float moonUp, out MoonNight moonCfg);
+            MoonAt(night, t, out _moonDir, out float moonAlt, out MoonNight moonCfg);
 
             // Palette `moon` is the shape across a night (dimmer at dusk/dawn); the night's own Light
-            // scales that whole shape; `moonUp` then takes it down to starlight once it sets.
-            float lit = moon * (moonCfg.Light / MoonNights[0].Light);
-            RenderSettings.ambientLight = ambient * Mathf.Lerp(0.62f, 1f, moonUp);
+            // scales that whole shape; altitude dims it modestly when it rides low. No term here can
+            // reach zero — the moon is always up, so it is always lighting something.
+            float lit = moon * (moonCfg.Light / MoonNights[0].Light) * Mathf.Lerp(MoonLowDim, 1f, moonAlt);
+            RenderSettings.ambientLight = ambient;
             if (_moon != null)
             {
-                _moon.intensity = Mathf.Lerp(MoonsetLightFloor, lit, moonUp);
+                _moon.intensity = lit;
                 _moon.transform.rotation = Quaternion.LookRotation(-_moonDir, Vector3.up);
-                // No shadow-caster once it's down — moonset shadows from a moon nobody can see is
-                // the exact mismatch this whole change was meant to remove.
-                _moon.shadows = moonUp > 0.05f ? LightShadows.Hard : LightShadows.None;
+                _moon.shadows = LightShadows.Hard;
             }
 
             if (_skyMat != null)
@@ -953,14 +973,16 @@ namespace HollowPines.Game
                 _skyMat.SetColor(SkyHorizonId, sky);
                 _skyMat.SetColor(SkyZenithId, sky * 0.42f);
                 _skyMat.SetColor(SkyGroundId, sky * 0.30f);
-                // Stars come OUT when the moon goes down — no moonwash. On night 3 that's the payoff
-                // for losing the light: the sky gets better exactly as the forest gets worse.
-                float stars = Mathf.Lerp(a.Stars, b.Stars, k) * Mathf.Lerp(1.45f, 1f, moonUp);
+                // Moonwash: a bright full moon drowns the fainter stars, a low half-moon doesn't.
+                // So night 3 trades moonlight for a visibly better sky — the escalation still has a
+                // payoff even though the moon never actually leaves.
+                float moonWash = Mathf.InverseLerp(0.14f, 0.42f, lit);
+                float stars = Mathf.Lerp(a.Stars, b.Stars, k) * Mathf.Lerp(1.40f, 1f, moonWash);
                 _skyMat.SetFloat(SkyStarsId, stars * (TitleMode ? 1.25f : 1f));
                 _skyMat.SetVector(SkyMoonDirId, _moonDir);
                 _skyMat.SetFloat(SkyMoonPhaseId, moonCfg.Phase);
-                _skyMat.SetFloat(SkyMoonBrightId, Mathf.Lerp(1.6f, 3.2f, Mathf.InverseLerp(0.24f, 0.44f, lit)) * moonUp);
-                _skyMat.SetFloat(SkyMoonGlowId, 0.8f * moonUp);
+                _skyMat.SetFloat(SkyMoonBrightId, Mathf.Lerp(1.7f, 3.2f, Mathf.InverseLerp(0.14f, 0.42f, lit)));
+                _skyMat.SetFloat(SkyMoonGlowId, 0.8f);
             }
             else
             {

@@ -159,17 +159,25 @@ The hunt is **3 nights**, each a compressed **8pm → 8am** (`NIGHT_SECONDS`, da
   > that lets searchers cross the forest without burning flashlight battery, so dimming it raises the
   > cost of moving — on top of the battery‑drain escalation already in the `ESCALATION` table.
   >
-  > | Night | Phase | Moon sets at | Moonless | Light |
+  > | Night | Phase | Track | Peak elevation | Light range |
   > |---|---|---|---|---|
-  > | 1 | full | 0.95 | 5% | 0.42 |
-  > | 2 | gibbous | 0.70 | 30% | 0.34 |
-  > | 3 | half | 0.45 | **55%** | 0.24 |
+  > | 1 | full | E → SSW | 68° | 0.22–0.41 |
+  > | 2 | gibbous | ESE → SW | 60° | 0.19–0.34 |
+  > | 3 | half | SE → WSW | 52° | 0.12–0.23 |
   >
-  > Every night moves at the **same angular rate**; only the moon's starting point on its rise→set
-  > arc differs (`MoonNight.ArcStart`), so night 3 opens with it already past its peak and descending.
-  > Modelling it as a per‑night *speed* instead would make short nights look like the sky was running
-  > fast. After moonset a starlight floor keeps the map navigable, ambient drops to 62%, the light
-  > stops casting shadows, and the **stars brighten** — night 3 loses its moon and gains its sky.
+  > **No night ever goes moonless** — the moon is always in the sky, it just rides lower and dimmer.
+  > Escalation comes from phase, altitude and brightness rather than from the moon leaving, because
+  > taking it away entirely stacked a blackout on top of the battery escalation.
+  >
+  > It always tracks **east → west** through the southern sky, for every player. Every night moves at
+  > the same angular rate and only the *starting point* on the arc differs (`MoonNight.ArcStart`), so
+  > a later night simply begins further along — no night's sky appears to run faster than another's,
+  > and `ArcStart + MoonArcRate` is held below 1 so the arc never completes inside a night.
+  >
+  > ⚠️ **East is world −X, not +X.** `MapView` mirrors its x axis to match the sim's handedness, and
+  > its compass labels put W at +X and E at −X; north is −Z. Assuming otherwise puts the moonrise in
+  > the west. A bright full moon also washes out the fainter stars, so night 3 trades moonlight for a
+  > visibly better sky.
 - **Performance:** instanced trees/ferns, LODs, baked where possible, shadow only from key lights + the local flashlight.
 - **Landmarks (navigation):** the base‑camp clearing (campfire + lit **RV**) anchors the searchers; **cave entrances** (rounded boulder horseshoes with a dark mouth and a faint inner glow) mark Bigfoot's lairs and fast‑travel nodes. Distinct silhouettes help players orient in the dark.
 - **Logging trails — *implemented (Unity)*:** four seed‑derived trails meander out of the camp clearing. They are **real terrain, not decoration**: no trees grow in the corridor, so a trail is a genuinely open lane. Taking one is a **speed‑for‑exposure trade** — fast going and easy navigation, bought with long sightlines that make you simple to spot and simple to film.

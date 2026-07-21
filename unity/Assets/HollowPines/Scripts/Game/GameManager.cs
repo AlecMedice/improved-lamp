@@ -160,9 +160,9 @@ namespace HollowPines.Game
         /// Public because GameSceneSetup writes it into the scene: the scene serialises its own copy,
         /// so changing the field default alone would never reach an already-built Forest.unity.
         /// </summary>
-        public const float DefaultNightSeconds = 720f;
+        public const float DefaultNightSeconds = 480f;
 
-        [Tooltip("Real seconds per night (8pm -> 8am). 720 = the shipped pace; lower for quick tests.")]
+        [Tooltip("Real seconds per night (8pm -> 8am). 480 = the shipped pace; lower for quick tests.")]
         [SerializeField] private float _nightSeconds = DefaultNightSeconds;
 
         // --- Replicated match state ---
