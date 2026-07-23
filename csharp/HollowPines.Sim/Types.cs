@@ -44,7 +44,20 @@ namespace HollowPines.Sim
         }
     }
 
-    /// <summary>A fallen-log obstacle (slows hunters, not Bigfoot). A capsule in the XZ plane.</summary>
+    /// <summary>
+    /// A trail through the forest: a polyline of centreline points walked outward from camp,
+    /// plus the half-width of the tree-free corridor around it. Mirrors TS `ForestPath`.
+    /// (A class, not a struct: it owns a list and gets passed around by reference.)
+    /// </summary>
+    public sealed class ForestPath
+    {
+        /// <summary>Centreline points, camp end first.</summary>
+        public System.Collections.Generic.List<Vec2> Pts = new System.Collections.Generic.List<Vec2>();
+        /// <summary>Half-width of the cleared corridor (m). Trees inside it are skipped.</summary>
+        public double HalfWidth;
+    }
+
+    /// <summary>A fallen-log obstacle (solid to hunters on foot, not to Bigfoot). A capsule in the XZ plane.</summary>
     public struct FallenLog
     {
         public double Cx;

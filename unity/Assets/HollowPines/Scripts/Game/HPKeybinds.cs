@@ -10,7 +10,7 @@ using UnityEngine.InputSystem.Controls;
 
 namespace HollowPines.Game
 {
-    public enum HPAction { Sprint, Jump, Crouch, Flashlight, Revive, Mark, Senses, Map, Ping, Flash }
+    public enum HPAction { Sprint, Jump, Crouch, Flashlight, Revive, Mark, Senses, Map, Ping, Flash, Binoculars }
 
     public static class HPKeybinds
     {
@@ -27,6 +27,7 @@ namespace HollowPines.Game
             { HPAction.Map, Key.Tab },            // map overlay — you keep walking while it's up
             { HPAction.Ping, Key.Q },             // searcher stakeout ping at your feet
             { HPAction.Flash, Key.G },            // Eli's camera flash
+            { HPAction.Binoculars, Key.B },       // hold to glass the forest from the lookout (night vision)
         };
 
         private static Dictionary<HPAction, Key> _map;

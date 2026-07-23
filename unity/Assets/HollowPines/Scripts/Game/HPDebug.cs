@@ -1,0 +1,265 @@
+// DEV — the F3 diagnostics overlay: frame cost, what the world is made of, and live switches for
+// the expensive things.
+//
+// Why this exists: the owner's machine is an Intel Iris Plus 655 driving 2560x1600, and the forest
+// just went from 700 trees to ~2,400. "It felt slow" is not an actionable bug report — it doesn't
+// say whether the cost is bloom, the realtime point lights, the undergrowth or the trees, and those
+// four have wildly different fixes. The toggles below let a play-tester bisect it in ten seconds
+// without a rebuild, in the same spirit as the renderScale slider in the pause menu.
+//
+// It also prints the WORLD SEED. The forest is rolled per hosting session now, so without the seed
+// on screen a bug found in one map is unreproducible — the map is gone the moment you restart.
+// Type that number into the title screen's dev field to get the exact forest back.
+//
+// IMGUI like the rest of the throwaway UI. Costs nothing when hidden (OnGUI early-outs).
+using UnityEngine;
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
+
+namespace HollowPines.Game
+{
+    public class HPDebug : MonoBehaviour
+    {
+        public static HPDebug Instance { get; private set; }
+
+        /// <summary>Attach once. WorldBuilder bootstraps this alongside PostFX/HPAudio.</summary>
+        public static void Ensure(GameObject host)
+        {
+            if (Instance != null) return;
+            Instance = host.AddComponent<HPDebug>();
+        }
+
+        private bool _open;
+
+        // Frame timing, exponentially smoothed. A raw per-frame number is unreadable and a 1-second
+        // average hides exactly the hitches you're hunting, so: smoothed average PLUS the worst
+        // frame in the last second, which is what actually makes a game feel bad.
+        private float _smoothedMs = 16f;
+        private float _worstMs;
+        private float _worstResetAt;
+
+        // Live lever states. Defaults match the shipped configuration.
+        private bool _bloom = true;
+        private bool _propLights = true;
+        private bool _undergrowth = true;
+        private bool _shadows = true;
+
+        private GUIStyle _style;
+
+        // Peak-hold on each look axis, decaying over a second. Instantaneous delta flickers far too
+        // fast to read, and the question we're actually asking — "does this axis EVER report while
+        // the other one is active?" — is answered by a peak, not by a sample.
+        private float _peakDx, _peakDy, _peakResetAt;
+
+        /// <summary>
+        /// Mirror the look readout to the Console while the overlay is open.
+        ///
+        /// The on-screen panel is anchored at (8,8), which is useless if the Game view is scrolled or
+        /// scaled — the panel then sits outside the visible area and the numbers can't be read at all.
+        /// The Console is never clipped, and its output can be copied into a bug report verbatim.
+        /// </summary>
+        private float _nextLogAt;
+
+        private void Update()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var kb = Keyboard.current;
+            if (kb == null) return;
+
+            if (kb.f3Key.wasPressedThisFrame) _open = !_open;
+            if (!_open) return;
+
+            // Number keys flip the levers. Only while the overlay is up, so they can't collide with
+            // anything the game binds — and the overlay is the only place they're documented.
+            if (kb.digit1Key.wasPressedThisFrame) SetBloom(!_bloom);
+            if (kb.digit2Key.wasPressedThisFrame) SetPropLights(!_propLights);
+            if (kb.digit3Key.wasPressedThisFrame) SetUndergrowth(!_undergrowth);
+            if (kb.digit4Key.wasPressedThisFrame) SetShadows(!_shadows);
+
+            // Host-only: run the current night out. The guard lives in GameManager, so a client
+            // pressing this does nothing rather than desyncing its own clock.
+            if (kb.nKey.wasPressedThisFrame && GameManager.Instance != null) GameManager.Instance.DevSkipNight();
+
+            // Toggle the CPU Bigfoot between the aggressive (prowls toward you) and passive (wanders,
+            // only engages if you walk into it) brains — the latter is the original, kept for testing.
+            if (kb.pKey.wasPressedThisFrame) BigfootBot.AggressiveProwl = !BigfootBot.AggressiveProwl;
+#endif
+        }
+
+        private void LateUpdate()
+        {
+            var me = HPPlayer.Local;
+            if (me != null)
+            {
+                _peakDx = Mathf.Max(_peakDx, Mathf.Abs(me.DbgLookDelta.x));
+                _peakDy = Mathf.Max(_peakDy, Mathf.Abs(me.DbgLookDelta.y));
+                if (Time.unscaledTime - _peakResetAt > 1f)
+                {
+                    _peakDx = Mathf.Abs(me.DbgLookDelta.x);
+                    _peakDy = Mathf.Abs(me.DbgLookDelta.y);
+                    _peakResetAt = Time.unscaledTime;
+                }
+            }
+
+            if (_open && me != null && Time.unscaledTime >= _nextLogAt)
+            {
+                _nextLogAt = Time.unscaledTime + 0.5f;
+                Debug.Log($"[look] delta({me.DbgLookDelta.x:0.0},{me.DbgLookDelta.y:0.0}) " +
+                          $"peak/s x{_peakDx:0.0} y{_peakDy:0.0} | " +
+                          $"yaw {me.DbgYawDeg:0.0}->body {me.DbgBodyYawDeg:0.0} | " +
+                          $"pitch {me.DbgPitchDeg:0.0}->cam {me.DbgCamPitchDeg:0.0} | " +
+                          $"moving {me.OwnMoving} camParent {me.DbgCamParent} " +
+                          (me.DbgLookGated ? "GATED" : ""));
+            }
+
+            float ms = Time.unscaledDeltaTime * 1000f;
+            _smoothedMs = Mathf.Lerp(_smoothedMs, ms, 0.08f);
+            if (ms > _worstMs) _worstMs = ms;
+            if (Time.unscaledTime - _worstResetAt > 1f) { _worstMs = ms; _worstResetAt = Time.unscaledTime; }
+        }
+
+        private void SetBloom(bool on)
+        {
+            _bloom = on;
+            if (PostFX.Instance != null) PostFX.Instance.SetBloomEnabled(on);
+        }
+
+        private void SetPropLights(bool on)
+        {
+            _propLights = on;
+            if (WorldBuilder.Instance != null) WorldBuilder.Instance.SetPropLightsEnabled(on);
+        }
+
+        private void SetUndergrowth(bool on)
+        {
+            _undergrowth = on;
+            if (WorldBuilder.Instance != null) WorldBuilder.Instance.SetUndergrowthVisible(on);
+        }
+
+        private void SetShadows(bool on)
+        {
+            _shadows = on;
+            // Distance, not the light's shadow flag: 0 disables shadow rendering wholesale, and it's
+            // the same knob HPQuality tunes, so this stays consistent with the shipped lever.
+            QualitySettings.shadowDistance = on ? 35f : 0f;
+        }
+
+        private void OnGUI()
+        {
+            if (!_open) return;
+            EnsureStyles();
+
+            var world = WorldBuilder.World;
+            var gm = GameManager.Instance;
+            var wb = WorldBuilder.Instance;
+
+            float fps = _smoothedMs > 0.001f ? 1000f / _smoothedMs : 0f;
+            string seed = world != null ? world.Seed.ToString() : "—";
+            int trees = world != null ? world.Colliders.Count - world.Climbables.Count : 0;
+            int trails = world != null ? world.Paths.Count : 0;
+
+            var lines = new System.Text.StringBuilder();
+            lines.AppendLine($"fps {fps:0}   frame {_smoothedMs:0.0} ms   worst/s {_worstMs:0.0} ms");
+            lines.AppendLine($"renderScale {HPSettings.RenderScale:0.00}   {Screen.width}x{Screen.height}");
+            lines.AppendLine();
+            lines.AppendLine($"seed {seed}   trees {trees}   trails {trails}");
+            if (wb != null)
+                lines.AppendLine($"undergrowth meshes {wb.UndergrowthMeshCount}   prop lights {wb.PropLightCount}");
+            if (gm != null)
+            {
+                string phase = gm.MatchPhase.Value == GameManager.PhasePlaying ? "playing"
+                    : gm.MatchPhase.Value == GameManager.PhaseLobby ? "lobby" : "results";
+                lines.AppendLine($"phase {phase}   night {gm.NightNumber.Value}/{gm.TotalNights.Value}   " +
+                                 $"proof {gm.StoredProof}/{gm.VideosRequired.Value}");
+            }
+            lines.AppendLine($"players {HPPlayer.All.Count}   tick {TickRateLabel()}");
+
+            // BIGFOOT locator — answers "is the CPU there, and where?" for single-player. If this says
+            // "none", the bot never spawned or never got the role; if it shows a big distance, it's
+            // just far off at its cave, wandering, and you have to go find it.
+            lines.AppendLine(BigfootLine());
+
+            // LOOK — chasing the "axis sticks while walking" report. Read it as three comparisons:
+            //   delta stops changing while you move the mouse   -> the input is losing the axis
+            //   pitch moves but cam doesn't                     -> the camera write is being lost
+            //   yaw moves but body doesn't                      -> something overwrites rotation
+            var me = HPPlayer.Local;
+            if (me != null)
+            {
+                lines.AppendLine();
+                lines.AppendLine($"look  delta ({me.DbgLookDelta.x,6:0.0},{me.DbgLookDelta.y,6:0.0})" +
+                                 (me.DbgLookGated ? "   [GATED: cursor unlocked]" : ""));
+                // THE decisive line. Sweep the mouse diagonally: if both peaks are non-zero the input
+                // is fine and the fault is downstream; if one sits at 0.0 the delta is losing an axis.
+                lines.AppendLine($"      peak/s  x {_peakDx,6:0.0}   y {_peakDy,6:0.0}" +
+                                 (_peakDx > 0.5f && _peakDy > 0.5f ? "   both axes OK" : "   <-- ONE AXIS DEAD"));
+                lines.AppendLine($"      yaw {me.DbgYawDeg,7:0.0} -> body {me.DbgBodyYawDeg,6:0.0}" +
+                                 $"    pitch {me.DbgPitchDeg,6:0.0} -> cam {me.DbgCamPitchDeg,6:0.0}");
+                lines.AppendLine($"      cam parent {me.DbgCamParent}   moving {(me.OwnMoving ? "yes" : "no")}");
+            }
+            lines.AppendLine();
+            lines.AppendLine("COST LEVERS — in the order §7 says to pull them");
+            lines.AppendLine($"  [1] bloom        {OnOff(_bloom)}   (most expensive single effect)");
+            lines.AppendLine($"  [2] prop lights  {OnOff(_propLights)}");
+            lines.AppendLine($"  [3] undergrowth  {OnOff(_undergrowth)}");
+            lines.AppendLine($"  [4] shadows      {OnOff(_shadows)}");
+            lines.AppendLine();
+            lines.AppendLine("  [N] skip to next night (host only)");
+            lines.AppendLine($"  [P] bigfoot AI: {(BigfootBot.AggressiveProwl ? "AGGRESSIVE (prowls to you)" : "PASSIVE (wander only)")}");
+            lines.AppendLine();
+            lines.Append("[F3] closes  ·  renderScale lives in the Esc pause menu");
+
+            string text = lines.ToString();
+            var size = _style.CalcSize(new GUIContent(text));
+            var rect = new Rect(8f, 8f, Mathf.Min(size.x + 18f, Screen.width - 16f), size.y + 14f);
+
+            Color old = GUI.color;
+            GUI.color = new Color(0f, 0f, 0f, 0.72f);
+            GUI.DrawTexture(rect, Texture2D.whiteTexture);
+            GUI.color = old;
+            GUI.Label(new Rect(rect.x + 8f, rect.y + 6f, rect.width - 16f, rect.height - 12f), text, _style);
+        }
+
+        private static string OnOff(bool b) => b ? "ON " : "off";
+
+        /// <summary>Where the Bigfoot is relative to you — a compass heading + distance, or "none".</summary>
+        private static string BigfootLine()
+        {
+            HPPlayer bf = null, me = HPPlayer.Local;
+            foreach (var p in HPPlayer.All) if (p != null && p.IsBigfoot) { bf = p; break; }
+            if (bf == null) return "bigfoot: NONE spawned";
+
+            string tag = bf.IsBot ? "CPU" : "human";
+            var brain = bf.GetComponent<BigfootBot>();
+            string ai = brain != null ? "  ai:" + brain.DbgState : "  ai:NO-BRAIN";
+            if (me == null) return $"bigfoot: {tag}{ai}";
+
+            Vector3 d = bf.transform.position - me.transform.position;
+            float dist = new Vector2(d.x, d.z).magnitude;
+            // World compass (see MapView): -X = East, -Z = North.
+            float ang = (Mathf.Atan2(-d.x, -d.z) * Mathf.Rad2Deg + 360f) % 360f;
+            string[] names = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
+            string dir = names[Mathf.RoundToInt(ang / 45f) % 8];
+            return $"bigfoot: {tag}  {dist:0} m  {dir}{ai}   status {bf.Status.Value}";
+        }
+
+        private static string TickRateLabel()
+        {
+            var tm = FishNet.InstanceFinder.TimeManager;
+            return tm != null ? $"{tm.TickRate} Hz" : "—";
+        }
+
+        private void EnsureStyles()
+        {
+            if (_style != null) return;
+            _style = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 12,
+                alignment = TextAnchor.UpperLeft,
+                font = Font.CreateDynamicFontFromOSFont("Consolas", 12),
+            };
+            _style.normal.textColor = new Color(0.72f, 0.95f, 0.78f);
+        }
+    }
+}

@@ -32,6 +32,17 @@ namespace HollowPines.Game
         private const int BgRes = 256; // baked background resolution
 
         private static Texture2D _bg, _dot, _ring;
+
+        /// <summary>
+        /// Drop the baked terrain image so the next open re-bakes it. Called by WorldBuilder.SetSeed:
+        /// the background is baked from the world's heightfield, so a reseed leaves it showing the
+        /// PREVIOUS session's ridges under this session's markers — the same class of silent
+        /// inconsistency as the mirrored-map bug (see UNITY_PORT_NOTES §2).
+        /// </summary>
+        public static void InvalidateBackground()
+        {
+            _bg = null;
+        }
         private float _half;
         private Rect _frame;
 
@@ -117,6 +128,7 @@ namespace HollowPines.Game
                 DrawMarks();
                 DrawPings();
                 DrawTeammates(me);
+                DrawProofPiles(); // last of the searcher layers — a spill outranks everything under it
             }
 
             int currentCave = Caves.NearestCaveIndex(world.Caves, me.transform.position.x, me.transform.position.z);
@@ -221,6 +233,37 @@ namespace HollowPines.Game
                 Blob(p, 9f, new Color(0.90f, 0.82f, 0.55f, 0.26f + 0.22f * pulse));
                 Dot(p, 3.2f, new Color(0.96f, 0.90f, 0.66f));
             }
+
+            // Hair samples share the workable-evidence language, in a cooler tone so the team can tell
+            // at a glance which ones need Mara and which anyone can go and take.
+            foreach (var c in ClueMarker.Hairs)
+            {
+                if (c == null) continue;
+                Vector2 p = ToMap(c.transform.position);
+                Blob(p, 8f, new Color(0.62f, 0.80f, 0.72f, 0.24f + 0.20f * pulse));
+                Dot(p, 3f, new Color(0.76f, 0.93f, 0.85f));
+            }
+        }
+
+        /// <summary>
+        /// Spilled packs. Shown to the whole team unconditionally and drawn loudest on the map: this
+        /// is proof that has already been paid for once, it is on a timer, and it is the only marker
+        /// here that represents someone else's bad night waiting to be rescued.
+        /// </summary>
+        private void DrawProofPiles()
+        {
+            float pulse = 0.5f + 0.5f * Mathf.Sin(Time.time * 3.4f);
+            foreach (var pile in ProofPile.All)
+            {
+                if (pile == null) continue;
+                Vector2 p = ToMap(pile.transform.position);
+                Blob(p, 13f, new Color(1f, 0.72f, 0.32f, 0.20f + 0.28f * pulse));
+                Dot(p, 4.2f, new Color(1f, 0.82f, 0.42f));
+
+                var st = new GUIStyle(GUI.skin.label) { fontSize = 10, alignment = TextAnchor.MiddleCenter };
+                st.normal.textColor = new Color(1f, 0.86f, 0.55f);
+                GUI.Label(new Rect(p.x - 30f, p.y + 5f, 60f, 14f), $"pack ×{pile.Total}", st);
+            }
         }
 
         private void DrawMarks()
@@ -271,14 +314,20 @@ namespace HollowPines.Game
             }
         }
 
-        /// <summary>Cave mouths: numbered for everyone, clickable fast-travel buttons for Bigfoot.</summary>
+        /// <summary>
+        /// Cave mouths: Bigfoot's own fast-travel network, and for searchers only the mouths the team
+        /// has actually walked up to (GameManager.CavesFound). An undiscovered lair draws nothing at
+        /// all — not a greyed-out marker, which would still tell you where to go.
+        /// </summary>
         private void DrawCaves(GameWorld world, HPPlayer me, int currentCave)
         {
             bool travelMode = me.IsBigfoot && me.Status.Value == HPPlayer.StatusActive &&
                               currentCave >= 0 && me.CaveReadyIn <= 0f;
+            var gm = GameManager.Instance;
 
             for (int i = 0; i < world.Caves.Count; i++)
             {
+                if (!me.IsBigfoot && (gm == null || !gm.IsCaveFound(i))) continue; // not found yet
                 Vector2 p = ToMap((float)world.Caves[i].X, (float)world.Caves[i].Z);
                 var r = new Rect(p.x - 11f, p.y - 11f, 22f, 22f);
                 bool isCurrent = i == currentCave;
@@ -340,8 +389,17 @@ namespace HollowPines.Game
             }
             else
             {
-                hint = "WASD still works  ·  click the map to drop a stakeout ping  ·  " +
-                       $"[{HPKeybinds.Label(HPAction.Ping)}] pings where you stand";
+                // Say how many lairs are still out there. Without this the blank map is ambiguous —
+                // a searcher can't tell "no caves found yet" from "this map doesn't show caves".
+                var gm = GameManager.Instance;
+                int total = WorldBuilder.EnsureWorld().Caves.Count;
+                int found = 0;
+                for (int i = 0; i < total; i++) if (gm != null && gm.IsCaveFound(i)) found++;
+                hint = found < total
+                    ? $"caves found {found}/{total} — walk up to a mouth to map it  ·  " +
+                      $"click the map to drop a stakeout ping"
+                    : "every cave mapped  ·  click the map to drop a stakeout ping  ·  " +
+                      $"[{HPKeybinds.Label(HPAction.Ping)}] pings where you stand";
             }
             var style = new GUIStyle(GUI.skin.label) { fontSize = 13, alignment = TextAnchor.MiddleCenter };
             GUI.Label(new Rect(_frame.x, _frame.yMax + 4f, _frame.width, 20f), hint, style);

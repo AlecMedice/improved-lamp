@@ -15,10 +15,12 @@ namespace HollowPines.Game
 
         private ColorAdjustments _colorAdjustments;
         private Vignette _vignette;
+        private Bloom _bloom;
         // Two independent reasons to lift exposure. Tracked separately and composed in ApplyExposure
         // so neither can clobber the other (the title screen ends exactly when a role is assigned).
         private bool _bigfootVision;
         private bool _titleMode;
+        private bool _nightVision; // searcher glassing the forest through the tower binoculars
 
         /// <summary>Attach the global volume + enable post on the main camera. Safe to call once from WorldBuilder.</summary>
         public static void Ensure(GameObject host)
@@ -33,10 +35,10 @@ namespace HollowPines.Game
 
             var profile = ScriptableObject.CreateInstance<VolumeProfile>();
 
-            var bloom = profile.Add<Bloom>();
-            bloom.intensity.Override(0.9f);
-            bloom.threshold.Override(0.85f);
-            bloom.scatter.Override(0.65f);
+            _bloom = profile.Add<Bloom>();
+            _bloom.intensity.Override(0.9f);
+            _bloom.threshold.Override(0.85f);
+            _bloom.scatter.Override(0.65f);
 
             _vignette = profile.Add<Vignette>();
             _vignette.intensity.Override(0.33f);
@@ -88,13 +90,41 @@ namespace HollowPines.Game
             ApplyExposure();
         }
 
+        /// <summary>
+        /// DEV — toggle bloom at runtime (the F3 overlay drives this). Bloom is full-screen and
+        /// multi-pass, the single most expensive effect we run, so it is the first thing to switch
+        /// off when hunting a frame-rate problem. Toggling the OVERRIDE rather than the effect's
+        /// active flag keeps the tuned values intact for when it goes back on.
+        /// </summary>
+        public void SetBloomEnabled(bool on)
+        {
+            if (_bloom != null) _bloom.active = on;
+        }
+
+        public bool BloomEnabled => _bloom == null || _bloom.active;
+
+        /// <summary>
+        /// Binocular night vision (searcher on the lookout). A hard exposure lift plus a green cast and
+        /// a squeeze of saturation — the classic image-intensifier look — so the top of the tower
+        /// genuinely reveals the treeline you can't otherwise see. Local only, like Bigfoot's vision.
+        /// </summary>
+        public void SetNightVision(bool on)
+        {
+            _nightVision = on;
+            ApplyExposure();
+        }
+
         private void ApplyExposure()
         {
             if (_colorAdjustments == null) return;
             float ev = 0f;
             if (_titleMode) ev += 1.15f;      // menu backdrop
             if (_bigfootVision) ev += 0.9f;   // predator eyes
+            if (_nightVision) ev += 2.0f;     // image intensifier — a big lift, it's the whole point
             _colorAdjustments.postExposure.Override(ev);
+            // Green phosphor cast + desaturation while glassing; neutral otherwise.
+            _colorAdjustments.colorFilter.Override(_nightVision ? new Color(0.55f, 1f, 0.6f) : Color.white);
+            _colorAdjustments.saturation.Override(_nightVision ? -55f : -6f);
         }
     }
 }

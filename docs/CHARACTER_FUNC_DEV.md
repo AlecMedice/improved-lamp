@@ -289,8 +289,14 @@ which is nonsense — a cast is something a **person makes from a track**. The m
 - **Only Mara can cast one** (`CasterSpecialty = "analysis"`). Holding the interact key runs a
   `CastSeconds` (6 s) stationary channel; progress lives on the PRINT, so an interrupted cast bleeds
   off rather than resetting. Completing it is +1 proof and consumes the print.
-- Bigfoot **ruins a workable print by treading on it** (`CastStompRadius`) — its own trail is its
-  liability, and it now has a reason to walk back down it.
+- ~~Bigfoot **ruins a workable print by treading on it** (`CastStompRadius`).~~ **Removed 2026-07-20
+  (owner call).** Bigfoot now has **no way to destroy evidence anywhere in the loop** — not prints,
+  not hair, not a spilled pack. Evidence leaves play exactly two ways: it goes cold on the clue
+  lifetime, or a searcher collects it. The reasoning is worth keeping: a delete button meant a
+  searcher could do everything right — find a workable print, bring Mara, arrive in time — and still
+  get nothing, with no counterplay available to them. Bigfoot's answer to evidence is now purely
+  **positional** (be where the evidence is), which is one rule instead of three exceptions and makes
+  "get there in time" a promise the game actually keeps.
 
 **Why Mara and not Wren** (the owner asked; worth recording): Wren *finds* prints — her doubled
 evidence sight and longer clue window are exactly the "which of these is worth anything" skill — but
@@ -299,17 +305,20 @@ trail-focused personas complementary halves of one loop: **Wren leads the team t
 works it.** A non-Mara searcher standing on a castable print is told what it is and why they can't
 act on it, rather than getting no prompt at all.
 
-**Win condition is PROOF:** `VideosCaptured + EvidenceCollected >= VideosRequired` (still 3). The
-HUD breaks it out as "1 film · 2 casts".
+**Win condition is PROOF:** `GameManager.StoredProof >= VideosRequired`. `StoredProof` is the single
+place the total is computed (film + casts + hair) — the win check, the top bar and the duffel
+manifest all read it, so a new evidence type means adding one counter and touching nothing else.
+The HUD breaks it out as "1 film · 2 casts · 1 hair".
 
-| | Filming | Casting |
-|---|---|---|
-| Speed | fast (3 s in frame) | slow (6 s stationary channel) |
-| Risk | must close on Bigfoot | never requires seeing it |
-| Who | anyone | **Mara only** |
-| Counterplay | Bigfoot hunts the filmer | Bigfoot treads out its own deep tracks |
+| | Filming | Casting | Hair |
+|---|---|---|---|
+| Speed | fast (3 s in frame) | slow (6 s stationary channel) | quick (2.5 s) |
+| Risk | must close on Bigfoot | never requires seeing it | never requires seeing it |
+| Who | anyone | **Mara only** | anyone |
+| Supply | whenever you find it | 16% of prints, 4 live | per-stride roll + **every tree it brushes** |
+| Counterplay | Bigfoot hunts the filmer | Bigfoot camps the print | Bigfoot avoids the tight lines |
 
-Both paths then share the same second half: **carry it home to the duffel** (below).
+All three paths then share the same second half: **carry it home to the duffel** (below).
 
 ### The duffel — carry, then store *(owner design, 2026-07-19; supersedes both earlier rules)*
 
@@ -345,8 +354,59 @@ are still missing, and what's still unsaved in your own pack. A write-only conta
 no way to check their own case without doing the arithmetic off the top bar.
 
 **Still open:** carry capacity is unlimited (risk scales naturally — more carried, more to lose, so
-a cap may be unnecessary); a grabbed searcher's proof is *destroyed* rather than **dropped as a
-recoverable pile**, which would be the more interesting version and is the obvious next iteration.
+a cap may be unnecessary).
+
+### Dropped proof piles *(shipped 2026-07-20 — was the "obvious next iteration" above)*
+
+A grab no longer *destroys* what the victim was carrying. It **spills it** as a `ProofPile` where
+they went down: a burst pack with its contents scattered, a light column so it can be found at
+night, and a loud amber marker on the team map labelled `pack ×n`. Any active searcher — including
+the victim, if the team gets them up in time — holds interact for `PileRecoverSeconds` (1.5 s) to
+gather it back into their own pack, still unsaved. Spills go cold after `PileLifetime` (120 s).
+
+**Bigfoot cannot destroy a pile. It can only guard one.** This is the same guarantee the duffel has,
+and it is the point of the feature: if Bigfoot could stomp the spill it would simply stand still for
+a second after every grab, which costs it nothing and makes the whole thing equivalent to the silent
+deletion it replaced. "Guard only" is what creates the standoff — and it is the *positional*
+strategy the extraction loop was missing, without ever letting Bigfoot attack the safe zone.
+
+This is the third version of the rule and the reasoning is worth keeping:
+
+| Version | Rule | Why it was replaced |
+|---|---|---|
+| Original | a grab wipes the **whole team's** footage | swingy, and nobody but the victim could influence it |
+| Interim | a grab deletes the **victim's** carry | proportional, but still a silent subtraction with no second act |
+| **Now** | a grab **spills** the victim's carry, recoverable for 120 s | the loss becomes a decision for the whole team |
+
+The toast copy matters here and is deliberate: it says **"PACK SPILLED — n pieces on the ground, go
+get them"**, never "lost". Worded as a loss, a team writes it off and walks away from proof that is
+still theirs.
+
+### Hair samples *(shipped 2026-07-20 — the second evidence type)*
+
+The hedge against casting's single point of failure. `ClueMarker.TypeHair`: a tuft snagged on a
+broken stub, bagged by **anyone** in `HairCollectSeconds` (2.5 s) through the same collect channel
+casting uses — so the progress bar, bleed-off and interrupt rules can't disagree between types.
+`MaxHairSamples` (3) live at once, newer overriding older, and they go cold with the trail.
+
+It sheds **two ways** (owner design):
+
+1. **At random along the trail** — a per-stride `HairChance` (9%) roll, independent of everything
+   else, so a plain trail across open ground is still worth following.
+2. **Guaranteed on every tree Bigfoot shoulders past** (`TreeBrushSlack`, on a `TreeHairCooldown` of
+   7 s so a trunk can't be farmed). This is the good one: it turns the forest's own density into
+   evidence and makes the thing Bigfoot does constantly — weaving through trunks at speed — the
+   thing that incriminates it. Running the tight lines is fast and leaves a bright trail; the open
+   ground is clean but exposed. Crouching suppresses both, like every other kind of track.
+
+**Detected host-side** from the replicated position, never client-reported: movement is still
+client-authoritative, so a self-reported "I hit a tree" would be a free evidence-suppression switch.
+A tree is any collider with **no `ClimbH`** — every structure in the world is climbable — so the
+test needs no change to the parity-locked sim.
+
+Why it exists: gating the whole second win path behind one persona made it dead weight whenever Mara
+was downed, absent, or simply not in the deal. Hair keeps Mara's edge (casts are worth the same but
+she alone can take the *reliable, always-available* kind) without making the path conditional on her.
 
 ### Eli's camera flash (`HPAction.Flash`, default G)
 
@@ -385,14 +445,21 @@ testing any one of them otherwise means restarting until the deal hands you that
 1-in-5 lottery per match, and worse when a test needs a specific pair.
 
 ### Not done
-- Hair samples / scat as additional evidence types. Only castable prints ship. Hair caught on a
-  branch is the one kind Bigfoot genuinely *would* shed, so it's the natural next addition — and it
-  could sensibly be collectable by **anyone**, unlike casting.
-- Carrying evidence physically rather than banking it instantly (see "bagging" above).
+- **Scat** as a third evidence type. Hair shipped 2026-07-20; scat is the remaining candidate.
 - No server-side unit tests — the TS `server/test/` suite doesn't cover the Unity build. If this
   system ever ports back to TS, `filmVisible`-style validation tests should come with it.
-- Balance is untested: `CastableChance` (0.16), `MaxCastablePrints` (4), `CastSeconds` (6) and
-  `CastStompRadius` (2.2) are first guesses. The specific risk to watch: gating the whole second win
-  path behind ONE persona makes it dead weight whenever Mara is downed, absent, or simply not in the
-  deal (fewer than 5 searchers). If that bites, the fallback is letting anyone cast at, say, double
-  the time — keeping Mara's edge without making the path conditional on her.
+- **Balance is entirely untested — nothing in this section has been played.** The numbers are first
+  guesses: `CastableChance` (0.16), `MaxCastablePrints` (4), `CastSeconds` (6), `HairChance` (0.09),
+  `MaxHairSamples` (3), `HairCollectSeconds` (2.5), `TreeHairCooldown` (7), `PileLifetime` (120),
+  `PileRecoverSeconds` (1.5). What to watch, in priority order:
+  1. **Hair supply.** The tree-brush rule is generous by design, and the forest is 700 trees. If
+     proof arrives too easily, `TreeHairCooldown` is the first dial (raise it), then `HairChance`.
+     `MaxHairSamples` (3) caps how much is *claimable* at once but not how often it appears.
+  2. **Does hair make casting pointless?** Both are worth 1. Casting is 6 s and Mara-only; hair is
+     2.5 s and universal, so hair is strictly the better *action* — it is meant to be limited by
+     supply, not by cost. If casting ends up never worth doing, the fix is to make a cast worth
+     **2 proof**, not to slow hair down.
+  3. **Pile lifetime.** 120 s vs a 60 s incapacitation: the victim can be revived and recover their
+     own spill, which is the intended dramatic beat. If Bigfoot camping trivially wins the standoff,
+     raise `PileLifetime`; if recovery feels free, lower it.
+  4. The Mara single-point-of-failure risk that motivated hair should now be gone — confirm it is.

@@ -1,6 +1,7 @@
 import { mulberry32 } from "./rng";
-import { WORLD } from "./constants";
+import { WORLD, PATH_GEN } from "./constants";
 import type { Cave } from "./caves";
+import { pathDepth, type ForestPath } from "./paths";
 
 export type Collider = {
   x: number; z: number; r: number;
@@ -51,12 +52,28 @@ function nearCave(caves: readonly Cave[], x: number, z: number, r: number): bool
 }
 
 /**
+ * Is (x,z) inside the lake (optionally plus a shoreline `margin`)? Trees are rejected here so
+ * trunks don't stand in open water. Deliberately a local copy of the ellipse test rather than
+ * importing `lakeDepth` — collision.ts imports LAKE from this module, and the reverse import
+ * would close a cycle.
+ */
+function inLake(x: number, z: number, margin: number): boolean {
+  const nx = (x - LAKE.x) / (LAKE.rx + margin);
+  const nz = (z - LAKE.z) / (LAKE.rz + margin);
+  return nx * nx + nz * nz < 1;
+}
+
+/**
  * Deterministically build the circle colliders (trees, RV, caves, lookout tower) for a
  * seed + cave set. Ported from Environment's build* methods; the tree loop preserves the
  * exact rand() call order (incl. the rotation draw it discards) so the collider positions
  * match the rendered tree instances byte-for-byte.
+ *
+ * Every rejection below is a `continue` placed BEFORE the scale/rotation draws, so adding one
+ * never shifts the RNG stream for later candidates — that invariant is what lets the renderer
+ * re-walk this loop and land its trunks exactly on these colliders.
  */
-export function buildColliders(seed: number, caves: readonly Cave[]): Collider[] {
+export function buildColliders(seed: number, caves: readonly Cave[], paths: readonly ForestPath[] = []): Collider[] {
   const colliders: Collider[] = [];
 
   // Trees — mirror buildForest()'s placement loop exactly.
@@ -67,6 +84,8 @@ export function buildColliders(seed: number, caves: readonly Cave[]): Collider[]
     const z = (rand() * 2 - 1) * half;
     if (Math.sqrt(x * x + z * z) < WORLD.baseCampRadius + 4) continue; // keep clearing open
     if (nearCave(caves, x, z, 7)) continue; // keep cave mouths clear
+    if (inLake(x, z, 3)) continue; // trees don't grow in open water (or on the waterline)
+    if (pathDepth(paths, x, z, PATH_GEN.treeMargin) > 0) continue; // keep the trails walkable
     const s = 0.7 + rand() * 0.9;
     rand(); // rotation draw — discarded here, but must be consumed to keep the sequence aligned
     colliders.push({ x, z, r: 0.45 * s });

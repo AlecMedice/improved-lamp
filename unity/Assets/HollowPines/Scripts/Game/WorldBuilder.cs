@@ -6,7 +6,9 @@
 // warm prop lights, and a day-night palette driven by the replicated timeOfDay. Pretty comes in R5.
 using System.Collections.Generic;
 using HollowPines.Sim;
+using Unity.AI.Navigation;
 using UnityEngine;
+using UnityEngine.AI;
 
 namespace HollowPines.Game
 {
@@ -19,6 +21,9 @@ namespace HollowPines.Game
 
         private Light _moon;
         private float _lastTod = -1f;
+        private float _appliedTod;  // last time-of-day handed to SetTimeOfDay (survives a reseed)
+        private int _appliedNight = 1;
+        private int _lastNight = -1;
 
         /// <summary>
         /// Local fog-density multiplier. Bigfoot's trade-off (web Phase 3): brighter near vision
@@ -49,6 +54,9 @@ namespace HollowPines.Game
         private static readonly Color LogCol = MeshUtil.Rgb(0x5a4030);
         private static readonly Color GroundCol = MeshUtil.Rgb(0x2e4023);
         private static readonly Color LakeCol = MeshUtil.Rgb(0x2a5a6a);
+        private static readonly Color FernCol = MeshUtil.Rgb(0x35521f);  // undergrowth, a shade under the crowns
+        private static readonly Color BushCol = MeshUtil.Rgb(0x2b4a26);
+        private static readonly Color TrailCol = MeshUtil.Rgb(0x51452f); // packed dirt, warmer than the ground
 
         /// <summary>
         /// The evidence duffel beside the RV — the only place proof becomes permanent, and the one
@@ -72,12 +80,121 @@ namespace HollowPines.Game
             return World;
         }
 
+        /// <summary>
+        /// Swap the whole forest to a different seed and rebuild the geometry.
+        ///
+        /// The host rolls a seed per hosting session and replicates it (GameManager.WorldSeed), so no
+        /// two sessions share a forest — the caves in particular have to move, or a group that plays
+        /// twice already knows every lair. Everything here derives from the seed, so a reseed is
+        /// literally "throw the meshes away and run the builders again".
+        ///
+        /// Anything that CACHES world-derived data has to be invalidated with it. There are only two:
+        /// the map's baked terrain background, and the palette's `_lastTod` early-out. Nothing holds a
+        /// <see cref="GameWorld"/> reference across a reseed — <see cref="HPPlayer"/> and
+        /// <see cref="GameManager"/> both read this static through a property for exactly that reason.
+        /// </summary>
+        public static void SetSeed(uint seed)
+        {
+            if (World != null && World.Seed == seed) return;
+            World = GameWorld.MakeWorld(seed);
+            MapView.InvalidateBackground();
+            if (Instance != null) Instance.Rebuild();
+        }
+
         private void Awake()
         {
             Instance = this;
             EnsureWorld();
+            Build();
+            BuildNavMesh();
+            PostFX.Ensure(gameObject);
+            HPAudio.Ensure(gameObject); // synthesizes every cue + starts the wind/creek beds
+            HPDebug.Ensure(gameObject); // F3 diagnostics overlay (costs nothing while hidden)
+            SetTimeOfDay(0f);
+        }
+
+        private NavMeshSurface _navSurface;
+
+        /// <summary>
+        /// Bake the CPU bot's navigation surface. Runtime, and rebuilt on every reseed — the forest is
+        /// procedural, so a baked-in-the-editor NavMesh is impossible; there is nothing to bake until
+        /// the world exists.
+        ///
+        /// The bake carves around the trees (they're render-mesh children here) but the UNDERGROWTH is
+        /// hidden first: ~5,200 knee-high ferns would shred the mesh into confetti for no benefit,
+        /// since they aren't solid to anyone. This reuses the same renderer list the F3 perf toggle
+        /// uses. The bot's actual COLLISION is still the shared sim's analytic circles — this surface
+        /// only decides the global route (around the lake, over the hills), so an imperfect bake
+        /// degrades to "occasionally clips a route past a trunk the sim then slides it around", never
+        /// to walking through solid geometry.
+        /// </summary>
+        private void BuildNavMesh()
+        {
+            if (_navSurface == null)
+            {
+                _navSurface = gameObject.AddComponent<NavMeshSurface>();
+                _navSurface.collectObjects = CollectObjects.Children; // our world is all under this transform
+                _navSurface.useGeometry = NavMeshCollectGeometry.RenderMeshes; // trees have no PhysX colliders
+            }
+
+            bool undergrowthWasOn = _undergrowthRenderers.Count == 0 || _undergrowthRenderers[0] == null
+                || _undergrowthRenderers[0].enabled;
+            SetUndergrowthVisible(false);
+            _navSurface.BuildNavMesh();
+            SetUndergrowthVisible(undergrowthWasOn);
+
+            // Confirm the bake actually produced walkable ground — an empty NavMesh is the leading
+            // suspect when the CPU Bigfoot stands still. Cheap, and only logged once per (re)build.
+            var tri = UnityEngine.AI.NavMesh.CalculateTriangulation();
+            Debug.Log($"[navmesh] baked: {tri.vertices.Length} verts, {tri.indices.Length / 3} tris" +
+                      (tri.indices.Length == 0 ? "  <-- EMPTY: bot will fall back to beeline steering" : ""));
+        }
+
+        /// <summary>Tear the built geometry down and lay it out again from the current World.</summary>
+        private void Rebuild()
+        {
+            // Every mesh, prop and light the builders make is parented to this transform, so the
+            // children ARE the world. PostFX/HPAudio are components on this GameObject rather than
+            // children, so they survive — which matters: re-synthesizing the cues would cut the beds.
+            for (int i = transform.childCount - 1; i >= 0; i--) Destroy(transform.GetChild(i).gameObject);
+            Build();
+            BuildNavMesh();           // the world moved — the CPU bot's pathing surface must follow
+            InvalidatePalette();      // _lastTod would otherwise early-out and leave the new moon unlit
+            SetTimeOfDay(_appliedTod, _appliedNight);
+        }
+
+        // --- Dev cost levers (the F3 overlay toggles these live) ------------------
+        //
+        // Collected during Build so the overlay never has to search the scene by name, and CLEARED
+        // first because a reseed destroys and recreates every one of these objects — a stale list
+        // here would be a fistful of MissingReferenceExceptions the next time you pressed a key.
+        private readonly List<Renderer> _undergrowthRenderers = new List<Renderer>();
+        private readonly List<Light> _propLights = new List<Light>();
+
+        /// <summary>Undergrowth is ~5,200 scattered meshes; hiding it isolates its cost from the trees'.</summary>
+        public void SetUndergrowthVisible(bool on)
+        {
+            foreach (var r in _undergrowthRenderers) if (r != null) r.enabled = on;
+        }
+
+        /// <summary>The warm prop lights (campfire, RV, cave glows). Realtime point lights are the
+        /// second lever in the §7 perf order, after bloom.</summary>
+        public void SetPropLightsEnabled(bool on)
+        {
+            foreach (var l in _propLights) if (l != null) l.enabled = on;
+        }
+
+        public int PropLightCount => _propLights.Count;
+        public int UndergrowthMeshCount => _undergrowthRenderers.Count;
+
+        private void Build()
+        {
+            _undergrowthRenderers.Clear();
+            _propLights.Clear();
             BuildTerrain();
             BuildForest();
+            BuildUndergrowth();
+            BuildTrails();
             BuildLogs();
             BuildLake();
             BuildRv();
@@ -86,9 +203,12 @@ namespace HollowPines.Game
             BuildTower();
             BuildCamp();
             BuildLighting();
-            PostFX.Ensure(gameObject);
-            HPAudio.Ensure(gameObject); // synthesizes every cue + starts the wind/creek beds
-            SetTimeOfDay(0f);
+
+            // Sweep up the prop lights rather than registering them at each creation site: they're
+            // made by four different builders, and a scan can't be forgotten when a fifth is added.
+            // The moon is Directional and stays out of it — killing that would black out the world.
+            foreach (var l in GetComponentsInChildren<Light>(true))
+                if (l.type != LightType.Directional) _propLights.Add(l);
         }
 
         // --- Terrain -----------------------------------------------------------
@@ -132,11 +252,25 @@ namespace HollowPines.Game
 
         // --- Forest --------------------------------------------------------------
 
+        /// <summary>
+        /// The forest is chunked into a <see cref="ForestGrid"/>×<see cref="ForestGrid"/> grid of
+        /// combined meshes rather than three map-sized ones.
+        ///
+        /// Why: a single combined mesh has a map-sized bounding box, so Unity can never frustum-cull
+        /// any of it — every trunk in the forest is submitted every frame no matter where you look.
+        /// That was survivable at 700 trees and is not at 2,400. Per-cell meshes let the camera throw
+        /// away everything behind it and everything past the fog, which is most of the map. The cost
+        /// is more draw calls (cells × 3 materials), and draw calls are the cheap side of that trade.
+        /// </summary>
+        private const int ForestGrid = 8;
+
         private void BuildForest()
         {
             // MUST mirror WorldData.BuildColliders' rand() call order exactly so the rendered trees
-            // sit precisely on their colliders (same skips, same draws, same seed).
-            var rand = Rng.Mulberry32(Sim.World.Seed ^ 0x9e3779b9u);
+            // sit precisely on their colliders (same skips, same draws, same seed). Note the skips
+            // below are the same four, in the same order — a mismatch here silently desyncs the
+            // visible trunks from the invisible colliders players actually collide with.
+            var rand = Rng.Mulberry32(World.Seed ^ 0x9e3779b9u);
             double half = Sim.World.Size / 2 - 6;
 
             Mesh trunk = MeshUtil.TaperedCylinder(0.4f, 0.22f, 3f, 7);
@@ -144,9 +278,10 @@ namespace HollowPines.Game
             Mesh cone2 = MeshUtil.Cone(1.5f, 2.6f, 8);
             Mesh cone3 = MeshUtil.Cone(1.0f, 2.0f, 8);
 
-            var trunkC = new List<CombineInstance>();
-            var crownDarkC = new List<CombineInstance>();
-            var crownLightC = new List<CombineInstance>();
+            int cells = ForestGrid * ForestGrid;
+            var trunkC = NewCombineBuckets(cells);
+            var crownDarkC = NewCombineBuckets(cells);
+            var crownLightC = NewCombineBuckets(cells);
             int treeIndex = 0;
 
             for (int i = 0; i < Sim.World.TreeCount; i++)
@@ -155,6 +290,8 @@ namespace HollowPines.Game
                 double z = (rand() * 2 - 1) * half;
                 if (System.Math.Sqrt(x * x + z * z) < Sim.World.BaseCampRadius + 4) continue;
                 if (NearCave(x, z, 7)) continue;
+                if (InLake(x, z, 3)) continue;
+                if (Paths.PathDepth(World.Paths, x, z, PathGen.TreeMargin) > 0) continue;
                 double s = 0.7 + rand() * 0.9;
                 double rot = rand() * System.Math.PI * 2; // same draw the collider builder discards
 
@@ -163,17 +300,40 @@ namespace HollowPines.Game
                 var rotQ = Quaternion.Euler(0f, (float)(rot * Mathf.Rad2Deg), 0f);
                 var scale = Vector3.one * (float)s;
 
-                trunkC.Add(CI(trunk, pos, rotQ, scale));
+                int cell = CellOf(x, z);
+                trunkC[cell].Add(CI(trunk, pos, rotQ, scale));
                 var crowns = (treeIndex % 2 == 0) ? crownDarkC : crownLightC;
-                crowns.Add(CI(cone1, pos + Vector3.up * (2.2f * (float)s), rotQ, scale));
-                crowns.Add(CI(cone2, pos + Vector3.up * (4.0f * (float)s), rotQ, scale));
-                crowns.Add(CI(cone3, pos + Vector3.up * (5.6f * (float)s), rotQ, scale));
+                crowns[cell].Add(CI(cone1, pos + Vector3.up * (2.2f * (float)s), rotQ, scale));
+                crowns[cell].Add(CI(cone2, pos + Vector3.up * (4.0f * (float)s), rotQ, scale));
+                crowns[cell].Add(CI(cone3, pos + Vector3.up * (5.6f * (float)s), rotQ, scale));
                 treeIndex++;
             }
 
-            NewCombinedGo("Trunks", trunkC, MeshUtil.Lit(TrunkCol));
-            NewCombinedGo("CrownsDark", crownDarkC, MeshUtil.Lit(CrownDark));
-            NewCombinedGo("CrownsLight", crownLightC, MeshUtil.Lit(CrownLight));
+            var trunkMat = MeshUtil.Lit(TrunkCol);
+            var darkMat = MeshUtil.Lit(CrownDark);
+            var lightMat = MeshUtil.Lit(CrownLight);
+            for (int c = 0; c < cells; c++)
+            {
+                NewCombinedGo($"Trunks{c}", trunkC[c], trunkMat);
+                NewCombinedGo($"CrownsDark{c}", crownDarkC[c], darkMat);
+                NewCombinedGo($"CrownsLight{c}", crownLightC[c], lightMat);
+            }
+        }
+
+        private static List<CombineInstance>[] NewCombineBuckets(int n)
+        {
+            var buckets = new List<CombineInstance>[n];
+            for (int i = 0; i < n; i++) buckets[i] = new List<CombineInstance>();
+            return buckets;
+        }
+
+        /// <summary>Which forest chunk (x,z) falls in. Clamped, so the world edge can't index out.</summary>
+        private static int CellOf(double x, double z)
+        {
+            double size = Sim.World.Size;
+            int cx = Mathf.Clamp((int)((x + size / 2) / size * ForestGrid), 0, ForestGrid - 1);
+            int cz = Mathf.Clamp((int)((z + size / 2) / size * ForestGrid), 0, ForestGrid - 1);
+            return cz * ForestGrid + cx;
         }
 
         private static bool NearCave(double x, double z, double r)
@@ -181,6 +341,143 @@ namespace HollowPines.Game
             foreach (var c in World.Caves)
                 if ((c.X - x) * (c.X - x) + (c.Z - z) * (c.Z - z) < r * r) return true;
             return false;
+        }
+
+        /// <summary>Mirrors WorldData's private lake test — trees don't grow in open water.</summary>
+        private static bool InLake(double x, double z, double margin)
+        {
+            double nx = (x - WorldData.Lake.X) / (WorldData.Lake.Rx + margin);
+            double nz = (z - WorldData.Lake.Z) / (WorldData.Lake.Rz + margin);
+            return nx * nx + nz * nz < 1;
+        }
+
+        // --- Undergrowth + trails -------------------------------------------------
+
+        /// <summary>
+        /// Ferns, bushes and mossy rocks — the layer that makes 2,400 trunks read as a *forest*
+        /// floor rather than a mown field with poles in it.
+        ///
+        /// Deliberately RENDER-ONLY, and deliberately low (knee-to-waist). Undergrowth is not in the
+        /// shared sim at all: it has no collider, so it never blocks a searcher, and it is short
+        /// enough that it can't hide a standing player the line-of-sight check thinks is visible.
+        /// Anything tall enough to break that promise belongs in the sim as a real collider, where
+        /// both the host and every client agree on it.
+        ///
+        /// It draws from its own RNG stream (seed ^ a private xor), so adding or retuning clutter can
+        /// never shift the tree stream and move a collider.
+        /// </summary>
+        private void BuildUndergrowth()
+        {
+            var rand = Rng.Mulberry32(World.Seed ^ 0x5eedb115u);
+            double half = Sim.World.Size / 2 - 6;
+            int cells = ForestGrid * ForestGrid;
+
+            Mesh fern = MeshUtil.Cone(0.55f, 0.75f, 5);
+            Mesh bush = MeshUtil.Cone(0.9f, 1.15f, 6);
+            Mesh rock = MeshUtil.TaperedCylinder(0.5f, 0.34f, 0.42f, 5);
+
+            var fernC = NewCombineBuckets(cells);
+            var bushC = NewCombineBuckets(cells);
+            var rockC = NewCombineBuckets(cells);
+
+            for (int i = 0; i < UndergrowthCount; i++)
+            {
+                double x = (rand() * 2 - 1) * half;
+                double z = (rand() * 2 - 1) * half;
+                double kind = rand();
+                double s = 0.65 + rand() * 0.8;
+                double rot = rand() * System.Math.PI * 2;
+
+                // Keep the camp clearing, the water and the trails themselves clear. Trails get only
+                // the tree margin, so scrub creeps to the edge of a lane without closing it.
+                if (System.Math.Sqrt(x * x + z * z) < Sim.World.BaseCampRadius + 2) continue;
+                if (InLake(x, z, 1)) continue;
+                if (Paths.PathDepth(World.Paths, x, z) > 0) continue;
+
+                float y = (float)World.GetHeight(x, z);
+                var pos = new Vector3((float)x, y, (float)z);
+                var rotQ = Quaternion.Euler(0f, (float)(rot * Mathf.Rad2Deg), 0f);
+                var scale = Vector3.one * (float)s;
+                int cell = CellOf(x, z);
+
+                if (kind < 0.5) fernC[cell].Add(CI(fern, pos, rotQ, scale));
+                else if (kind < 0.85) bushC[cell].Add(CI(bush, pos, rotQ, scale));
+                else rockC[cell].Add(CI(rock, pos - Vector3.up * 0.05f, rotQ, scale));
+            }
+
+            var fernMat = MeshUtil.Lit(FernCol);
+            var bushMat = MeshUtil.Lit(BushCol);
+            var rockMat = MeshUtil.Lit(RockCol);
+            for (int c = 0; c < cells; c++)
+            {
+                TrackUndergrowth(NewCombinedGo($"Ferns{c}", fernC[c], fernMat));
+                TrackUndergrowth(NewCombinedGo($"Bushes{c}", bushC[c], bushMat));
+                TrackUndergrowth(NewCombinedGo($"Rocks{c}", rockC[c], rockMat));
+            }
+        }
+
+        private void TrackUndergrowth(GameObject go)
+        {
+            if (go == null) return; // empty grid cell — NewCombinedGo skips those
+            var r = go.GetComponent<Renderer>();
+            if (r != null) _undergrowthRenderers.Add(r);
+        }
+
+        /// <summary>How many clutter candidates to scatter (rejections thin it, as with the trees).</summary>
+        private const int UndergrowthCount = 5200;
+
+        /// <summary>
+        /// The logging trails as visible ground: a packed-dirt ribbon laid along each seeded polyline.
+        ///
+        /// The corridor is already real to the sim (no trees grow in it) — this is what makes it
+        /// legible, so "follow the trail" is something a player can actually decide to do. Drawn as a
+        /// quad strip that conforms to the terrain and floats a few centimetres over it, the same
+        /// trick the lake sheet uses: the ground is analytic and can't be carved.
+        /// </summary>
+        private void BuildTrails()
+        {
+            var mat = MeshUtil.Lit(TrailCol);
+            foreach (var path in World.Paths)
+            {
+                var verts = new List<Vector3>();
+                var tris = new List<int>();
+                for (int i = 0; i < path.Pts.Count; i++)
+                {
+                    // Segment direction, averaged at the joints so corners don't pinch.
+                    Vec2 prev = path.Pts[Mathf.Max(i - 1, 0)];
+                    Vec2 next = path.Pts[Mathf.Min(i + 1, path.Pts.Count - 1)];
+                    float dx = (float)(next.X - prev.X);
+                    float dz = (float)(next.Z - prev.Z);
+                    float len = Mathf.Sqrt(dx * dx + dz * dz);
+                    if (len < 1e-4f) { dx = 1f; dz = 0f; len = 1f; }
+                    float nx = -dz / len, nz = dx / len; // left normal in XZ
+
+                    // Narrow toward the far end so a trail fades out instead of stopping dead.
+                    float taper = Mathf.Lerp(1f, 0.55f, i / (float)Mathf.Max(1, path.Pts.Count - 1));
+                    float w = (float)path.HalfWidth * taper;
+                    for (int side = -1; side <= 1; side += 2)
+                    {
+                        double px = path.Pts[i].X + nx * w * side;
+                        double pz = path.Pts[i].Z + nz * w * side;
+                        verts.Add(new Vector3((float)px, (float)World.GetHeight(px, pz) + 0.04f, (float)pz));
+                    }
+                }
+                for (int i = 0; i + 1 < path.Pts.Count; i++)
+                {
+                    // Winding matters: vertex `a` is the RIGHT edge (the side loop runs -1 first), so
+                    // (a,b,c) is the order whose normal points up. Get it backwards and the ribbon is
+                    // lit from underneath and backface-culled from above — an invisible trail.
+                    int a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+                    tris.Add(a); tris.Add(b); tris.Add(c);
+                    tris.Add(b); tris.Add(d); tris.Add(c);
+                }
+                var mesh = new Mesh();
+                mesh.SetVertices(verts);
+                mesh.SetTriangles(tris, 0);
+                mesh.RecalculateNormals();
+                mesh.RecalculateBounds();
+                NewMeshGo("Trail", mesh, mat);
+            }
         }
 
         // --- Props ---------------------------------------------------------------
@@ -426,11 +723,32 @@ namespace HollowPines.Game
             go.transform.localScale = new Vector3((float)r * 2.2f, (float)r * 1.7f, (float)r * 2.2f);
         }
 
+        // --- the lookout tower + its ladder (searchers climb it; binoculars live up top) ------------
+        //
+        // The tower collider (WorldData) is climbable at ClimbH = 9.5, so the shared sim already holds
+        // a player standing on top at base+9.5 (GroundHeightAt) and stops pushing them out of its
+        // footprint up there — for ANY role, no parity change needed. The platform MESH is aligned to
+        // that same 9.5 so a searcher's feet land on the boards, not inside them. All that was missing
+        // was a way UP for a searcher (Bigfoot scales it; searchers can't), which the ladder provides
+        // as a client-side climb (HPPlayer) — see LadderXZ / LadderTopY below.
+
+        private const float TowerClimbH = 9.5f; // MUST equal WorldData.Lookout's collider ClimbH
+
+        /// <summary>Ladder line in world XZ — the searcher pins to this while climbing.</summary>
+        public static Vector2 LadderXZ { get; private set; }
+        /// <summary>Ground height at the ladder foot.</summary>
+        public static float LadderBottomY { get; private set; }
+        /// <summary>Feet height at the top of the ladder = the platform surface (tower base + ClimbH).</summary>
+        public static float LadderTopY { get; private set; }
+        /// <summary>How close (XZ) to the ladder line a searcher must be to mount.</summary>
+        public const float LadderReach = 1.8f;
+
         private void BuildTower()
         {
             var root = new GameObject("Lookout");
             float baseY = (float)World.GetHeight(WorldData.Lookout.X, WorldData.Lookout.Z);
-            root.transform.position = new Vector3((float)WorldData.Lookout.X, baseY, (float)WorldData.Lookout.Z);
+            var towerXZ = new Vector2((float)WorldData.Lookout.X, (float)WorldData.Lookout.Z);
+            root.transform.position = new Vector3(towerXZ.x, baseY, towerXZ.y);
             root.transform.parent = transform;
             var wood = MeshUtil.Lit(MeshUtil.Rgb(0x6a4a2c));
             Mesh post = MeshUtil.TaperedCylinder(0.22f, 0.18f, 10f, 5);
@@ -440,14 +758,59 @@ namespace HollowPines.Game
                 leg.transform.parent = root.transform;
                 leg.transform.localPosition = new Vector3(off.x, 0f, off.y);
             }
-            AddBox(root, "Platform", new Vector3(0, 9.8f, 0), new Vector3(3.6f, 0.35f, 3.6f), MeshUtil.Rgb(0x7a5a3a));
+            // Platform TOP aligned to the sim's climb height, so feet stand ON the boards.
+            AddBox(root, "Platform", new Vector3(0, TowerClimbH - 0.175f, 0), new Vector3(3.6f, 0.35f, 3.6f), MeshUtil.Rgb(0x7a5a3a));
+            // A low railing so the top reads as a place you stand rather than a diving board (render only).
+            foreach (var e in new[] { new Vector3(0, 0, 1.7f), new Vector3(0, 0, -1.7f), new Vector3(1.7f, 0, 0), new Vector3(-1.7f, 0, 0) })
+            {
+                bool alongX = Mathf.Abs(e.z) > 0.1f;
+                AddBox(root, "Rail", new Vector3(e.x, TowerClimbH + 0.55f, e.z),
+                    alongX ? new Vector3(3.6f, 0.1f, 0.1f) : new Vector3(0.1f, 0.1f, 3.6f), MeshUtil.Rgb(0x6a4a2c));
+            }
+
             var lamp = new GameObject("TowerLamp").AddComponent<Light>();
             lamp.transform.parent = root.transform;
-            lamp.transform.localPosition = new Vector3(0, 10.6f, 0);
+            lamp.transform.localPosition = new Vector3(0, TowerClimbH + 0.9f, 0);
             lamp.type = LightType.Point;
             lamp.color = MeshUtil.Rgb(0xffb060);
             lamp.range = 30f;
             lamp.intensity = 1.6f;
+
+            // Ladder on the face toward map centre (the side searchers approach from). Its line sits
+            // just outside the collider so the foot is on open ground; the rails+rungs are render-only.
+            Vector2 toCentre = (-towerXZ).normalized;
+            if (toCentre.sqrMagnitude < 0.01f) toCentre = Vector2.down;
+            float faceR = (float)WorldData.Lookout.R + 0.25f;
+            LadderXZ = towerXZ + toCentre * faceR;
+            LadderBottomY = (float)World.GetHeight(LadderXZ.x, LadderXZ.y);
+            LadderTopY = baseY + TowerClimbH;
+            BuildLadderMesh(root, baseY, towerXZ, toCentre, faceR);
+        }
+
+        private void BuildLadderMesh(GameObject root, float baseY, Vector2 towerXZ, Vector2 toCentre, float faceR)
+        {
+            var wood = MeshUtil.Lit(MeshUtil.Rgb(0x5a3f24));
+            float topLocalY = TowerClimbH; // ladder runs from ground to the platform surface
+            Vector2 side = new Vector2(-toCentre.y, toCentre.x); // perpendicular, for the two rails
+            var localFace = new Vector3(toCentre.x * faceR, 0, toCentre.y * faceR); // relative to root
+
+            // Two vertical rails.
+            foreach (float s in new[] { -0.32f, 0.32f })
+            {
+                var rail = NewMeshGo("LadderRail", MeshUtil.TaperedCylinder(0.06f, 0.06f, topLocalY, 4), wood);
+                rail.transform.parent = root.transform;
+                rail.transform.localPosition = localFace + new Vector3(side.x * s, 0, side.y * s);
+            }
+            // Rungs every 0.5 m.
+            Mesh rung = MeshUtil.TaperedCylinder(0.05f, 0.05f, 0.64f, 4);
+            for (float h = 0.4f; h < topLocalY; h += 0.5f)
+            {
+                var r = NewMeshGo("Rung", rung, wood);
+                r.transform.parent = root.transform;
+                r.transform.localPosition = localFace + new Vector3(0, h, 0);
+                // lay it flat, spanning the two rails
+                r.transform.localRotation = Quaternion.LookRotation(new Vector3(toCentre.x, 0, toCentre.y)) * Quaternion.Euler(0, 90, 90);
+            }
         }
 
         private void BuildCamp()
@@ -470,11 +833,121 @@ namespace HollowPines.Game
             fire.intensity = 3.5f;
         }
 
+        /// <summary>
+        /// Where the moon sits right now, as a unit vector pointing FROM the world TOWARD the moon.
+        /// Recomputed every palette update from the night number and the clock (see MoonAt).
+        /// </summary>
+        private Vector3 _moonDir = new Vector3(0.35f, 0.62f, -0.7f).normalized;
+
+        /// <summary>
+        /// Small seeded wobble on the rise bearing (radians), so sessions aren't identical — real
+        /// moonrise wanders along the horizon through the year. Deliberately kept to ±10°: it must
+        /// never be large enough to disturb the east→west track, and it derives from the replicated
+        /// world seed, so every player sees the moon in the same place.
+        /// </summary>
+        private float _moonRiseAz;
+
+        /// <summary>
+        /// The moon's three nights. It WANES and rides lower, but it is never gone — every night ends
+        /// with the moon still in the sky (owner's call, 2026-07-20).
+        ///
+        /// That constraint shapes the whole model: the moon must never finish its rise→set arc inside
+        /// a night, so `ArcStart + MoonArcRate` stays below 1 for all three. Escalation then comes
+        /// from PHASE, ALTITUDE and BRIGHTNESS instead of from the moon leaving — night 3 is a low,
+        /// half-lit moon at 0.24 against night 1's high full moon at 0.42.
+        ///
+        /// This is a difficulty dial, not decoration: moonlight is the only thing that lets searchers
+        /// cross the forest without burning flashlight battery, and battery drain is *already*
+        /// escalated per night. Taking the moon away entirely stacked a blackout on top of that;
+        /// dimming it to ~57% is the same pressure without ever making the map unreadable.
+        /// </summary>
+        private struct MoonNight
+        {
+            public float Phase;     // shader convention: -1 full .. 0 half .. +1 new
+            /// <summary>
+            /// How far along its rise→set arc the moon ALREADY IS at dusk (0 = just rising,
+            /// 1 = setting). This, not a per-night speed, is what makes later nights lose the moon
+            /// sooner — every night moves at the same angular rate, so the sky never appears to run
+            /// fast. Night 3 opens with the moon just past its peak and descending all night.
+            /// </summary>
+            public float ArcStart;
+            public float PeakElev;  // degrees at the top of the arc
+            public float Light;     // directional intensity at the top of the arc
+        }
+
+        private static readonly MoonNight[] MoonNights =
+        {
+            new MoonNight { Phase = -0.90f, ArcStart = 0.00f, PeakElev = 68f, Light = 0.42f },
+            new MoonNight { Phase = -0.35f, ArcStart = 0.12f, PeakElev = 60f, Light = 0.34f },
+            new MoonNight { Phase = 0.05f, ArcStart = 0.24f, PeakElev = 52f, Light = 0.24f },
+        };
+
+        /// <summary>
+        /// Arc fraction covered over one whole night — the moon's angular speed, identical every night
+        /// (only the starting point differs, so no night's sky appears to run faster than another's).
+        ///
+        /// Held so that `ArcStart + MoonArcRate` &lt; 1 for every night: the moon must never reach the
+        /// end of its arc while the night is still running, because no night is allowed to go
+        /// moonless. Night 3 is the binding case at 0.24 + 0.66 = 0.90 — low and sinking by dawn,
+        /// but still up.
+        /// </summary>
+        private const float MoonArcRate = 0.66f;
+
+        /// <summary>Elevation floor during the traverse — the "shallow drift". Below roughly this the
+        /// moon rakes the 14 m hills and throws stretched shadows that read as a bug.</summary>
+        private const float MoonMinElev = 35f;
+        /// <summary>
+        /// Bearing of due EAST in this sim's azimuth convention, where
+        /// `dir = (cos e · sin a, sin e, cos e · cos a)` gives a=0 → +Z, a=90° → +X.
+        ///
+        /// **Read the map's compass before trusting your instincts here.** `MapView.ToMap` MIRRORS
+        /// the x axis to match the sim's handedness (see §2), and its compass labels put **W at
+        /// world +X and E at world −X** — the opposite of the usual assumption. North is −Z. So east
+        /// is a = 270°, and the moon runs 270° → 360°(south) → 450°(west). Get this backwards and the
+        /// moon rises in the west, which is the classic internally-consistent-but-wrong bug.
+        /// </summary>
+        private const float MoonAzEastDeg = 270f;
+        /// <summary>Degrees swept across a full arc: east → south → west, the northern-sky path.</summary>
+        private const float MoonSweepDeg = 180f;
+        /// <summary>How much a low moon dims versus one overhead — atmospheric extinction, roughly.
+        /// This is the only altitude-driven dimming now; it never reaches zero.</summary>
+        private const float MoonLowDim = 0.72f;
+
+        /// <summary>
+        /// Moon direction + its normalised ALTITUDE (0 at the ends of the arc, 1 overhead) for a
+        /// night and clock. Altitude never reaches 0 during a night — see <see cref="MoonArcRate"/>.
+        /// </summary>
+        private void MoonAt(int night, float tod, out Vector3 dir, out float alt, out MoonNight cfg)
+        {
+            cfg = MoonNights[Mathf.Clamp(night - 1, 0, MoonNights.Length - 1)];
+
+            // One shared angular rate; only the STARTING point differs per night.
+            float q = Mathf.Clamp01(cfg.ArcStart + tod * MoonArcRate);
+
+            // East at q=0, west at q=1, through the southern sky. Every night runs the same direction;
+            // only how far along it starts differs, so the moon always tracks E→W for every player.
+            float az = _moonRiseAz + Mathf.Deg2Rad * (MoonAzEastDeg + q * MoonSweepDeg);
+            // sin() arc: lowest at both ends, peak mid-arc. Never dips below MoonMinElev, so the moon
+            // can't rake the hills and throw stretched shadows across the whole map.
+            alt = Mathf.Sin(q * Mathf.PI);
+            float elev = Mathf.Deg2Rad * Mathf.Lerp(MoonMinElev, cfg.PeakElev, alt);
+
+            dir = new Vector3(
+                Mathf.Cos(elev) * Mathf.Sin(az),
+                Mathf.Sin(elev),
+                Mathf.Cos(elev) * Mathf.Cos(az)).normalized;
+        }
+
         private void BuildLighting()
         {
+            var rand = Rng.Mulberry32(World.Seed ^ 0x11007a11u);
+            _moonRiseAz = Mathf.Deg2Rad * (float)((rand() * 2.0 - 1.0) * 10.0);
+
             var moonGo = new GameObject("Moon");
             moonGo.transform.parent = transform;
-            moonGo.transform.rotation = Quaternion.Euler(52f, -28f, 0f);
+            // Point the light FROM the moon, so the shadows on the ground agree with the disc the
+            // skybox draws. These were unrelated before — there was no disc to disagree with.
+            moonGo.transform.rotation = Quaternion.LookRotation(-_moonDir, Vector3.up);
             _moon = moonGo.AddComponent<Light>();
             _moon.type = LightType.Directional;
             _moon.color = MeshUtil.Rgb(0x9fb6ff);
@@ -486,7 +959,36 @@ namespace HollowPines.Game
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.ExponentialSquared;
             RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+
+            BuildSky();
         }
+
+        /// <summary>
+        /// The procedural skybox (Shaders/NightSky.shader). Replaces what used to be a FLAT SOLID
+        /// COLOUR camera clear — there was no sky and no moon at all, only a directional light
+        /// named "Moon". Colours, star brightness and the moon's position are driven per-frame from
+        /// the same palette that drives the fog, so the sky and the haze can never disagree.
+        /// </summary>
+        private void BuildSky()
+        {
+            var shader = Shader.Find("HollowPines/NightSky");
+            if (shader == null)
+            {
+                // Don't fail silently into a black void — this is exactly the "menu button that does
+                // nothing" failure mode from §4. Keep the old flat fill and say why.
+                Debug.LogWarning("[WorldBuilder] HollowPines/NightSky shader not found — " +
+                                 "falling back to a flat sky. Is Shaders/NightSky.shader imported?");
+                _skyMat = null;
+                return;
+            }
+
+            _skyMat = new Material(shader);
+            RenderSettings.skybox = _skyMat;
+            var cam = Camera.main;
+            if (cam != null) cam.clearFlags = CameraClearFlags.Skybox;
+        }
+
+        private Material _skyMat;
 
         // --- Day-night ------------------------------------------------------------
 
@@ -499,24 +1001,38 @@ namespace HollowPines.Game
             public Color Ambient;
             public float FogDensity;
             public float Moon;
-            public SkyKey(float t, int sky, int fog, int amb, float dens, float moon)
-            { T = t; Sky = MeshUtil.Rgb(sky); Fog = MeshUtil.Rgb(fog); Ambient = MeshUtil.Rgb(amb); FogDensity = dens; Moon = moon; }
+            /// <summary>How much of the star field shows — washed out at dusk/dawn, full at 3am.</summary>
+            public float Stars;
+            public SkyKey(float t, int sky, int fog, int amb, float dens, float moon, float stars)
+            {
+                T = t; Sky = MeshUtil.Rgb(sky); Fog = MeshUtil.Rgb(fog); Ambient = MeshUtil.Rgb(amb);
+                FogDensity = dens; Moon = moon; Stars = stars;
+            }
         }
 
         private static readonly SkyKey[] SkyKeys =
         {
-            new SkyKey(0.00f, 0x3a3550, 0x453a4a, 0x40384a, 0.0075f, 0.30f), // dusk
-            new SkyKey(0.25f, 0x141a2e, 0x18202e, 0x1c2434, 0.0100f, 0.38f), // nightfall
-            new SkyKey(0.60f, 0x0a0e1c, 0x0c1220, 0x121a28, 0.0125f, 0.42f), // deep night
-            new SkyKey(0.88f, 0x141a2e, 0x1a2030, 0x1c2434, 0.0105f, 0.36f), // pre-dawn
-            new SkyKey(1.00f, 0x4a4258, 0x584a52, 0x4a4456, 0.0080f, 0.26f), // dawn
+            new SkyKey(0.00f, 0x3a3550, 0x453a4a, 0x40384a, 0.0075f, 0.30f, 0.05f), // dusk
+            new SkyKey(0.25f, 0x141a2e, 0x18202e, 0x1c2434, 0.0100f, 0.38f, 0.65f), // nightfall
+            new SkyKey(0.60f, 0x0a0e1c, 0x0c1220, 0x121a28, 0.0125f, 0.42f, 1.00f), // deep night
+            new SkyKey(0.88f, 0x141a2e, 0x1a2030, 0x1c2434, 0.0105f, 0.36f, 0.70f), // pre-dawn
+            new SkyKey(1.00f, 0x4a4258, 0x584a52, 0x4a4456, 0.0080f, 0.26f, 0.05f), // dawn
         };
 
-        /// <summary>Blend the sky/fog/light palette for a 0..1 night progress. Called by GameManager.</summary>
-        public void SetTimeOfDay(float t)
+        /// <summary>
+        /// Blend the sky/fog/light palette for a 0..1 night progress. Called by GameManager every
+        /// frame; <paramref name="night"/> is 1-based and selects the moon's phase/arc for the night.
+        /// </summary>
+        public void SetTimeOfDay(float t, int night = 1)
         {
-            if (Mathf.Abs(t - _lastTod) < 0.0005f) return;
+            // Remembered so a reseed rebuild resumes the same palette and the same night, not dusk.
+            _appliedTod = t;
+            _appliedNight = night;
+            // The night is part of the early-out: the moon's phase and arc change between nights even
+            // when the clock reads the same, so comparing tod alone would freeze the sky at a rollover.
+            if (Mathf.Abs(t - _lastTod) < 0.0005f && night == _lastNight) return;
             _lastTod = t;
+            _lastNight = night;
             SkyKey a = SkyKeys[0], b = SkyKeys[SkyKeys.Length - 1];
             for (int i = 0; i < SkyKeys.Length - 1; i++)
             {
@@ -540,15 +1056,62 @@ namespace HollowPines.Game
 
             RenderSettings.fogColor = fog;
             RenderSettings.fogDensity = fogDensity;
+            // --- the moon: phase + arc for THIS night, and where it is on the clock ---------
+            MoonAt(night, t, out _moonDir, out float moonAlt, out MoonNight moonCfg);
+
+            // Palette `moon` is the shape across a night (dimmer at dusk/dawn); the night's own Light
+            // scales that whole shape; altitude dims it modestly when it rides low. No term here can
+            // reach zero — the moon is always up, so it is always lighting something.
+            float lit = moon * (moonCfg.Light / MoonNights[0].Light) * Mathf.Lerp(MoonLowDim, 1f, moonAlt);
             RenderSettings.ambientLight = ambient;
-            if (_moon != null) _moon.intensity = moon;
-            var cam = Camera.main;
-            if (cam != null)
+            if (_moon != null)
             {
-                cam.clearFlags = CameraClearFlags.SolidColor;
-                cam.backgroundColor = sky;
+                _moon.intensity = lit;
+                _moon.transform.rotation = Quaternion.LookRotation(-_moonDir, Vector3.up);
+                _moon.shadows = LightShadows.Hard;
+            }
+
+            if (_skyMat != null)
+            {
+                // Horizon takes the palette's sky colour so it meets the fog seamlessly at the
+                // treeline; the zenith is DARKER, which is the way a real night sky runs — brightest
+                // low down, deepest overhead. Getting that inverted is the usual tell that a sky is
+                // a lerped gradient rather than an observed one.
+                _skyMat.SetColor(SkyHorizonId, sky);
+                _skyMat.SetColor(SkyZenithId, sky * 0.42f);
+                _skyMat.SetColor(SkyGroundId, sky * 0.30f);
+                // Moonwash: a bright full moon drowns the fainter stars, a low half-moon doesn't.
+                // So night 3 trades moonlight for a visibly better sky — the escalation still has a
+                // payoff even though the moon never actually leaves.
+                float moonWash = Mathf.InverseLerp(0.14f, 0.42f, lit);
+                float stars = Mathf.Lerp(a.Stars, b.Stars, k) * Mathf.Lerp(1.40f, 1f, moonWash);
+                _skyMat.SetFloat(SkyStarsId, stars * (TitleMode ? 1.25f : 1f));
+                _skyMat.SetVector(SkyMoonDirId, _moonDir);
+                _skyMat.SetFloat(SkyMoonPhaseId, moonCfg.Phase);
+                _skyMat.SetFloat(SkyMoonBrightId, Mathf.Lerp(1.7f, 3.2f, Mathf.InverseLerp(0.14f, 0.42f, lit)));
+                _skyMat.SetFloat(SkyMoonGlowId, 0.8f);
+            }
+            else
+            {
+                var cam = Camera.main;
+                if (cam != null)
+                {
+                    cam.clearFlags = CameraClearFlags.SolidColor;
+                    cam.backgroundColor = sky;
+                }
             }
         }
+
+        // Cached shader property ids — SetColor(string) hashes the name on every call, and this runs
+        // every frame from GameManager's clock.
+        private static readonly int SkyHorizonId = Shader.PropertyToID("_HorizonColor");
+        private static readonly int SkyZenithId = Shader.PropertyToID("_ZenithColor");
+        private static readonly int SkyGroundId = Shader.PropertyToID("_GroundColor");
+        private static readonly int SkyStarsId = Shader.PropertyToID("_StarBrightness");
+        private static readonly int SkyMoonDirId = Shader.PropertyToID("_MoonDir");
+        private static readonly int SkyMoonBrightId = Shader.PropertyToID("_MoonBrightness");
+        private static readonly int SkyMoonPhaseId = Shader.PropertyToID("_MoonPhase");
+        private static readonly int SkyMoonGlowId = Shader.PropertyToID("_MoonGlow");
 
         // --- helpers ----------------------------------------------------------------
 
@@ -559,6 +1122,10 @@ namespace HollowPines.Game
 
         private GameObject NewCombinedGo(string name, List<CombineInstance> combines, Material mat)
         {
+            // Chunking leaves empty buckets (a grid cell that is all lake, or all camp clearing).
+            // An empty combine yields a zero-vertex mesh and a renderer that costs culling work for
+            // nothing, so skip them outright.
+            if (combines.Count == 0) return null;
             var mesh = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
             mesh.CombineMeshes(combines.ToArray(), true, true);
             mesh.RecalculateBounds();

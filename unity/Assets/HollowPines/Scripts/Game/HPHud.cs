@@ -189,12 +189,57 @@ namespace HollowPines.Game
             }
 
             if (me != null && gm.MatchPhase.Value != GameManager.PhaseLobby) DrawHelpToggle(me);
-            if (me != null && gm.MatchPhase.Value == GameManager.PhasePlaying && !_briefingDismissed)
+            if (me != null && gm.MatchPhase.Value == GameManager.PhasePlaying && !gm.IntermissionActive && !_briefingDismissed)
                 DrawBriefing(gm, me);
+            // Between-nights recap sits over the playing HUD.
+            if (gm.MatchPhase.Value == GameManager.PhasePlaying && gm.IntermissionActive) DrawIntermission(gm);
             if (PauseOpen) DrawPause(gm);
         }
 
         // ------------------------------------------------------------------ lobby
+
+        /// <summary>Intended roster: one Bigfoot + five searchers. Display only — not hard-enforced.</summary>
+        private const int MaxPlayers = 6;
+
+        private GUIStyle _mutedLabel;
+        private static GUIStyle Muted()
+        {
+            var s = new GUIStyle(GUI.skin.label) { fontSize = 11, wordWrap = true };
+            s.normal.textColor = new Color(0.62f, 0.66f, 0.66f);
+            return s;
+        }
+
+        /// <summary>Who the deal will hand Bigfoot to, in words — mirrors GameManager.DoStartMatch.</summary>
+        private static string BigfootPickHint(int count, int wanters)
+        {
+            if (count < 2) return "Bigfoot: none until a second player joins";
+            if (wanters == 0) return "Bigfoot: chosen at random (nobody volunteered)";
+            if (wanters == 1) return "Bigfoot: the volunteer";
+            return "Bigfoot: random pick among the volunteers";
+        }
+
+        // The host's LAN address, resolved once and cached — a DNS lookup every OnGUI frame would be
+        // wasteful, and it never changes during a session.
+        private static string _localIp;
+        private static string LocalIPv4()
+        {
+            if (_localIp != null) return _localIp;
+            _localIp = "127.0.0.1"; // fallback if nothing better resolves (still works for same-PC tests)
+            try
+            {
+                foreach (var ip in System.Net.Dns.GetHostAddresses(System.Net.Dns.GetHostName()))
+                {
+                    if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+                        !System.Net.IPAddress.IsLoopback(ip))
+                    {
+                        _localIp = ip.ToString();
+                        break;
+                    }
+                }
+            }
+            catch { /* headless / odd network config — keep the loopback fallback */ }
+            return _localIp;
+        }
 
         private void DrawLobby(GameManager gm, HPPlayer me)
         {
@@ -203,7 +248,16 @@ namespace HollowPines.Game
             float lw = Mathf.Min(340f, Screen.width - 40f);
             float lh = Mathf.Min(420f, Screen.height - 80f);
             GUILayout.BeginArea(new Rect((Screen.width - lw) / 2f, 40f, lw, lh));
-            GUILayout.Box("HOLLOW PINES — camp lobby");
+
+            int count = 0, wanters = 0;
+            foreach (var p in HPPlayer.All) { if (p == null) continue; count++; if (p.WantsBigfoot.Value) wanters++; }
+
+            GUILayout.Box($"HOLLOW PINES — camp lobby   ({count}/{MaxPlayers})");
+
+            // The host tells friends where to connect. Direct-IP is the whole join model, and hunting
+            // for your own LAN address outside the game was the main friends-play snag.
+            if (InstanceFinder.IsHostStarted)
+                GUILayout.Label($"friends join at:  {LocalIPv4()}");
             GUILayout.Label("Hold right-mouse to look around while you wait — release to click.");
             GUILayout.Space(6f);
 
@@ -214,6 +268,10 @@ namespace HollowPines.Game
                 string self = p == me ? "  (you)" : "";
                 GUILayout.Label($"• {p.PlayerName.Value}{tag}{self}");
             }
+            GUILayout.Space(4f);
+
+            // Say who the monster will be, since the deal is otherwise invisible until the match starts.
+            GUILayout.Label(BigfootPickHint(count, wanters), _mutedLabel ??= Muted());
             GUILayout.Space(6f);
 
             if (me != null)
@@ -225,10 +283,23 @@ namespace HollowPines.Game
                     me.ServerSetWantsBigfoot(w);
                 }
             }
-            if (InstanceFinder.IsHostStarted && GUILayout.Button("START MATCH", GUILayout.Height(34f)))
-                gm.ServerStartMatch();
-            if (!InstanceFinder.IsHostStarted)
+
+            if (InstanceFinder.IsHostStarted)
+            {
+                // Below 2 players a match has no Bigfoot (see GameManager.DoStartMatch), so a lone
+                // host clicking START used to get a silent, broken, monster-less match. Gate it.
+                bool canStart = count >= 2;
+                GUI.enabled = canStart;
+                if (GUILayout.Button("START MATCH", GUILayout.Height(34f))) gm.ServerStartMatch();
+                GUI.enabled = true;
+                if (!canStart)
+                    GUILayout.Label("need 2+ players to start — or use SINGLE PLAYER from the menu",
+                        _mutedLabel ??= Muted());
+            }
+            else
+            {
                 GUILayout.Label("(waiting for the host to start)");
+            }
             GUILayout.Space(8f);
             if (GUILayout.Button("LEAVE", GUILayout.Height(24f))) Disconnect();
             GUILayout.EndArea();
@@ -270,12 +341,13 @@ namespace HollowPines.Game
                 DrawNametags(me);
             }
 
-            // Top bar: night, clock, phase, and PROOF — footage plus physical evidence, broken out so
-            // the team can see which half is fragile (footage dies with a grab; evidence never does).
+            // Top bar: night, clock, phase, and PROOF. Only STORED proof appears here — everything in
+            // a pack is on the searcher's own banner, because the distinction between "we have it"
+            // and "someone is carrying it" is the whole extraction loop.
             float t = gm.TimeOfDay.Value;
-            int proof = gm.VideosCaptured.Value + gm.EvidenceCollected.Value;
             string top = $"Night {gm.NightNumber.Value}/{gm.TotalNights.Value}    {GameManager.ClockString(t)}    ({GameManager.PhaseName(t)})    " +
-                         $"STORED {proof}/{gm.VideosRequired.Value}  ({gm.VideosCaptured.Value} film · {gm.EvidenceCollected.Value} casts)";
+                         $"STORED {gm.StoredProof}/{gm.VideosRequired.Value}  " +
+                         $"({gm.VideosCaptured.Value} film · {gm.EvidenceCollected.Value} casts · {gm.HairCollected.Value} hair)";
             GUI.Box(new Rect(Screen.width / 2f - 290f, 8f, 580f, 26f), top);
 
             if (Time.time < _roarFlashUntil)
@@ -325,6 +397,7 @@ namespace HollowPines.Game
                 var parts = new System.Collections.Generic.List<string>();
                 if (me.CarriedFilm.Value > 0) parts.Add($"{me.CarriedFilm.Value} tape{(me.CarriedFilm.Value == 1 ? "" : "s")}");
                 if (me.CarriedCasts.Value > 0) parts.Add($"{me.CarriedCasts.Value} cast{(me.CarriedCasts.Value == 1 ? "" : "s")}");
+                if (me.CarriedHair.Value > 0) parts.Add($"{me.CarriedHair.Value} hair");
                 float pulse = 0.75f + 0.25f * Mathf.Sin(Time.time * 3f);
                 Color oc = GUI.color;
                 GUI.color = new Color(1f, 0.85f, 0.45f, pulse);
@@ -574,12 +647,47 @@ namespace HollowPines.Game
             _toastGood = true;
         }
 
-        /// <summary>Carried proof destroyed by a grab.</summary>
-        public static void NotifyProofLost(int count)
+        /// <summary>
+        /// Carried proof spilled by a grab. Deliberately NOT worded as a loss — it's on the ground and
+        /// it can be fetched, and the toast has to say so or the team will write it off and walk away
+        /// from proof that's still theirs.
+        /// </summary>
+        public static void NotifyProofSpilled(int count)
         {
             _toastAt = Time.time;
-            _toast = count == 1 ? "IT TOOK THE TAPE — one piece lost, unsaved"
-                                : $"{count} PIECES LOST — everything they were carrying";
+            _toast = count == 1 ? "PACK SPILLED — one piece on the ground, go get it"
+                                : $"PACK SPILLED — {count} pieces on the ground, go get them";
+            _toastGood = false;
+        }
+
+        /// <summary>A spilled pack picked back up — still unsaved, but back in the game.</summary>
+        public static void NotifyProofRecovered(int count)
+        {
+            _toastAt = Time.time;
+            _toast = count == 1 ? "RECOVERED — one piece back, still unsaved"
+                                : $"RECOVERED — {count} pieces back, still unsaved";
+            _toastGood = true;
+        }
+
+        /// <summary>
+        /// A cave mouth went on the team's map. Names the finder and the cave, because the whole
+        /// point of team-wide discovery is that it's worth calling out — and it names ONE cave, not
+        /// the network: the other lairs are still out there.
+        /// </summary>
+        public static void NotifyCaveFound(int number, string by)
+        {
+            _toastAt = Time.time;
+            _toast = string.IsNullOrEmpty(by)
+                ? $"CAVE {number} MAPPED — one of its lairs is on the map now"
+                : $"CAVE {number} MAPPED — {by} found a lair";
+            _toastGood = true;
+        }
+
+        /// <summary>The match ended early because someone essential disconnected — you're back in the lobby.</summary>
+        public static void NotifyMatchAborted(string reason)
+        {
+            _toastAt = Time.time;
+            _toast = "MATCH ENDED — " + reason + " back to the lobby.";
             _toastGood = false;
         }
 
@@ -734,11 +842,12 @@ namespace HollowPines.Game
                 GUILayout.Label("YOUR NIGHT", header);
                 GUILayout.Label($"• Survive all {gm.TotalNights.Value} nights — they must STORE {gm.VideosRequired.Value} pieces of proof\n" +
                                 "• RMB roars — everything close enough freezes where it stands\n" +
-                                "• LMB takes a frozen searcher — everything they were carrying is gone\n" +
+                                "• LMB takes a frozen searcher — their pack SPILLS where they fall\n" +
+                                "• You cannot destroy what spills. You can only stand over it and wait\n" +
                                 "• They carry it back to a bag at the camp. You cannot touch the bag.\n" +
                                 "• So take them on the walk home, while their hands are full\n" +
-                                "• Soft ground holds your deepest tracks — tread them out before they cast them\n" +
-                                $"• Crouch ({HPKeybinds.Label(HPAction.Crouch)}): no tracks, no sound, nothing to hear — at half speed", perk);
+                                "• You shed hair on every tree you shoulder past — the trees remember you\n" +
+                                $"• Crouch ({HPKeybinds.Label(HPAction.Crouch)}): no tracks, no hair, no sound — at half speed", perk);
             }
             else
             {
@@ -760,7 +869,10 @@ namespace HollowPines.Game
                 GUILayout.Label($"• Store {gm.VideosRequired.Value} pieces of proof in the duffel by the RV, in {gm.TotalNights.Value} nights\n" +
                                 "• FILM it (hold RMB in range) — fast, but you have to get close\n" +
                                 "• Or CAST its deepest tracks (Mara's kit) — safe, but slow\n" +
-                                "• What you carry is worth NOTHING until it's in the bag — and it dies with you\n" +
+                                "• Or bag the HAIR it leaves on the trees — anyone can, if you spot it\n" +
+                                "• What you carry is worth NOTHING until it's in the bag\n" +
+                                "• Caught carrying, you drop it where you fall — go back for it\n" +
+                                "• Its caves aren't on your map. Find one and the whole team sees it.\n" +
                                 "• The duffel is the one thing out here it cannot touch. Walk it home.", objective);
             }
             GUILayout.EndScrollView();
@@ -845,11 +957,11 @@ namespace HollowPines.Game
             if (me.IsBigfoot || me.Status.Value != HPPlayer.StatusActive) return;
             if (!GameManager.AtDuffel(me.transform.position)) return;
 
-            int film = gm.VideosCaptured.Value, casts = gm.EvidenceCollected.Value;
-            int stored = film + casts, need = gm.VideosRequired.Value;
+            int film = gm.VideosCaptured.Value, casts = gm.EvidenceCollected.Value, hair = gm.HairCollected.Value;
+            int stored = gm.StoredProof, need = gm.VideosRequired.Value;
 
             float w = Mathf.Min(300f, Screen.width - 40f);
-            var r = new Rect(Screen.width - w - 20f, Mathf.Max(70f, Screen.height * 0.28f), w, 168f);
+            var r = new Rect(Screen.width - w - 20f, Mathf.Max(70f, Screen.height * 0.28f), w, 188f);
             Color old = GUI.color;
             GUI.color = new Color(0f, 0f, 0f, 0.72f);
             GUI.DrawTexture(r, Texture2D.whiteTexture);
@@ -865,6 +977,7 @@ namespace HollowPines.Game
             row.normal.textColor = new Color(0.88f, 0.9f, 0.88f);
             GUILayout.Label($"Video tapes ....... {film}", row);
             GUILayout.Label($"Plaster casts ..... {casts}", row);
+            GUILayout.Label($"Hair samples ...... {hair}", row);
             GUILayout.Space(4f);
 
             var total = new GUIStyle(GUI.skin.label) { fontSize = 14, fontStyle = FontStyle.Bold };
@@ -933,13 +1046,25 @@ namespace HollowPines.Game
             }
             else
             {
-                if (me.OwnGrounded && Sim.Collision.LogOverlap(world.FallenLogs, pos.x, pos.z, Sim.Player.Radius) > 0)
+                // Same padded reach the sim gates the vault on — logs are solid now, so you prompt
+                // from ALONGSIDE one. Testing at the bare radius would show the prompt only at a
+                // position the push-out never lets you occupy: a prompt that could never appear.
+                if (me.OwnGrounded &&
+                    Sim.Collision.LogOverlap(world.FallenLogs, pos.x, pos.z, Sim.Player.Radius + Sim.Player.VaultReach) > 0)
                     prompt = $"{HPKeybinds.Label(HPAction.Jump)} — vault the log";
 
                 // The hold-action prompt comes from the same resolver the input uses, so the prompt
                 // can never advertise a different action than the key will actually perform.
                 var hold = me.HoldActionTarget();
                 if (hold.Kind != HPPlayer.HoldAction.None) prompt = hold.Label;
+
+                // Tower: climb the ladder from the ground; glass the forest from the deck.
+                if (me.OwnOnLadder) prompt = $"W/S — climb  ·  {HPKeybinds.Label(HPAction.Jump)} — hop off";
+                else if (me.OwnOnLookout)
+                    prompt = me.OwnGlassing
+                        ? "release to lower the binoculars"
+                        : $"hold {HPKeybinds.Label(HPAction.Binoculars)} — binoculars (night vision)";
+                else if (me.OwnNearLadder) prompt = $"{HPKeybinds.Label(HPAction.Jump)} — climb the ladder";
             }
             if (prompt == null) return;
             var style = new GUIStyle(GUI.skin.box) { fontSize = 14 };
@@ -979,6 +1104,61 @@ namespace HollowPines.Game
             GUILayout.EndArea();
         }
 
+        /// <summary>
+        /// The between-nights recap: who banked what, Bigfoot's tally, the team's progress toward the
+        /// proof target, and a countdown to the next night. Reads live SyncVars — no snapshot needed,
+        /// since gameplay is frozen while this is up.
+        /// </summary>
+        private void DrawIntermission(GameManager gm)
+        {
+            // Full-screen dim so the frozen world recedes behind the card.
+            Color old = GUI.color;
+            GUI.color = new Color(0f, 0f, 0f, 0.72f);
+            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
+            GUI.color = old;
+
+            float w = Mathf.Min(460f, Screen.width - 40f);
+            float h = Mathf.Min(430f, Screen.height - 40f);
+            GUILayout.BeginArea(new Rect((Screen.width - w) / 2f, (Screen.height - h) / 2f, w, h));
+
+            var title = new GUIStyle(GUI.skin.label) { fontSize = 22, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
+            var head = new GUIStyle(GUI.skin.label) { fontSize = 13, fontStyle = FontStyle.Bold };
+            head.normal.textColor = new Color(0.65f, 0.85f, 0.95f);
+            var row = new GUIStyle(GUI.skin.label) { fontSize = 13 };
+
+            GUILayout.Space(4f);
+            GUILayout.Label($"NIGHT {gm.NightNumber.Value} SURVIVED", title);
+            GUILayout.Label($"night {gm.NightNumber.Value + 1} begins in {Mathf.CeilToInt(gm.IntermissionLeft.Value)}s",
+                new GUIStyle(GUI.skin.label) { fontSize = 13, alignment = TextAnchor.MiddleCenter });
+            GUILayout.Space(10f);
+
+            GUILayout.Label("THE CASE SO FAR", head);
+            GUILayout.Label($"proof stored: {gm.StoredProof} / {gm.VideosRequired.Value}   " +
+                            $"({gm.VideosCaptured.Value} film · {gm.EvidenceCollected.Value} casts · {gm.HairCollected.Value} hair)", row);
+            GUILayout.Space(10f);
+
+            GUILayout.Label("SEARCHERS — proof banked", head);
+            HPPlayer bigfoot = null;
+            foreach (var p in HPPlayer.All)
+            {
+                if (p == null) continue;
+                if (p.IsBigfoot) { bigfoot = p; continue; }
+                string carry = p.CarriedTotal > 0 ? $"   (+{p.CarriedTotal} carried, unbanked)" : "";
+                GUILayout.Label($"• {NameOf(p)} — {p.StatBanked.Value}{carry}", row);
+            }
+            GUILayout.Space(10f);
+
+            GUILayout.Label("BIGFOOT", head);
+            if (bigfoot != null)
+                GUILayout.Label($"• {NameOf(bigfoot)} — searchers taken: {bigfoot.StatIncaps.Value}   ·   " +
+                                $"{gm.TotalNights.Value - gm.NightNumber.Value} night(s) left to survive", row);
+
+            GUILayout.EndArea();
+        }
+
+        private static string NameOf(HPPlayer p) =>
+            !string.IsNullOrEmpty(p.CharacterName.Value) ? p.CharacterName.Value : p.PlayerName.Value;
+
         // ------------------------------------------------------------------ bits
 
         private void DrawHelpToggle(HPPlayer me)
@@ -1002,10 +1182,11 @@ namespace HollowPines.Game
                   $"{sprint} SPRINT (faster than they are) · RMB ROAR (freeze) · LMB GRAB / drop\n" +
                   $"{senses} senses overlay · {map} map (cave fast-travel)\n" +
                   $"{crouch} CROUCH — half speed, but no tracks and no sound at all\n" +
-                  "tread on your own deep tracks to ruin them · survive all 3 nights"
+                  "a GRAB spills their pack — you can't destroy evidence, but you can stand\n" +
+                  "over the spill until it goes cold · survive all 3 nights"
                 : $"WASD move · mouse look · {sprint} sprint · {jump} jump / VAULT a log\n" +
                   $"{flash} flashlight (dazzles Bigfoot if held on it) · RMB hold = FILM Bigfoot\n" +
-                  $"{revive} hold = STORE proof at the duffel / revive / cast (Mara) / battery (Sam)\n" +
+                  $"{revive} hold = STORE proof / revive / recover a spilled pack / bag hair / cast (Mara)\n" +
                   $"{crouch} crouch — half speed, but your footsteps go silent\n" +
                   $"{mark} trail mark (Wren) · {flashAbility} camera flash (Eli)\n" +
                   $"{map} map · {ping} stakeout ping · store {NeededProof()} proof in the duffel to win";

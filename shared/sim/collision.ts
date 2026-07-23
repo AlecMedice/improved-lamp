@@ -83,7 +83,44 @@ export function lineBlocked(colliders: Collider[], a: Vec2, b: Vec2): boolean {
   return false;
 }
 
-/** Capsule overlap against all fallen logs, 0 = clear, 1 = fully inside (hunter slow). */
+/**
+ * Push an (x,z) point out of every fallen log it overlaps — logs are SOLID to a grounded hunter.
+ *
+ * Called only for grounded hunters: Bigfoot strides over logs untouched, and a hunter mid-vault
+ * is airborne, so the trunk passes harmlessly beneath. That is the whole mechanic — a log is a
+ * wall you go around or spend stamina to clear, not a patch of mud you wade through.
+ */
+export function resolveLogs(logs: FallenLog[], x: number, z: number, radius: number): { x: number; z: number } {
+  let nx = x;
+  let nz = z;
+  for (const log of logs) {
+    const dx = nx - log.cx;
+    const dz = nz - log.cz;
+    const t = Math.max(-log.halfLen, Math.min(log.halfLen, dx * log.ax + dz * log.az));
+    const px = log.cx + t * log.ax;
+    const pz = log.cz + t * log.az;
+    let ox = nx - px;
+    let oz = nz - pz;
+    const min = log.r + radius;
+    const d = Math.sqrt(ox * ox + oz * oz);
+    if (d >= min) continue;
+    if (d > 1e-6) {
+      ox /= d;
+      oz /= d;
+    } else {
+      // Dead on the centreline (landed astride it): shove out along the trunk's normal rather
+      // than dividing by zero. Fixed choice, so every client resolves it the same way.
+      ox = -log.az;
+      oz = log.ax;
+    }
+    const push = min - d;
+    nx += ox * push;
+    nz += oz * push;
+  }
+  return { x: nx, z: nz };
+}
+
+/** Capsule overlap against all fallen logs, 0 = clear, 1 = fully inside (drives the vault prompt). */
 export function logOverlap(logs: FallenLog[], x: number, z: number, playerRadius: number): number {
   let best = 0;
   for (const log of logs) {

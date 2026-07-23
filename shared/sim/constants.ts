@@ -10,9 +10,12 @@
 export const WORLD = {
   size: 800, // full extent; world spans -400..400 on x/z
   segments: 160, // terrain mesh resolution (render-only, kept here to keep WORLD whole)
-  treeCount: 700,
+  // Placement draws (not the surviving trunk count): the camp clearing, the lake and the trail
+  // corridors all reject candidates, so roughly 2,300 of these actually stand. That lands near
+  // 8 m between trunks — a forest you can lose someone in, with lanes you can still film down.
+  treeCount: 2500,
   hillHeight: 14,
-  seed: 1337, // shared so every client + the server build an identical forest
+  seed: 1337, // the DEFAULT forest; a match replaces it with a per-session seed (see GameManager)
   baseCampRadius: 16,
 };
 
@@ -41,9 +44,10 @@ export const PLAYER = {
   stepIntervalWalk: 0.52, // seconds between footstep sounds while walking
   stepIntervalSprint: 0.32, // seconds between footstep sounds while sprinting
   stepHeight: 0.75, // max terrain rise auto-stepped over when a collider blocks (m)
-  logSlowFactor: 0.35, // hunter speed multiplier when clambering over a fallen log
+  vaultReach: 0.75, // how far from a log's surface a hunter can start a vault (logs are solid, so
+  //                   the prompt has to reach from alongside — you can never stand inside one)
   vaultHopSpeed: 4.6, // upward velocity when a hunter vaults a fallen log (a clamber, < jumpSpeed)
-  vaultStaminaCost: 12, // stamina spent to vault a log (negates its slow instead of wading over it)
+  vaultStaminaCost: 12, // stamina spent to vault a log (the only way through one on foot)
   climbSpeed: 3.6, // Bigfoot's vertical climb rate up a climbable structure (m/s)
   climbStaminaDrain: 22, // stamina/sec while climbing/clinging (regen is suspended while climbing)
   climbReach: 0.7, // how far past a structure's edge Bigfoot can grab on to start a climb (m)
@@ -80,4 +84,16 @@ export const CAVE_GEN = {
   radiusSpan: 190,
   minSpacing: 120, // at least this far apart
   maxAttempts: 400,
+};
+
+/** Forest-trail generation (seed-derived, identical on client + host). See `paths.ts`. */
+export const PATH_GEN = {
+  seedXor: 0x7a11_b1a2, // mixes WORLD.seed so trails don't correlate with trees or caves
+  count: 4, // trailheads leaving the camp clearing
+  stepLength: 26, // metres per polyline segment
+  maxSteps: 40, // hard cap; a trail normally exits the map well before this
+  jitter: 0.42, // max heading change per step (rad) — the meander
+  minHalfWidth: 2.6, // corridor half-width: wide enough for two abreast
+  halfWidthSpan: 1.8, // ...plus up to this, so trails differ in how open they feel
+  treeMargin: 1.2, // extra clearance trees keep off the corridor edge
 };

@@ -11,6 +11,7 @@ namespace HollowPines.Sim
     {
         public uint Seed;
         public IReadOnlyList<Cave> Caves;
+        public IReadOnlyList<ForestPath> Paths; // logging trails out of camp (tree-free corridors)
         public HeightFn GetHeight;
         public List<Collider> Colliders;
         public List<Collider> Climbables; // subset of colliders with a ClimbH (structures Bigfoot can scale/perch on)
@@ -21,7 +22,9 @@ namespace HollowPines.Sim
         {
             // Fully qualified: the instance field `Caves` would otherwise shadow the type here.
             var caves = HollowPines.Sim.Caves.GenerateCaves(seed);
-            var colliders = WorldData.BuildColliders(seed, caves);
+            // Fully qualified for the same reason as Caves: the instance field shadows the type.
+            var paths = HollowPines.Sim.Paths.GeneratePaths(seed);
+            var colliders = WorldData.BuildColliders(seed, caves, paths);
             var climbables = new List<Collider>();
             foreach (var col in colliders)
                 if (col.ClimbH.HasValue) climbables.Add(col);
@@ -30,6 +33,7 @@ namespace HollowPines.Sim
             {
                 Seed = seed,
                 Caves = caves,
+                Paths = paths,
                 GetHeight = Terrain.MakeTerrain(seed),
                 Colliders = colliders,
                 Climbables = climbables,

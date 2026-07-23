@@ -80,11 +80,28 @@ namespace HollowPines.Sim
         }
 
         /// <summary>
+        /// Is (x,z) inside the lake (optionally plus a shoreline margin)? Trees are rejected here so
+        /// trunks don't stand in open water. Deliberately a local copy of the ellipse test rather
+        /// than calling <see cref="Collision.LakeDepth"/> — mirrors the TS side, which keeps it local
+        /// to avoid an import cycle.
+        /// </summary>
+        private static bool InLake(double x, double z, double margin)
+        {
+            double nx = (x - Lake.X) / (Lake.Rx + margin);
+            double nz = (z - Lake.Z) / (Lake.Rz + margin);
+            return nx * nx + nz * nz < 1;
+        }
+
+        /// <summary>
         /// Deterministically build the circle colliders (trees, RV, caves, lookout tower) for a
         /// seed + cave set. The tree loop preserves the exact rand() call order (incl. the rotation
         /// draw it discards) so the collider positions match the rendered tree instances exactly.
+        ///
+        /// Every rejection below is a `continue` placed BEFORE the scale/rotation draws, so adding
+        /// one never shifts the RNG stream for later candidates — that invariant is what lets the
+        /// renderer re-walk this loop and land its trunks exactly on these colliders.
         /// </summary>
-        public static List<Collider> BuildColliders(uint seed, IReadOnlyList<Cave> caves)
+        public static List<Collider> BuildColliders(uint seed, IReadOnlyList<Cave> caves, IReadOnlyList<ForestPath> paths = null)
         {
             var colliders = new List<Collider>();
 
@@ -97,6 +114,8 @@ namespace HollowPines.Sim
                 double z = (rand() * 2 - 1) * half;
                 if (System.Math.Sqrt(x * x + z * z) < World.BaseCampRadius + 4) continue; // keep clearing open
                 if (NearCave(caves, x, z, 7)) continue;                                    // keep cave mouths clear
+                if (InLake(x, z, 3)) continue;                        // trees don't grow in open water
+                if (Paths.PathDepth(paths, x, z, PathGen.TreeMargin) > 0) continue; // keep the trails walkable
                 double s = 0.7 + rand() * 0.9;
                 rand(); // rotation draw — discarded, but consumed to keep the sequence aligned
                 colliders.Add(new Collider(x, z, 0.45 * s));

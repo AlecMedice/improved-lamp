@@ -13,6 +13,12 @@ namespace HollowPines.Game
     {
         public const byte TypeFootprint = 0;
         public const byte TypeBranch = 1;
+        /// <summary>
+        /// A tuft snagged on a branch. The one kind of evidence Bigfoot genuinely SHEDS rather than
+        /// merely presses into the ground — which is why, unlike a cast, anyone can bag it. It exists
+        /// so the second win path isn't gated entirely behind Mara being alive and present.
+        /// </summary>
+        public const byte TypeHair = 2;
 
         public readonly SyncVar<byte> CType = new SyncVar<byte>(TypeFootprint);
         public readonly SyncVar<float> YawRad = new SyncVar<float>(0f);
@@ -27,6 +33,12 @@ namespace HollowPines.Game
         /// <summary>Castable prints only — the subset the map, prompts and casting target scan.</summary>
         public static readonly List<ClueMarker> Castables = new List<ClueMarker>();
 
+        /// <summary>Hair samples — same role as Castables, but collectable by any searcher.</summary>
+        public static readonly List<ClueMarker> Hairs = new List<ClueMarker>();
+
+        /// <summary>Is this clue something a searcher can turn into proof? (Prompt + map both ask.)</summary>
+        public bool IsCollectable => Castable.Value || CType.Value == TypeHair;
+
         /// <summary>Live clues on this client — the map's "recent trail" reads this (see MapView).</summary>
         public static readonly List<ClueMarker> All = new List<ClueMarker>();
         /// <summary>Time.time this clue appeared here; the map only shows clues younger than the clue window.</summary>
@@ -36,12 +48,14 @@ namespace HollowPines.Game
         {
             All.Remove(this);
             Castables.Remove(this);
+            Hairs.Remove(this);
         }
 
         public override void OnStartClient()
         {
             All.Add(this);
             if (Castable.Value) Castables.Add(this);
+            if (CType.Value == TypeHair) Hairs.Add(this);
             Born = Time.time;
 
             var root = new GameObject("ClueVisual").transform;
@@ -81,7 +95,7 @@ namespace HollowPines.Game
                     _glintScale = _glint.localScale;
                 }
             }
-            else
+            else if (CType.Value == TypeBranch)
             {
                 // A snapped branch — audible from a distance, which is how a searcher finds the trail.
                 if (HPAudio.Instance != null)
@@ -92,6 +106,36 @@ namespace HollowPines.Game
                 AddStick(root, new Vector3(-0.15f, 0.06f, 0f), Quaternion.Euler(0f, 15f, 80f), 0.8f, wood);
                 AddStick(root, new Vector3(0.18f, 0.05f, 0.08f), Quaternion.Euler(0f, -40f, 95f), 0.6f, wood);
             }
+            else
+            {
+                // Hair caught where Bigfoot pushed through: a low broken stub with a dark tuft snagged
+                // on it, held at chest height so it reads against the ground rather than lost in it.
+                var wood = MeshUtil.Lit(MeshUtil.Rgb(0x6a4a2c));
+                AddStick(root, new Vector3(0f, 0.42f, 0f), Quaternion.Euler(0f, 20f, 14f), 0.9f, wood);
+
+                var fur = MeshUtil.Emissive(MeshUtil.Rgb(0x241c14), MeshUtil.Rgb(0x9a7f5a), 0.55f);
+                for (int i = 0; i < 4; i++)
+                {
+                    var strand = new GameObject("Strand");
+                    strand.transform.SetParent(root, false);
+                    strand.transform.localPosition = new Vector3(-0.03f + i * 0.025f, 0.74f + i * 0.015f, 0.02f);
+                    strand.transform.localRotation = Quaternion.Euler(64f + i * 9f, 30f * i, 0f);
+                    strand.AddComponent<MeshFilter>().sharedMesh = MeshUtil.TaperedCylinder(0.022f, 0.004f, 0.26f, 4);
+                    strand.AddComponent<MeshRenderer>().sharedMaterial = fur;
+                }
+
+                // Same pale glint the castable prints use — one visual language for "this is workable".
+                var glint = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                Destroy(glint.GetComponent<Collider>());
+                glint.transform.SetParent(root, false);
+                glint.transform.localScale = Vector3.one * 0.07f;
+                glint.transform.localPosition = new Vector3(0f, 1.05f, 0.2f);
+                glint.GetComponent<MeshRenderer>().sharedMaterial =
+                    MeshUtil.Emissive(Color.black, MeshUtil.Rgb(0xe8d8a0), 2.6f);
+                _glint = glint.transform;
+                _glintScale = _glint.localScale;
+                _glintBaseY = 1.0f;
+            }
 
             CacheMaterials(root); // must run after every piece exists — Update fades these
         }
@@ -101,6 +145,8 @@ namespace HollowPines.Game
         private readonly List<Color> _baseCols = new List<Color>();
         private readonly List<Color> _emisCols = new List<Color>();
         private Vector3 _glintScale;
+        /// <summary>Height the glint bobs around — a print's sits just off the ground, hair's up on the branch.</summary>
+        private float _glintBaseY = 0.5f;
         /// <summary>Fraction of the lifetime a clue stays at full strength before it starts fading.</summary>
         private const float HoldFraction = 0.5f;
         /// <summary>Colour a cold trail sinks toward — the forest floor swallowing it.</summary>
@@ -144,7 +190,7 @@ namespace HollowPines.Game
             // print goes cold, which is Mara's cue that this one is about to stop being castable.
             if (_glint != null)
             {
-                _glint.localPosition = new Vector3(0f, 0.5f + Mathf.Sin(Time.time * 1.7f) * 0.07f, 0.2f);
+                _glint.localPosition = new Vector3(0f, _glintBaseY + Mathf.Sin(Time.time * 1.7f) * 0.07f, 0.2f);
                 _glint.localScale = _glintScale * Mathf.Max(0.15f, strength);
             }
         }
