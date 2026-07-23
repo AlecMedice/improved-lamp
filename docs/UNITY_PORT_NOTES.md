@@ -29,6 +29,12 @@ which is which, because it changes the size of the job:
 
 *Genuinely ours to build — FishNet does not cover it:*
 - **Session/lobby semantics** — ready-up rules, reconnection grace, rejoining with your prior role.
+  *Partly done (2026-07-20):* a **disconnect handler** exists — `HPPlayer.OnStopServer` →
+  `GameManager.ServerForgetPlayer`, which scrubs the leaver from every per-player dictionary (as key
+  AND as value: the teammate they were reviving, the Bigfoot dragging them) and **aborts the match to
+  the lobby** with an on-screen reason if it becomes unplayable (Bigfoot gone, or no searchers left).
+  Still **not** done: reconnection grace and rejoining with your prior role/state — a leaver is gone
+  for good, mid-match.
 
 **Steam is explicitly deferred** (owner call, 2026-07-19): the game runs on direct-IP Tugboat and
 that is fine for friends-play. Steam relay is a transport swap plus Steamworks.NET, an app ID and
@@ -229,6 +235,79 @@ Separately, input latency: stepping the sim at a fixed 20 Hz and rendering an in
 the last two states parks the camera a full step (50 ms) in the past. `StepPlayer` is pure and takes
 `dt`, so the owner steps **once per frame with the real frame delta** (hitch-clamped). This reverts
 when FishNet prediction is adopted (see §0), which owns the cadence itself.
+
+## 6b. Single-player / the CPU Bigfoot bot
+
+A legitimate **offline mode** (title → SINGLE PLAYER → PLAY AS SEARCHER): a lone human searcher vs a
+CPU Bigfoot, no internet. It's also the fastest solo test harness. Architecture, because it's a
+pattern worth reusing for future bots:
+
+**A bot is just an HPPlayer spawned with no owner.** `Spawn(nob, null)` → `base.IsOwner` is false on
+every machine including the host → `OwnerUpdate()` never runs, so the bot reads no keyboard/mouse.
+The host drives it via `HPPlayer.ServerBotDrive`, which runs the **same** `Movement.StepPlayer` a
+human does, and fires abilities through the **same** `GameManager.Try*` a human's ServerRpc lands in.
+There is deliberately **no parallel "AI movement" or "AI grab"** to drift out of parity. An owner-less,
+client-authoritative `NetworkTransform` replicates the host's transform writes to clients unchanged
+(verified in FishNet source: `controlledByClient = clientAuth && Owner.IsActive` → false with no
+owner → the server moves and syncs it).
+
+**The brain (`BigfootBot`) is intent only** — a host-only `MonoBehaviour` added at runtime by
+`ServerBecomeBot` (so the shared player prefab is untouched and it never needs stamping). It decides a
+direction + a couple of booleans; that's all. Its perception is the actual stealth game, not
+distance-clairvoyance: **sight** is line-of-sight-gated and far longer against a lit flashlight;
+**hearing** scales with the target's movement speed and is **silent for a crouching or still**
+searcher; then it **remembers** a last-known position and searches it before giving up. Tuning
+constants are all at the top of `BigfootBot.cs`.
+
+**Roles are the normal deal.** The bot carries `WantsBigfoot = true` and the lone human `= false`, so
+`DoStartMatch` hands the monster to the bot with no special-casing. A bot has no `Owner`, so it can't
+receive the `TargetTeleport` RPC — it's placed server-side by `ServerBotPlace`, which also spins up
+the brain once the role (and the sim's `IsBigfoot`) is settled. Solo auto-starts: `SpawnBigfootBot`
+runs at host load, then `TrySoloStart` (polled from `OnTick`, before the phase guard) waits for both
+players to appear in `HPPlayer.All` and calls `DoStartMatch` — no lobby.
+
+**NavMesh.** `WorldBuilder.BuildNavMesh` bakes a runtime surface after each world build/reseed
+(procedural world → no editor-baked mesh possible). Undergrowth is hidden during the bake so ~5,200
+ferns don't shred it. The bot's **collision is still the shared sim**; the NavMesh only plans the
+global route, so an imperfect bake degrades to "clips a route past a trunk the sim slides it around,"
+never to walking through solid geometry.
+
+> **Editor-verification gates (NONE of this has run):**
+> - **Does the NavMesh bake, and what does it cost?** Runtime `BuildNavMesh` over ~2,400 tree meshes
+>   is an unknown hitch on the owner's integrated GPU, and it runs on **every** client each reseed
+>   even in co-op (clients bake a mesh only the host uses — a perf item to gate later).
+> - **Does the bot actually move?** The owner-less-NetworkTransform-server-drive path is reasoned from
+>   source, not observed.
+> - **All AI tuning is first-guess** — sense ranges, hearing, sprint/grab distances, wander. Expect to
+>   sit in `BigfootBot.cs` and tune once it's playable.
+> - **Play-as-Bigfoot is stubbed** (greyed on the menu) — it needs CPU *searchers*, the larger job
+>   (routing + filming a five-strong team).
+
+## 6c. The lookout ladder + binoculars (no parity change)
+
+The tower collider is **climbable** (`WorldData.Lookout`, `ClimbH = 9.5`), so the shared sim already
+holds any player standing on the platform at `base + 9.5` and stops pushing them out of the footprint
+up there — for every role. The only thing a searcher lacked was a way UP (Bigfoot scales it; searchers
+can't). So the ladder is **entirely client-side** and touches nothing parity-locked:
+
+- `WorldBuilder.BuildTower` aligns the platform MESH top to `ClimbH` (was 9.8, a ~0.5 m clip), builds
+  a ladder on the map-centre-facing face, and exposes `LadderXZ` / `LadderBottomY` / `LadderTopY`.
+- `HPPlayer` runs a small ladder state: a searcher presses jump alongside the ladder line to mount, W/S
+  drive `_sim.FeetY` pinned to that line, and reaching the top nudges XZ onto the footprint where the
+  sim's climbable-top logic takes over. It **replaces** `StepSim` for that frame — the sim never sees a
+  half-climbed state, so there's nothing to desync.
+
+Binoculars are presentation only: on the platform, holding the key zooms the camera (FOV 60→26) and
+calls `PostFX.SetNightVision` (a big exposure lift + green cast + desaturation). Gated to
+`OnLookoutPlatform`, dropped on leaving it, losing control, or mounting the ladder.
+
+Both are **owner/client-side**; movement is still client-authoritative, so no server round-trip is
+involved. If full movement prediction (N3) ever lands, the ladder state has to move into the
+replicated step like everything else — note it here so it isn't missed.
+
+> **Unverified (editor):** the ladder's mount/geometry (does jump-alongside actually catch, does the
+> top step land you cleanly on the deck?), the platform/rail alignment, and the binocular look are all
+> first-guess and have never run. The `B` key is a new rebindable action.
 
 ## 7a. Testing the whole game alone, on one PC
 

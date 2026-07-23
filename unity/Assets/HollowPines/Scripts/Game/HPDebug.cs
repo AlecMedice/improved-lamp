@@ -80,6 +80,10 @@ namespace HollowPines.Game
             // Host-only: run the current night out. The guard lives in GameManager, so a client
             // pressing this does nothing rather than desyncing its own clock.
             if (kb.nKey.wasPressedThisFrame && GameManager.Instance != null) GameManager.Instance.DevSkipNight();
+
+            // Toggle the CPU Bigfoot between the aggressive (prowls toward you) and passive (wanders,
+            // only engages if you walk into it) brains — the latter is the original, kept for testing.
+            if (kb.pKey.wasPressedThisFrame) BigfootBot.AggressiveProwl = !BigfootBot.AggressiveProwl;
 #endif
         }
 
@@ -171,6 +175,11 @@ namespace HollowPines.Game
             }
             lines.AppendLine($"players {HPPlayer.All.Count}   tick {TickRateLabel()}");
 
+            // BIGFOOT locator — answers "is the CPU there, and where?" for single-player. If this says
+            // "none", the bot never spawned or never got the role; if it shows a big distance, it's
+            // just far off at its cave, wandering, and you have to go find it.
+            lines.AppendLine(BigfootLine());
+
             // LOOK — chasing the "axis sticks while walking" report. Read it as three comparisons:
             //   delta stops changing while you move the mouse   -> the input is losing the axis
             //   pitch moves but cam doesn't                     -> the camera write is being lost
@@ -197,6 +206,7 @@ namespace HollowPines.Game
             lines.AppendLine($"  [4] shadows      {OnOff(_shadows)}");
             lines.AppendLine();
             lines.AppendLine("  [N] skip to next night (host only)");
+            lines.AppendLine($"  [P] bigfoot AI: {(BigfootBot.AggressiveProwl ? "AGGRESSIVE (prowls to you)" : "PASSIVE (wander only)")}");
             lines.AppendLine();
             lines.Append("[F3] closes  ·  renderScale lives in the Esc pause menu");
 
@@ -212,6 +222,27 @@ namespace HollowPines.Game
         }
 
         private static string OnOff(bool b) => b ? "ON " : "off";
+
+        /// <summary>Where the Bigfoot is relative to you — a compass heading + distance, or "none".</summary>
+        private static string BigfootLine()
+        {
+            HPPlayer bf = null, me = HPPlayer.Local;
+            foreach (var p in HPPlayer.All) if (p != null && p.IsBigfoot) { bf = p; break; }
+            if (bf == null) return "bigfoot: NONE spawned";
+
+            string tag = bf.IsBot ? "CPU" : "human";
+            var brain = bf.GetComponent<BigfootBot>();
+            string ai = brain != null ? "  ai:" + brain.DbgState : "  ai:NO-BRAIN";
+            if (me == null) return $"bigfoot: {tag}{ai}";
+
+            Vector3 d = bf.transform.position - me.transform.position;
+            float dist = new Vector2(d.x, d.z).magnitude;
+            // World compass (see MapView): -X = East, -Z = North.
+            float ang = (Mathf.Atan2(-d.x, -d.z) * Mathf.Rad2Deg + 360f) % 360f;
+            string[] names = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
+            string dir = names[Mathf.RoundToInt(ang / 45f) % 8];
+            return $"bigfoot: {tag}  {dist:0} m  {dir}{ai}   status {bf.Status.Value}";
+        }
 
         private static string TickRateLabel()
         {

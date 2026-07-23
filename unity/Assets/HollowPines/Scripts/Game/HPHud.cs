@@ -189,12 +189,57 @@ namespace HollowPines.Game
             }
 
             if (me != null && gm.MatchPhase.Value != GameManager.PhaseLobby) DrawHelpToggle(me);
-            if (me != null && gm.MatchPhase.Value == GameManager.PhasePlaying && !_briefingDismissed)
+            if (me != null && gm.MatchPhase.Value == GameManager.PhasePlaying && !gm.IntermissionActive && !_briefingDismissed)
                 DrawBriefing(gm, me);
+            // Between-nights recap sits over the playing HUD.
+            if (gm.MatchPhase.Value == GameManager.PhasePlaying && gm.IntermissionActive) DrawIntermission(gm);
             if (PauseOpen) DrawPause(gm);
         }
 
         // ------------------------------------------------------------------ lobby
+
+        /// <summary>Intended roster: one Bigfoot + five searchers. Display only — not hard-enforced.</summary>
+        private const int MaxPlayers = 6;
+
+        private GUIStyle _mutedLabel;
+        private static GUIStyle Muted()
+        {
+            var s = new GUIStyle(GUI.skin.label) { fontSize = 11, wordWrap = true };
+            s.normal.textColor = new Color(0.62f, 0.66f, 0.66f);
+            return s;
+        }
+
+        /// <summary>Who the deal will hand Bigfoot to, in words — mirrors GameManager.DoStartMatch.</summary>
+        private static string BigfootPickHint(int count, int wanters)
+        {
+            if (count < 2) return "Bigfoot: none until a second player joins";
+            if (wanters == 0) return "Bigfoot: chosen at random (nobody volunteered)";
+            if (wanters == 1) return "Bigfoot: the volunteer";
+            return "Bigfoot: random pick among the volunteers";
+        }
+
+        // The host's LAN address, resolved once and cached — a DNS lookup every OnGUI frame would be
+        // wasteful, and it never changes during a session.
+        private static string _localIp;
+        private static string LocalIPv4()
+        {
+            if (_localIp != null) return _localIp;
+            _localIp = "127.0.0.1"; // fallback if nothing better resolves (still works for same-PC tests)
+            try
+            {
+                foreach (var ip in System.Net.Dns.GetHostAddresses(System.Net.Dns.GetHostName()))
+                {
+                    if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+                        !System.Net.IPAddress.IsLoopback(ip))
+                    {
+                        _localIp = ip.ToString();
+                        break;
+                    }
+                }
+            }
+            catch { /* headless / odd network config — keep the loopback fallback */ }
+            return _localIp;
+        }
 
         private void DrawLobby(GameManager gm, HPPlayer me)
         {
@@ -203,7 +248,16 @@ namespace HollowPines.Game
             float lw = Mathf.Min(340f, Screen.width - 40f);
             float lh = Mathf.Min(420f, Screen.height - 80f);
             GUILayout.BeginArea(new Rect((Screen.width - lw) / 2f, 40f, lw, lh));
-            GUILayout.Box("HOLLOW PINES — camp lobby");
+
+            int count = 0, wanters = 0;
+            foreach (var p in HPPlayer.All) { if (p == null) continue; count++; if (p.WantsBigfoot.Value) wanters++; }
+
+            GUILayout.Box($"HOLLOW PINES — camp lobby   ({count}/{MaxPlayers})");
+
+            // The host tells friends where to connect. Direct-IP is the whole join model, and hunting
+            // for your own LAN address outside the game was the main friends-play snag.
+            if (InstanceFinder.IsHostStarted)
+                GUILayout.Label($"friends join at:  {LocalIPv4()}");
             GUILayout.Label("Hold right-mouse to look around while you wait — release to click.");
             GUILayout.Space(6f);
 
@@ -214,6 +268,10 @@ namespace HollowPines.Game
                 string self = p == me ? "  (you)" : "";
                 GUILayout.Label($"• {p.PlayerName.Value}{tag}{self}");
             }
+            GUILayout.Space(4f);
+
+            // Say who the monster will be, since the deal is otherwise invisible until the match starts.
+            GUILayout.Label(BigfootPickHint(count, wanters), _mutedLabel ??= Muted());
             GUILayout.Space(6f);
 
             if (me != null)
@@ -225,10 +283,23 @@ namespace HollowPines.Game
                     me.ServerSetWantsBigfoot(w);
                 }
             }
-            if (InstanceFinder.IsHostStarted && GUILayout.Button("START MATCH", GUILayout.Height(34f)))
-                gm.ServerStartMatch();
-            if (!InstanceFinder.IsHostStarted)
+
+            if (InstanceFinder.IsHostStarted)
+            {
+                // Below 2 players a match has no Bigfoot (see GameManager.DoStartMatch), so a lone
+                // host clicking START used to get a silent, broken, monster-less match. Gate it.
+                bool canStart = count >= 2;
+                GUI.enabled = canStart;
+                if (GUILayout.Button("START MATCH", GUILayout.Height(34f))) gm.ServerStartMatch();
+                GUI.enabled = true;
+                if (!canStart)
+                    GUILayout.Label("need 2+ players to start — or use SINGLE PLAYER from the menu",
+                        _mutedLabel ??= Muted());
+            }
+            else
+            {
                 GUILayout.Label("(waiting for the host to start)");
+            }
             GUILayout.Space(8f);
             if (GUILayout.Button("LEAVE", GUILayout.Height(24f))) Disconnect();
             GUILayout.EndArea();
@@ -612,6 +683,14 @@ namespace HollowPines.Game
             _toastGood = true;
         }
 
+        /// <summary>The match ended early because someone essential disconnected — you're back in the lobby.</summary>
+        public static void NotifyMatchAborted(string reason)
+        {
+            _toastAt = Time.time;
+            _toast = "MATCH ENDED — " + reason + " back to the lobby.";
+            _toastGood = false;
+        }
+
         private void DrawToast()
         {
             float age = Time.time - _toastAt;
@@ -978,6 +1057,14 @@ namespace HollowPines.Game
                 // can never advertise a different action than the key will actually perform.
                 var hold = me.HoldActionTarget();
                 if (hold.Kind != HPPlayer.HoldAction.None) prompt = hold.Label;
+
+                // Tower: climb the ladder from the ground; glass the forest from the deck.
+                if (me.OwnOnLadder) prompt = $"W/S — climb  ·  {HPKeybinds.Label(HPAction.Jump)} — hop off";
+                else if (me.OwnOnLookout)
+                    prompt = me.OwnGlassing
+                        ? "release to lower the binoculars"
+                        : $"hold {HPKeybinds.Label(HPAction.Binoculars)} — binoculars (night vision)";
+                else if (me.OwnNearLadder) prompt = $"{HPKeybinds.Label(HPAction.Jump)} — climb the ladder";
             }
             if (prompt == null) return;
             var style = new GUIStyle(GUI.skin.box) { fontSize = 14 };
@@ -1016,6 +1103,61 @@ namespace HollowPines.Game
             if (GUILayout.Button("LEAVE GAME", GUILayout.Height(24f))) Disconnect();
             GUILayout.EndArea();
         }
+
+        /// <summary>
+        /// The between-nights recap: who banked what, Bigfoot's tally, the team's progress toward the
+        /// proof target, and a countdown to the next night. Reads live SyncVars — no snapshot needed,
+        /// since gameplay is frozen while this is up.
+        /// </summary>
+        private void DrawIntermission(GameManager gm)
+        {
+            // Full-screen dim so the frozen world recedes behind the card.
+            Color old = GUI.color;
+            GUI.color = new Color(0f, 0f, 0f, 0.72f);
+            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
+            GUI.color = old;
+
+            float w = Mathf.Min(460f, Screen.width - 40f);
+            float h = Mathf.Min(430f, Screen.height - 40f);
+            GUILayout.BeginArea(new Rect((Screen.width - w) / 2f, (Screen.height - h) / 2f, w, h));
+
+            var title = new GUIStyle(GUI.skin.label) { fontSize = 22, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
+            var head = new GUIStyle(GUI.skin.label) { fontSize = 13, fontStyle = FontStyle.Bold };
+            head.normal.textColor = new Color(0.65f, 0.85f, 0.95f);
+            var row = new GUIStyle(GUI.skin.label) { fontSize = 13 };
+
+            GUILayout.Space(4f);
+            GUILayout.Label($"NIGHT {gm.NightNumber.Value} SURVIVED", title);
+            GUILayout.Label($"night {gm.NightNumber.Value + 1} begins in {Mathf.CeilToInt(gm.IntermissionLeft.Value)}s",
+                new GUIStyle(GUI.skin.label) { fontSize = 13, alignment = TextAnchor.MiddleCenter });
+            GUILayout.Space(10f);
+
+            GUILayout.Label("THE CASE SO FAR", head);
+            GUILayout.Label($"proof stored: {gm.StoredProof} / {gm.VideosRequired.Value}   " +
+                            $"({gm.VideosCaptured.Value} film · {gm.EvidenceCollected.Value} casts · {gm.HairCollected.Value} hair)", row);
+            GUILayout.Space(10f);
+
+            GUILayout.Label("SEARCHERS — proof banked", head);
+            HPPlayer bigfoot = null;
+            foreach (var p in HPPlayer.All)
+            {
+                if (p == null) continue;
+                if (p.IsBigfoot) { bigfoot = p; continue; }
+                string carry = p.CarriedTotal > 0 ? $"   (+{p.CarriedTotal} carried, unbanked)" : "";
+                GUILayout.Label($"• {NameOf(p)} — {p.StatBanked.Value}{carry}", row);
+            }
+            GUILayout.Space(10f);
+
+            GUILayout.Label("BIGFOOT", head);
+            if (bigfoot != null)
+                GUILayout.Label($"• {NameOf(bigfoot)} — searchers taken: {bigfoot.StatIncaps.Value}   ·   " +
+                                $"{gm.TotalNights.Value - gm.NightNumber.Value} night(s) left to survive", row);
+
+            GUILayout.EndArea();
+        }
+
+        private static string NameOf(HPPlayer p) =>
+            !string.IsNullOrEmpty(p.CharacterName.Value) ? p.CharacterName.Value : p.PlayerName.Value;
 
         // ------------------------------------------------------------------ bits
 

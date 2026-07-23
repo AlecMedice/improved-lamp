@@ -25,6 +25,8 @@ namespace HollowPines.Game
 
         // --- Tuning (ForestRoom.ts values) ---
         private const int TotalNightsCount = 3;
+        /// <summary>Length of the between-nights stats recap.</summary>
+        private const float IntermissionSeconds = 30f;
         private const double Stride = 2.4;
         private const double BranchChance = 0.18;
         private const int MaxClues = 80;
@@ -32,10 +34,13 @@ namespace HollowPines.Game
         private static readonly double FilmAimCos = System.Math.Cos(0.6);
         private const double FilmSeconds = 3.0;
         private const double FilmDecay = 0.5;
-        private const double RoarRadius = 25;
+        /// <summary>AoE freeze radius. Public so the CPU bot decides to roar at the same range the
+        /// authority enforces — a bot must never "try" an ability the server will refuse for range.</summary>
+        public const double RoarRadius = 25;
         private const double RoarCooldown = 25;
         private const double FreezeSeconds = 30;
-        private const double GrabRadius = 3.5;
+        /// <summary>Reach to grab a frozen hunter. Public for the CPU bot, same reason as RoarRadius.</summary>
+        public const double GrabRadius = 3.5;
         private const double IncapSeconds = 60;
         private const double SlowSeconds = 30;
         // (The Bigfoot charge burst was removed 2026-07-19 — owner call. Bigfoot simply SPRINTS now,
@@ -181,6 +186,14 @@ namespace HollowPines.Game
         /// <summary>True if searchers have discovered cave <paramref name="index"/> — the map asks this.</summary>
         public bool IsCaveFound(int index) => index >= 0 && index < 31 && (CavesFound.Value & (1 << index)) != 0;
         public readonly SyncVar<byte> MatchPhase = new SyncVar<byte>(PhaseLobby);
+        /// <summary>
+        /// Seconds left in the between-nights recap (0 = not in one). A timer rather than a whole new
+        /// MatchPhase, because ~30 places gate on PhasePlaying and a new phase would have to be
+        /// threaded through every one. While this is &gt; 0 the night clock and all gameplay are frozen
+        /// and the HUD shows the stats card.
+        /// </summary>
+        public readonly SyncVar<float> IntermissionLeft = new SyncVar<float>(0f);
+        public bool IntermissionActive => IntermissionLeft.Value > 0f;
         public readonly SyncVar<float> TimeOfDay = new SyncVar<float>(0f);
         public readonly SyncVar<int> NightNumber = new SyncVar<int>(1);
         public readonly SyncVar<int> TotalNights = new SyncVar<int>(TotalNightsCount);
@@ -254,6 +267,15 @@ namespace HollowPines.Game
         /// world — colliders and cave positions silently one session out of date.
         /// </summary>
         private GameWorld _world => WorldBuilder.EnsureWorld();
+
+        /// <summary>
+        /// Set by the title screen's SINGLE PLAYER button just before hosting. Read once when the host
+        /// client loads in (OnClientLoadedStartScenes): it spawns a CPU Bigfoot and auto-starts the
+        /// match, so the offline player never sees the multiplayer lobby. Static because it must
+        /// survive the scene load between the menu click and the server coming up.
+        /// </summary>
+        public static bool SoloPending;
+        private bool _soloArmed; // host-side: waiting for the human + bot to finish spawning
         private float _displayTod; // client-side smoothed clock for the sky
         private int _lastVideos, _lastNightHeard;   // client-side audio edge detection
         private byte _lastWinnerHeard = WinnerNone;
@@ -317,8 +339,50 @@ namespace HollowPines.Game
             Vector3 pos = CampSpot();
             NetworkObject nob = Instantiate(_playerPrefab, pos, Quaternion.Euler(0f, 180f, 0f));
             var hp = nob.GetComponent<HPPlayer>();
-            hp.PlayerName.Value = "Player " + (conn.ClientId + 1);
+            hp.PlayerName.Value = SoloPending ? "You" : "Player " + (conn.ClientId + 1);
+            if (SoloPending) hp.WantsBigfoot.Value = false; // solo: the human is always a searcher
             InstanceFinder.ServerManager.Spawn(nob, conn);
+
+            // Single-player: also spawn a CPU Bigfoot and arm the auto-start. Consumed once, so a
+            // later multiplayer host on the same process doesn't inherit it.
+            if (SoloPending)
+            {
+                SoloPending = false;
+                SpawnBigfootBot();
+                _soloArmed = true;
+            }
+        }
+
+        /// <summary>
+        /// The offline opponent. A server-owned HPPlayer (no connection), flagged a bot and marked as
+        /// wanting Bigfoot so the normal role deal hands it the monster while the lone human becomes a
+        /// searcher. The brain attaches once its role is settled, in ServerBotPlace.
+        /// </summary>
+        private void SpawnBigfootBot()
+        {
+            if (_playerPrefab == null) { Debug.LogError("[solo] no player prefab — bot cannot spawn"); return; }
+            NetworkObject nob = Instantiate(_playerPrefab, CampSpot(), Quaternion.identity);
+            var hp = nob.GetComponent<HPPlayer>();
+            hp.PlayerName.Value = "Bigfoot";
+            hp.WantsBigfoot.Value = true;
+            hp.ServerMarkBot();
+            InstanceFinder.ServerManager.Spawn(nob, null); // null owner => host-driven, no client
+            Debug.Log("[solo] CPU Bigfoot spawned (server-owned); waiting to auto-start the match");
+        }
+
+        /// <summary>
+        /// Waits for the human + bot spawn callbacks to land in HPPlayer.All, then starts the match.
+        /// Polled from OnTick because spawn-time OnStartClient isn't guaranteed synchronous, so we
+        /// can't start in the same breath as the Spawn calls.
+        /// </summary>
+        private void TrySoloStart()
+        {
+            if (MatchPhase.Value != PhaseLobby) { _soloArmed = false; return; }
+            var players = LivePlayers();
+            if (players.Count < 2) return; // human + bot both present yet?
+            _soloArmed = false;
+            Debug.Log($"[solo] {players.Count} players present — auto-starting the match");
+            DoStartMatch();
         }
 
         private Vector3 CampSpot()
@@ -335,6 +399,12 @@ namespace HollowPines.Game
         public void ServerStartMatch(NetworkConnection sender = null)
         {
             if (sender == null || !sender.IsHost || MatchPhase.Value != PhaseLobby) return;
+            DoStartMatch();
+        }
+
+        /// <summary>The match-start body, callable without a network sender (the solo path uses it).</summary>
+        private void DoStartMatch()
+        {
             var players = LivePlayers();
             if (players.Count == 0) return;
 
@@ -343,6 +413,8 @@ namespace HollowPines.Game
             HPPlayer bigfoot = null;
             if (wanting.Count > 0) bigfoot = wanting[_rng.Next(wanting.Count)];
             else if (players.Count >= 2) bigfoot = players[_rng.Next(players.Count)];
+            Debug.Log($"[match] start: {players.Count} players, {wanting.Count} want Bigfoot -> " +
+                      (bigfoot != null ? $"Bigfoot = {bigfoot.PlayerName.Value} (bot={bigfoot.IsBot})" : "NO BIGFOOT"));
 
             ResetMatchState(players);
 
@@ -385,16 +457,73 @@ namespace HollowPines.Game
                     var cave = _world.Caves[_rng.Next(_world.Caves.Count)];
                     var emerge = Caves.CaveEmergePoint(cave);
                     var pos = new Vector3((float)emerge.X, (float)_world.GetHeight(emerge.X, emerge.Z), (float)emerge.Z);
-                    p.TargetTeleport(p.Owner, pos, (float)emerge.Yaw);
+                    // A bot has no Owner, so the TargetRpc can't reach it — place it server-side and
+                    // spin up its brain now that its role (and so its sim's IsBigfoot) is settled.
+                    if (p.IsBot) { p.ServerBotPlace(pos, (float)emerge.Yaw); Debug.Log($"[match] CPU Bigfoot placed at cave {pos} (has BigfootBot={p.GetComponent<BigfootBot>() != null})"); }
+                    else p.TargetTeleport(p.Owner, pos, (float)emerge.Yaw);
                 }
                 else
                 {
-                    p.TargetTeleport(p.Owner, CampSpot(), 0f);
+                    if (p.IsBot) p.ServerBotPlace(CampSpot(), 0f);
+                    else p.TargetTeleport(p.Owner, CampSpot(), 0f);
                 }
             }
 
             RefillNightlyCharges(players); // night 1's flash / battery charge
             MatchPhase.Value = PhasePlaying;
+        }
+
+        /// <summary>
+        /// Open the next night after the recap: advance the clock, refill nightly charges, and reset
+        /// EVERYONE to their start — searchers to camp, Bigfoot to a fresh cave — so each night begins
+        /// from the same footing no matter where it ended. Downed/frozen/slowed states clear too; a new
+        /// night is a clean slate. Carried (unbanked) proof is kept — you're now standing by the duffel
+        /// to bank it. Called only for nights 1->2 and 2->3 (the final night ends in the results screen).
+        /// </summary>
+        private void BeginNextNight()
+        {
+            NightNumber.Value++;
+            _nightElapsed = 0;
+            TimeOfDay.Value = 0f;
+            var players = LivePlayers();
+            RefillNightlyCharges(players);
+            PlaceForNight(players);
+        }
+
+        /// <summary>
+        /// Put every player at their night-start position and clear transient status. Shared by the
+        /// nightly reset; mirrors DoStartMatch's placement (bots server-side, humans via TargetRpc).
+        /// </summary>
+        private void PlaceForNight(List<HPPlayer> players)
+        {
+            foreach (var p in players)
+            {
+                // Clear anything that would carry a bad state into the new night.
+                _frozenUntil.Remove(p);
+                _incapUntil.Remove(p);
+                _slowUntil.Remove(p);
+                _grabbedBy.Remove(p);
+                RemoveByValue(_grabbedBy, p); // if this was the Bigfoot dragging someone
+                _recording.Remove(p);
+                _reviveIntent.Remove(p);
+                if (p.Status.Value != HPPlayer.StatusActive) p.Status.Value = HPPlayer.StatusActive;
+                if (p.Slowed.Value) p.Slowed.Value = false;
+                if (p.GrabberObjectId.Value != -1) p.GrabberObjectId.Value = -1;
+
+                if (p.IsBigfoot)
+                {
+                    var cave = _world.Caves[_rng.Next(_world.Caves.Count)];
+                    var emerge = Caves.CaveEmergePoint(cave);
+                    var pos = new Vector3((float)emerge.X, (float)_world.GetHeight(emerge.X, emerge.Z), (float)emerge.Z);
+                    if (p.IsBot) p.ServerBotPlace(pos, (float)emerge.Yaw);
+                    else p.TargetTeleport(p.Owner, pos, (float)emerge.Yaw);
+                }
+                else
+                {
+                    if (p.IsBot) p.ServerBotPlace(CampSpot(), 0f);
+                    else p.TargetTeleport(p.Owner, CampSpot(), 0f);
+                }
+            }
         }
 
         /// <summary>Host-only, from the results screen: everyone back to the camp lobby.</summary>
@@ -421,6 +550,8 @@ namespace HollowPines.Game
             // The map goes blank again: a new match re-hides every lair, so night 1 is always a hunt
             // for the caves even when the group replays the same seeded forest.
             CavesFound.Value = 0;
+            IntermissionLeft.Value = 0f;
+            foreach (var p in players) { p.StatBanked.Value = 0; p.StatIncaps.Value = 0; }
             _elapsed = 0;
             _nightElapsed = 0;
             _recording.Clear();
@@ -547,6 +678,7 @@ namespace HollowPines.Game
             best.Status.Value = HPPlayer.StatusIncap;
             best.Filming.Value = false;
             best.FilmProgress.Value = 0f;
+            bf.StatIncaps.Value++; // recap: Bigfoot's success this match
             _recording.Remove(best);
             _frozenUntil.Remove(best);
             _incapUntil[best] = _elapsed + IncapSeconds;
@@ -727,6 +859,7 @@ namespace HollowPines.Game
             EvidenceCollected.Value += p.CarriedCasts.Value;
             HairCollected.Value += p.CarriedHair.Value;
             int stored = p.CarriedTotal;
+            p.StatBanked.Value += stored; // recap: this searcher's real contribution
             p.CarriedFilm.Value = 0;
             p.CarriedCasts.Value = 0;
             p.CarriedHair.Value = 0;
@@ -998,6 +1131,87 @@ namespace HollowPines.Game
             if (nob != null) InstanceFinder.ServerManager.Despawn(nob);
         }
 
+        /// <summary>
+        /// A player is leaving (disconnect). Erase every server-side reference to them so nothing
+        /// dangles on a destroyed object, then decide whether the match can still be played.
+        ///
+        /// The per-player state is spread across a dozen dictionaries; a leaver has to come out of all
+        /// of them, and out of the ones where they appear as a VALUE too — the teammate someone was
+        /// reviving, or the Bigfoot who was dragging them. Miss one and you get a null-key lookup or a
+        /// searcher pinned in a grab by a monster who has gone.
+        /// </summary>
+        public void ServerForgetPlayer(HPPlayer p)
+        {
+            if (p == null) return;
+            RemovePing(p); // despawns their stakeout beacon too
+
+            // As a key.
+            _recording.Remove(p);
+            _reviveIntent.Remove(p);
+            _reviveProgress.Remove(p);
+            _frozenUntil.Remove(p);
+            _incapUntil.Remove(p);
+            _slowUntil.Remove(p);
+            _grabbedBy.Remove(p);
+            _dazzleFill.Remove(p);
+            _dazzledUntil.Remove(p);
+            _roarReadyAt.Remove(p);
+            _chargeReadyAt.Remove(p);
+            _lastTrack.Remove(p);
+            _markReadyAt.Remove(p);
+            _treeHairReadyAt.Remove(p);
+            _collectIntent.Remove(p);
+            _revealedUntil.Remove(p);
+            _caveReadyAt.Remove(p);
+
+            // As a value: anyone reviving the leaver stops; anyone the leaver was dragging is freed.
+            RemoveByValue(_reviveIntent, p);
+            RemoveByValue(_grabbedBy, p);
+
+            if (!base.IsServerStarted || MatchPhase.Value != PhasePlaying) return;
+
+            // Playability: the match needs a Bigfoot AND at least one searcher. Count the players who
+            // REMAIN — exclude the leaver explicitly, since OnStopClient may or may not have pulled it
+            // from HPPlayer.All yet on the host.
+            bool bigfootLeft = false, searcherLeft = false;
+            foreach (var q in HPPlayer.All)
+            {
+                if (q == null || q == p) continue;
+                if (q.IsBigfoot) bigfootLeft = true; else searcherLeft = true;
+            }
+
+            if (!bigfootLeft) AbortToLobby("Bigfoot left the game.");
+            else if (!searcherLeft) AbortToLobby("all searchers left the game.");
+        }
+
+        private static void RemoveByValue(Dictionary<HPPlayer, HPPlayer> dict, HPPlayer value)
+        {
+            List<HPPlayer> keys = null;
+            foreach (var kv in dict) if (kv.Value == value) (keys ??= new List<HPPlayer>()).Add(kv.Key);
+            if (keys != null) foreach (var k in keys) dict.Remove(k);
+        }
+
+        /// <summary>End an in-progress match early and drop everyone back to the lobby with a reason —
+        /// the match became unplayable because someone essential disconnected.</summary>
+        private void AbortToLobby(string reason)
+        {
+            var players = LivePlayers();
+            ResetMatchState(players); // clears every per-player dict + despawns clues/piles/pings
+            foreach (var pl in players)
+            {
+                pl.Role.Value = HPPlayer.RoleSearcher;
+                if (!pl.IsBot) pl.TargetTeleport(pl.Owner, CampSpot(), 0f);
+            }
+            MatchPhase.Value = PhaseLobby;
+            RpcMatchAborted(reason);
+        }
+
+        [ObserversRpc]
+        private void RpcMatchAborted(string reason)
+        {
+            HPHud.NotifyMatchAborted(reason);
+        }
+
         private void ExpirePings()
         {
             for (int i = _pings.Count - 1; i >= 0; i--)
@@ -1089,8 +1303,18 @@ namespace HollowPines.Game
         private void OnTick()
         {
             if (!base.IsServerStarted) return;
+            if (_soloArmed) TrySoloStart(); // before the phase guard: this fires while still in lobby
             double dt = base.TimeManager.TickDelta;
             if (MatchPhase.Value != PhasePlaying) return;
+
+            // Between-nights recap: gameplay is frozen while the stats card counts down. When it hits
+            // zero the next night opens — fresh, from camp (see BeginNextNight).
+            if (IntermissionLeft.Value > 0f)
+            {
+                IntermissionLeft.Value = Mathf.Max(0f, IntermissionLeft.Value - (float)dt);
+                if (IntermissionLeft.Value <= 0f) BeginNextNight();
+                return;
+            }
 
             _elapsed += dt;
             _nightElapsed += dt;
@@ -1101,10 +1325,9 @@ namespace HollowPines.Game
             {
                 if (NightNumber.Value < TotalNights.Value)
                 {
-                    NightNumber.Value++;
-                    _nightElapsed = 0;
-                    TimeOfDay.Value = 0f;
-                    RefillNightlyCharges(LivePlayers()); // Eli's flash + Sam's battery come back at dusk
+                    // Don't advance yet — pause for the recap. BeginNextNight advances + resets.
+                    IntermissionLeft.Value = IntermissionSeconds;
+                    return;
                 }
                 else nightsComplete = true;
             }

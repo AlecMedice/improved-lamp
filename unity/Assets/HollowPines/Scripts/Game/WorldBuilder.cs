@@ -6,7 +6,9 @@
 // warm prop lights, and a day-night palette driven by the replicated timeOfDay. Pretty comes in R5.
 using System.Collections.Generic;
 using HollowPines.Sim;
+using Unity.AI.Navigation;
 using UnityEngine;
+using UnityEngine.AI;
 
 namespace HollowPines.Game
 {
@@ -104,10 +106,48 @@ namespace HollowPines.Game
             Instance = this;
             EnsureWorld();
             Build();
+            BuildNavMesh();
             PostFX.Ensure(gameObject);
             HPAudio.Ensure(gameObject); // synthesizes every cue + starts the wind/creek beds
             HPDebug.Ensure(gameObject); // F3 diagnostics overlay (costs nothing while hidden)
             SetTimeOfDay(0f);
+        }
+
+        private NavMeshSurface _navSurface;
+
+        /// <summary>
+        /// Bake the CPU bot's navigation surface. Runtime, and rebuilt on every reseed — the forest is
+        /// procedural, so a baked-in-the-editor NavMesh is impossible; there is nothing to bake until
+        /// the world exists.
+        ///
+        /// The bake carves around the trees (they're render-mesh children here) but the UNDERGROWTH is
+        /// hidden first: ~5,200 knee-high ferns would shred the mesh into confetti for no benefit,
+        /// since they aren't solid to anyone. This reuses the same renderer list the F3 perf toggle
+        /// uses. The bot's actual COLLISION is still the shared sim's analytic circles — this surface
+        /// only decides the global route (around the lake, over the hills), so an imperfect bake
+        /// degrades to "occasionally clips a route past a trunk the sim then slides it around", never
+        /// to walking through solid geometry.
+        /// </summary>
+        private void BuildNavMesh()
+        {
+            if (_navSurface == null)
+            {
+                _navSurface = gameObject.AddComponent<NavMeshSurface>();
+                _navSurface.collectObjects = CollectObjects.Children; // our world is all under this transform
+                _navSurface.useGeometry = NavMeshCollectGeometry.RenderMeshes; // trees have no PhysX colliders
+            }
+
+            bool undergrowthWasOn = _undergrowthRenderers.Count == 0 || _undergrowthRenderers[0] == null
+                || _undergrowthRenderers[0].enabled;
+            SetUndergrowthVisible(false);
+            _navSurface.BuildNavMesh();
+            SetUndergrowthVisible(undergrowthWasOn);
+
+            // Confirm the bake actually produced walkable ground — an empty NavMesh is the leading
+            // suspect when the CPU Bigfoot stands still. Cheap, and only logged once per (re)build.
+            var tri = UnityEngine.AI.NavMesh.CalculateTriangulation();
+            Debug.Log($"[navmesh] baked: {tri.vertices.Length} verts, {tri.indices.Length / 3} tris" +
+                      (tri.indices.Length == 0 ? "  <-- EMPTY: bot will fall back to beeline steering" : ""));
         }
 
         /// <summary>Tear the built geometry down and lay it out again from the current World.</summary>
@@ -118,6 +158,7 @@ namespace HollowPines.Game
             // children, so they survive — which matters: re-synthesizing the cues would cut the beds.
             for (int i = transform.childCount - 1; i >= 0; i--) Destroy(transform.GetChild(i).gameObject);
             Build();
+            BuildNavMesh();           // the world moved — the CPU bot's pathing surface must follow
             InvalidatePalette();      // _lastTod would otherwise early-out and leave the new moon unlit
             SetTimeOfDay(_appliedTod, _appliedNight);
         }
@@ -682,11 +723,32 @@ namespace HollowPines.Game
             go.transform.localScale = new Vector3((float)r * 2.2f, (float)r * 1.7f, (float)r * 2.2f);
         }
 
+        // --- the lookout tower + its ladder (searchers climb it; binoculars live up top) ------------
+        //
+        // The tower collider (WorldData) is climbable at ClimbH = 9.5, so the shared sim already holds
+        // a player standing on top at base+9.5 (GroundHeightAt) and stops pushing them out of its
+        // footprint up there — for ANY role, no parity change needed. The platform MESH is aligned to
+        // that same 9.5 so a searcher's feet land on the boards, not inside them. All that was missing
+        // was a way UP for a searcher (Bigfoot scales it; searchers can't), which the ladder provides
+        // as a client-side climb (HPPlayer) — see LadderXZ / LadderTopY below.
+
+        private const float TowerClimbH = 9.5f; // MUST equal WorldData.Lookout's collider ClimbH
+
+        /// <summary>Ladder line in world XZ — the searcher pins to this while climbing.</summary>
+        public static Vector2 LadderXZ { get; private set; }
+        /// <summary>Ground height at the ladder foot.</summary>
+        public static float LadderBottomY { get; private set; }
+        /// <summary>Feet height at the top of the ladder = the platform surface (tower base + ClimbH).</summary>
+        public static float LadderTopY { get; private set; }
+        /// <summary>How close (XZ) to the ladder line a searcher must be to mount.</summary>
+        public const float LadderReach = 1.8f;
+
         private void BuildTower()
         {
             var root = new GameObject("Lookout");
             float baseY = (float)World.GetHeight(WorldData.Lookout.X, WorldData.Lookout.Z);
-            root.transform.position = new Vector3((float)WorldData.Lookout.X, baseY, (float)WorldData.Lookout.Z);
+            var towerXZ = new Vector2((float)WorldData.Lookout.X, (float)WorldData.Lookout.Z);
+            root.transform.position = new Vector3(towerXZ.x, baseY, towerXZ.y);
             root.transform.parent = transform;
             var wood = MeshUtil.Lit(MeshUtil.Rgb(0x6a4a2c));
             Mesh post = MeshUtil.TaperedCylinder(0.22f, 0.18f, 10f, 5);
@@ -696,14 +758,59 @@ namespace HollowPines.Game
                 leg.transform.parent = root.transform;
                 leg.transform.localPosition = new Vector3(off.x, 0f, off.y);
             }
-            AddBox(root, "Platform", new Vector3(0, 9.8f, 0), new Vector3(3.6f, 0.35f, 3.6f), MeshUtil.Rgb(0x7a5a3a));
+            // Platform TOP aligned to the sim's climb height, so feet stand ON the boards.
+            AddBox(root, "Platform", new Vector3(0, TowerClimbH - 0.175f, 0), new Vector3(3.6f, 0.35f, 3.6f), MeshUtil.Rgb(0x7a5a3a));
+            // A low railing so the top reads as a place you stand rather than a diving board (render only).
+            foreach (var e in new[] { new Vector3(0, 0, 1.7f), new Vector3(0, 0, -1.7f), new Vector3(1.7f, 0, 0), new Vector3(-1.7f, 0, 0) })
+            {
+                bool alongX = Mathf.Abs(e.z) > 0.1f;
+                AddBox(root, "Rail", new Vector3(e.x, TowerClimbH + 0.55f, e.z),
+                    alongX ? new Vector3(3.6f, 0.1f, 0.1f) : new Vector3(0.1f, 0.1f, 3.6f), MeshUtil.Rgb(0x6a4a2c));
+            }
+
             var lamp = new GameObject("TowerLamp").AddComponent<Light>();
             lamp.transform.parent = root.transform;
-            lamp.transform.localPosition = new Vector3(0, 10.6f, 0);
+            lamp.transform.localPosition = new Vector3(0, TowerClimbH + 0.9f, 0);
             lamp.type = LightType.Point;
             lamp.color = MeshUtil.Rgb(0xffb060);
             lamp.range = 30f;
             lamp.intensity = 1.6f;
+
+            // Ladder on the face toward map centre (the side searchers approach from). Its line sits
+            // just outside the collider so the foot is on open ground; the rails+rungs are render-only.
+            Vector2 toCentre = (-towerXZ).normalized;
+            if (toCentre.sqrMagnitude < 0.01f) toCentre = Vector2.down;
+            float faceR = (float)WorldData.Lookout.R + 0.25f;
+            LadderXZ = towerXZ + toCentre * faceR;
+            LadderBottomY = (float)World.GetHeight(LadderXZ.x, LadderXZ.y);
+            LadderTopY = baseY + TowerClimbH;
+            BuildLadderMesh(root, baseY, towerXZ, toCentre, faceR);
+        }
+
+        private void BuildLadderMesh(GameObject root, float baseY, Vector2 towerXZ, Vector2 toCentre, float faceR)
+        {
+            var wood = MeshUtil.Lit(MeshUtil.Rgb(0x5a3f24));
+            float topLocalY = TowerClimbH; // ladder runs from ground to the platform surface
+            Vector2 side = new Vector2(-toCentre.y, toCentre.x); // perpendicular, for the two rails
+            var localFace = new Vector3(toCentre.x * faceR, 0, toCentre.y * faceR); // relative to root
+
+            // Two vertical rails.
+            foreach (float s in new[] { -0.32f, 0.32f })
+            {
+                var rail = NewMeshGo("LadderRail", MeshUtil.TaperedCylinder(0.06f, 0.06f, topLocalY, 4), wood);
+                rail.transform.parent = root.transform;
+                rail.transform.localPosition = localFace + new Vector3(side.x * s, 0, side.y * s);
+            }
+            // Rungs every 0.5 m.
+            Mesh rung = MeshUtil.TaperedCylinder(0.05f, 0.05f, 0.64f, 4);
+            for (float h = 0.4f; h < topLocalY; h += 0.5f)
+            {
+                var r = NewMeshGo("Rung", rung, wood);
+                r.transform.parent = root.transform;
+                r.transform.localPosition = localFace + new Vector3(0, h, 0);
+                // lay it flat, spanning the two rails
+                r.transform.localRotation = Quaternion.LookRotation(new Vector3(toCentre.x, 0, toCentre.y)) * Quaternion.Euler(0, 90, 90);
+            }
         }
 
         private void BuildCamp()

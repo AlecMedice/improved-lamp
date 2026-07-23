@@ -11,6 +11,7 @@
 using System.Collections.Generic;
 using FishNet.Object;
 using FishNet.Object.Synchronizing;
+using FishNet.Component.Transforming;
 using HollowPines.Sim;
 using UnityEngine;
 #if ENABLE_INPUT_SYSTEM
@@ -68,6 +69,11 @@ namespace HollowPines.Game
 
         /// <summary>Everything unsaved on this player, whatever kind it is.</summary>
         public int CarriedTotal => CarriedFilm.Value + CarriedCasts.Value + CarriedHair.Value;
+
+        // Match stats, for the between-nights recap. Searcher: proof BANKED into the duffel (the real
+        // contribution — carried proof can still be spilled). Bigfoot: searchers TAKEN (incaps landed).
+        public readonly SyncVar<int> StatBanked = new SyncVar<int>(0);
+        public readonly SyncVar<int> StatIncaps = new SyncVar<int>(0);
         /// <summary>Per-night ability charges — Eli's flash, Sam's spare battery. 0 for everyone else.</summary>
         public readonly SyncVar<int> AbilityCharges = new SyncVar<int>(0);
         /// <summary>
@@ -96,7 +102,7 @@ namespace HollowPines.Game
         private GameWorld _world => WorldBuilder.EnsureWorld();
         private float _yaw;    // radians, sim convention
         private float _pitch;  // radians, camera only
-        private bool _pressedJump, _pressedLeap, _pressedVault;
+        private bool _pressedJump, _pressedLeap, _pressedVault, _pressedMount;
         private float _caveReadyAt; // local cave-travel cooldown echo (the host owns the real gate)
         private float _lobbyCam01 = 1f; // 0 = lobby cinematic orbit, 1 = first-person (blended)
         private float _roarEchoUntil; // local roar cooldown echo, covers the RoarReadyIn round trip
@@ -173,6 +179,7 @@ namespace HollowPines.Game
                     _cam.transform.localRotation = Quaternion.identity;
                     _cam.nearClipPlane = 0.08f;
                     _cam.farClipPlane = 900f;
+                    _defaultFov = _cam.fieldOfView; // remembered so binocular zoom can restore it
                 }
                 // Don't grab the mouse in the camp lobby — its panel needs clicking. RMB captures
                 // it for walking (HandleCursor); the match-start teleport locks it for real.
@@ -189,6 +196,18 @@ namespace HollowPines.Game
             Role.OnChange -= OnRoleChanged;
             if (Local == this) Local = null;
             if (base.IsOwner && _cam != null) _cam.transform.SetParent(null, true);
+        }
+
+        /// <summary>
+        /// Fires on the host when this player despawns — which, for a human, means their client
+        /// disconnected. `this` is still valid here, so it's the timing-safe place to let the manager
+        /// scrub every server-side reference to us (grab, revive, ping, collect…) and decide whether
+        /// the match is still playable. A bot despawns too, but bots leave via the match ending, not
+        /// a disconnect, so forgetting one is harmless.
+        /// </summary>
+        public override void OnStopServer()
+        {
+            GameManager.Instance?.ServerForgetPlayer(this);
         }
 
         private void OnRoleChanged(byte prev, byte next, bool asServer)
@@ -254,7 +273,10 @@ namespace HollowPines.Game
             if (UpdateLobbyCinematic(playing)) return;
 
             HandleLook();
-            bool canAct = Status.Value == StatusActive;
+            // The between-nights recap freezes the world: no movement, no abilities, just the stats
+            // card. Look still works so you're not staring at a locked view.
+            bool intermission = GameManager.Instance != null && GameManager.Instance.IntermissionActive;
+            bool canAct = Status.Value == StatusActive && !intermission;
 
             // Dragged while incapacitated: mirror the grabber so the client-auth transform follows it.
             if (Status.Value == StatusIncap && GrabberObjectId.Value >= 0)
@@ -268,10 +290,12 @@ namespace HollowPines.Game
             }
             else if (canAct)
             {
-                StepSim();
+                if (_onLadder) UpdateLadder();
+                else StepSim();
             }
 
             if (canAct) HandleAbilities(playing);
+            if (canAct && !IsBigfoot) UpdateBinoculars(); else EndGlassing();
             PushVitals();
             UpdateBob();
             UpdateScent();
@@ -555,6 +579,7 @@ namespace HollowPines.Game
             if (locked && HPKeybinds.Pressed(kb, HPAction.Jump))
             {
                 _pressedJump = true;
+                _pressedMount = true; // consumed by the ladder-mount check after the step
                 if (IsBigfoot) _pressedLeap = true; else _pressedVault = true;
             }
 
@@ -596,8 +621,150 @@ namespace HollowPines.Game
 
                 _lastStep = Movement.StepPlayer(_sim, input, _world, CurrentModifiers());
                 transform.position = new Vector3((float)_sim.X, (float)_sim.FeetY, (float)_sim.Z);
+
+                // Mount the tower ladder: a searcher pressing jump while alongside the ladder line
+                // starts climbing instead of hopping. (Bigfoot scales the tower with its own climb.)
+                if (_pressedMount && !IsBigfoot && NearLadder()) EnterLadder();
+                _pressedMount = false;
             }
 #endif
+        }
+
+        // --- tower ladder (client-side; no parity change — the tower is already climbable in the sim,
+        //     so the sim holds the searcher on the platform once the ladder lifts them to the top) ---
+        private bool _onLadder;
+
+        /// <summary>Within mount reach of the ladder line, and inside its vertical span.</summary>
+        private bool NearLadder()
+        {
+            Vector2 me = new Vector2(transform.position.x, transform.position.z);
+            if ((me - WorldBuilder.LadderXZ).sqrMagnitude > WorldBuilder.LadderReach * WorldBuilder.LadderReach) return false;
+            float y = transform.position.y;
+            return y >= WorldBuilder.LadderBottomY - 1f && y <= WorldBuilder.LadderTopY + 0.5f;
+        }
+
+        private void EnterLadder()
+        {
+            _onLadder = true;
+            _sim.Vy = 0;
+            _sim.Grounded = false;
+            _sim.X = WorldBuilder.LadderXZ.x;
+            _sim.Z = WorldBuilder.LadderXZ.y;
+            // Face into the tower so W (up the rungs) reads naturally.
+            Vector2 intoTower = new Vector2((float)WorldData.Lookout.X, (float)WorldData.Lookout.Z) - WorldBuilder.LadderXZ;
+            ServerBotFaceless(intoTower.x, intoTower.y);
+        }
+
+        /// <summary>
+        /// One frame on the ladder. W/S drive vertical travel (pinned to the ladder line); reaching
+        /// the top steps you onto the platform, where the sim's climbable-top logic takes over;
+        /// reaching the bottom drops you back to the ground; jump hops off at any height.
+        /// </summary>
+        private void UpdateLadder()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var kb = Keyboard.current;
+            if (kb == null) return;
+            bool locked = Cursor.lockState == CursorLockMode.Locked;
+            float dt = Mathf.Min(Time.deltaTime, MaxStepDt);
+
+            float dir = 0f;
+            if (locked && kb.wKey.isPressed) dir += 1f;
+            if (locked && kb.sKey.isPressed) dir -= 1f;
+
+            _sim.FeetY += dir * Sim.Player.ClimbSpeed * dt;
+            _sim.X = WorldBuilder.LadderXZ.x;
+            _sim.Z = WorldBuilder.LadderXZ.y;
+            _sim.GroundY = WorldBuilder.LadderBottomY;
+            _sim.Grounded = false;
+            _sim.Vy = 0;
+
+            bool hopOff = locked && HPKeybinds.Pressed(kb, HPAction.Jump);
+
+            if (_sim.FeetY >= WorldBuilder.LadderTopY)
+            {
+                // Onto the deck: nudge toward the tower centre so we're over the footprint, where the
+                // sim raises groundY to the platform and holds us there.
+                _sim.FeetY = WorldBuilder.LadderTopY;
+                Vector2 c = new Vector2((float)WorldData.Lookout.X, (float)WorldData.Lookout.Z);
+                Vector2 step = (c - WorldBuilder.LadderXZ).normalized * 0.9f;
+                _sim.X += step.x;
+                _sim.Z += step.y;
+                _sim.GroundY = WorldBuilder.LadderTopY;
+                _sim.Grounded = true;
+                ExitLadder();
+            }
+            else if (_sim.FeetY <= WorldBuilder.LadderBottomY || hopOff)
+            {
+                _sim.FeetY = System.Math.Max(_sim.FeetY, WorldBuilder.LadderBottomY);
+                _sim.GroundY = WorldBuilder.LadderBottomY;
+                _sim.Grounded = !hopOff; // a hop leaves you briefly airborne, the sim resolves the landing
+                ExitLadder();
+            }
+
+            transform.position = new Vector3((float)_sim.X, (float)_sim.FeetY, (float)_sim.Z);
+#endif
+        }
+
+        private void ExitLadder()
+        {
+            _onLadder = false;
+            EndGlassing(); // can't glass mid-climb; drop it if we somehow were
+        }
+
+        // --- binoculars (searcher, on the lookout platform only) --------------------
+        private float _defaultFov = 60f;
+        private bool _glassing;
+        private const float GlassFov = 26f; // zoomed-in field of view while glassing
+
+        /// <summary>On the tower deck: within the footprint and at platform height.</summary>
+        private bool OnLookoutPlatform()
+        {
+            Vector2 towerXZ = new Vector2((float)WorldData.Lookout.X, (float)WorldData.Lookout.Z);
+            Vector2 me = new Vector2(transform.position.x, transform.position.z);
+            if ((me - towerXZ).sqrMagnitude > WorldData.Lookout.R * WorldData.Lookout.R) return false;
+            return transform.position.y >= WorldBuilder.LadderTopY - 0.4f;
+        }
+
+        /// <summary>
+        /// Hold the binocular key while standing on the lookout to glass the forest: the view zooms and
+        /// switches to image-intensified night vision (PostFX). Only up the tower — that's the whole
+        /// point of climbing it. Filming still needs the normal RMB; this is a separate scouting tool.
+        /// </summary>
+        private void UpdateBinoculars()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var kb = Keyboard.current;
+            bool want = kb != null && !IsBigfoot && Status.Value == StatusActive && !_onLadder &&
+                        Cursor.lockState == CursorLockMode.Locked &&
+                        OnLookoutPlatform() && HPKeybinds.Down(kb, HPAction.Binoculars);
+
+            if (want && !_glassing) BeginGlassing();
+            else if (!want && _glassing) EndGlassing();
+#endif
+        }
+
+        private void BeginGlassing()
+        {
+            _glassing = true;
+            if (_cam != null) _cam.fieldOfView = GlassFov;
+            if (PostFX.Instance != null) PostFX.Instance.SetNightVision(true);
+        }
+
+        private void EndGlassing()
+        {
+            if (!_glassing) return;
+            _glassing = false;
+            if (_cam != null) _cam.fieldOfView = _defaultFov;
+            if (PostFX.Instance != null) PostFX.Instance.SetNightVision(false);
+        }
+
+        /// <summary>Face a world XZ direction (yaw only). Named apart from ServerBotFace so it's clearly
+        /// an owner-side helper, but the maths is identical: sim forward is (-sin yaw, -cos yaw).</summary>
+        private void ServerBotFaceless(float dx, float dz)
+        {
+            if (dx * dx + dz * dz < 1e-6f) return;
+            _yaw = Mathf.Atan2(-dx, -dz);
         }
 
         private StepModifiers CurrentModifiers()
@@ -903,8 +1070,127 @@ namespace HollowPines.Game
             return (transform.eulerAngles.y - 180f) * Mathf.Deg2Rad;
         }
 
+        // ================= Server-driven bot (single-player CPU) =================
+        //
+        // A bot is an ordinary HPPlayer spawned WITHOUT a NetworkConnection owner. That one fact does
+        // most of the work: with no owner, base.IsOwner is false on every machine including the host,
+        // so OwnerUpdate() never runs and the bot never reads a keyboard or camera. The host drives it
+        // instead — ServerBotDrive below — and the (owner-less, client-authoritative) NetworkTransform
+        // replicates the host's transform writes to every client exactly as it would a human's.
+        //
+        // Crucially the bot runs the SAME shared sim (Movement.StepPlayer) and fires abilities through
+        // the SAME host methods (GameManager.Try*) a human's ServerRpc lands in. There is no parallel
+        // "AI movement" or "AI grab" to drift out of sync — the only thing the brain supplies is intent.
+
+        private bool _isBot;
+        private float _botLogAt; // throttle for the [bot] movement diagnostic
+        public bool IsBot => _isBot;
+
+        /// <summary>
+        /// Flag this as a bot at SPAWN, before roles are dealt. ServerStartMatch reads IsBot to place
+        /// it server-side (a bot has no Owner, so the TargetRpc teleport can't reach it) and to leave
+        /// its role to the normal deal — the bot just carries WantsBigfoot so the deal hands it Bigfoot.
+        /// </summary>
+        public void ServerMarkBot() => _isBot = true;
+
+        /// <summary>
+        /// Server-side placement for a bot, standing in for TargetTeleport (which needs an Owner).
+        /// Called from ServerStartMatch AFTER the role is assigned, so ServerBecomeBot builds the sim
+        /// and brain for the correct role.
+        /// </summary>
+        public void ServerBotPlace(Vector3 pos, float yawRad)
+        {
+            transform.position = pos;
+            ServerBecomeBot();
+            _yaw = yawRad;
+            if (_sim != null) { _sim.X = pos.x; _sim.Z = pos.z; }
+            ApplyBodyYaw();
+            Debug.Log($"[bot] ServerBotPlace -> {pos}  (bigfoot={IsBigfoot}, brain={GetComponent<BigfootBot>() != null})");
+        }
+
+        /// <summary>
+        /// Turn this server-owned player into a CPU bot. Host only. Initialises the server-side sim
+        /// (OnStartClient's owner init is skipped for an un-owned object) and attaches the brain that
+        /// will drive it each tick. Idempotent — ServerBotPlace may call it after ServerMarkBot.
+        /// </summary>
+        public void ServerBecomeBot()
+        {
+            _isBot = true;
+            _sim = NewSimState(transform.position, IsBigfoot);
+            _yaw = SimYawFromTransform();
+
+            // The player prefab's NetworkTransform is CLIENT-authoritative (humans own and drive their
+            // own body). A bot has no owning client, so that NT has no owner to take transforms from —
+            // and on the host it can hold the transform at the spawn point, snapping back over every
+            // write the brain makes. That is the "stands at 178 m and never moves" bug. The bot's
+            // transform is driven entirely server-side here, and in single-player the host is the only
+            // machine that renders it, so the NT has no job: disable it and let the brain own the
+            // transform outright. (When co-op bots arrive they'll need a server-auth NT instead.)
+            var nt = GetComponent<NetworkTransform>();
+            if (nt != null) nt.enabled = false;
+
+            // The brain is a plain host-side component; it needs no networking of its own because it
+            // only ever calls this player's public server methods. Added dynamically so the shared
+            // player prefab stays exactly what a human uses.
+            if (IsBigfoot && GetComponent<BigfootBot>() == null) gameObject.AddComponent<BigfootBot>();
+        }
+
+        /// <summary>
+        /// One host tick of bot movement. The brain supplies a <see cref="MoveInput"/> (direction via
+        /// yaw + W, sprint, etc.); this steps the shared sim and writes the transform, so the bot
+        /// obeys the identical collision, terrain, log and stamina rules every human does. Returns the
+        /// step result so the brain can read whether it actually moved (stuck detection).
+        /// </summary>
+        public StepResult ServerBotDrive(MoveInput input)
+        {
+            if (!_isBot || _sim == null) return default;
+            if (Status.Value != StatusActive) return default; // a frozen/incap bot is as stuck as a human
+
+            _sim.IsBigfoot = IsBigfoot;
+            input.Yaw = _yaw;
+            var before = new Vector2((float)_sim.X, (float)_sim.Z);
+            var mods = CurrentModifiers();
+            _lastStep = Movement.StepPlayer(_sim, input, _world, mods);
+            transform.position = new Vector3((float)_sim.X, (float)_sim.FeetY, (float)_sim.Z);
+            ApplyBodyYaw();
+            // Keep the replicated stamina bar honest (a human streams it via ServerVitals; the bot has
+            // no such path, so write it here). Battery is irrelevant — the bot never lights a torch.
+            if (!Mathf.Approximately(Stamina.Value, (float)_sim.Stamina)) Stamina.Value = (float)_sim.Stamina;
+
+            // DEV diagnostic (throttled): pinpoints where movement breaks if the bot ever stalls.
+            //  simMoved 0     -> StepPlayer isn't moving it (input.W false, speedMul 0, world issue)
+            //  simMoved > 0   -> the sim IS moving; if it still looks stuck, something overrides the
+            //                    transform after this write (a live NetworkTransform).
+            if (Time.time >= _botLogAt)
+            {
+                _botLogAt = Time.time + 1.5f;
+                float simMoved = ((float)_sim.X - before.x) * ((float)_sim.X - before.x) +
+                                 ((float)_sim.Z - before.y) * ((float)_sim.Z - before.y);
+                Debug.Log($"[bot] W={input.W} speedMul={mods.SpeedMul:0.00} simMoved={Mathf.Sqrt(simMoved):0.000}/frame " +
+                          $"grounded={_sim.Grounded} pos=({_sim.X:0},{_sim.Z:0})");
+            }
+            return _lastStep;
+        }
+
+        /// <summary>Point the bot along a world direction (XZ). Sim forward is (-sin yaw, -cos yaw), so
+        /// the yaw that faces (dx,dz) is atan2(-dx,-dz). The brain calls this before ServerBotDrive.</summary>
+        public void ServerBotFace(float dx, float dz)
+        {
+            if (dx * dx + dz * dz < 1e-6f) return;
+            _yaw = Mathf.Atan2(-dx, -dz);
+        }
+
+        /// <summary>Bot ability triggers — thin pass-throughs to the same authority a human hits.</summary>
+        public void ServerBotRoar() { if (_isBot) GameManager.Instance?.TryRoar(this); }
+        public void ServerBotGrab() { if (_isBot) GameManager.Instance?.TryGrab(this); }
+
         // Owner HUD accessors (local sim is fresher than the SyncVars for your own bars).
         public bool OwnGrounded => _sim == null || _sim.Grounded;
+        /// <summary>HUD hints for the tower (searcher, owner). All computed from the live transform.</summary>
+        public bool OwnOnLadder => _onLadder;
+        public bool OwnNearLadder => !IsBigfoot && !_onLadder && NearLadder();
+        public bool OwnOnLookout => !IsBigfoot && OnLookoutPlatform();
+        public bool OwnGlassing => _glassing;
         /// <summary>True while the sim is actually sprinting this frame (not merely holding the key).</summary>
         public bool OwnSprinting => _lastStep.Sprinting;
         /// <summary>True while the sim is actually moving this frame (the F3 look readout uses it).</summary>
@@ -1116,14 +1402,17 @@ namespace HollowPines.Game
                 lightGo.transform.localPosition = new Vector3(0.18f, (float)Sim.Player.EyeHeight - 0.15f, 0.1f);
                 _flashlight = lightGo.AddComponent<Light>();
                 _flashlight.type = LightType.Spot;
-                // Matches the web build's SpotLight(0xfff2d6, 140, 60, 0.5, 0.4): Three's `angle` is a
-                // HALF-angle in radians (0.5 rad -> ~57 deg full cone) and penumbra 0.4 gives the soft
-                // edge. Intensity is eyeball-tuned for URP, which uses different units than Three.
-                _flashlight.range = 60f;
-                _flashlight.spotAngle = 57f;
-                _flashlight.innerSpotAngle = 24f;
-                _flashlight.intensity = 11f;
-                _flashlight.color = MeshUtil.Rgb(0xfff2d0);
+                // A searcher's torch is their main tool in the dark, so it reaches and punches harder
+                // than the original port did (range 60 -> 90, intensity 11 -> 20, hotter core). Three's
+                // `angle` was a HALF-angle (0.5 rad -> ~57 deg full cone); the wider inner angle throws
+                // a broader lit pool so you can actually read the forest floor while moving. It stays a
+                // trade: the brighter the beam, the farther Bigfoot sees you carrying it (the bot's
+                // TorchSightRange, and the dazzle beam, both key off the same light being ON).
+                _flashlight.range = 90f;
+                _flashlight.spotAngle = 62f;
+                _flashlight.innerSpotAngle = 38f;
+                _flashlight.intensity = 20f;
+                _flashlight.color = MeshUtil.Rgb(0xfff4dc);
                 _flashlight.shadows = LightShadows.None;
                 _flashlight.enabled = false;
 

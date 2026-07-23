@@ -13,6 +13,7 @@ namespace HollowPines.Game
         private const string KeyRenderScale = "hp_renderscale";
         private const string KeyDevSpecialty = "hp_dev_specialty";
         private const string KeyDevWorldSeed = "hp_dev_worldseed";
+        private const string KeyLastJoin = "hp_last_join";
 
         public static string PlayerName = "";
         public static float MouseSensMul = 1f;   // multiplier over the sim's base sensitivity
@@ -43,6 +44,10 @@ namespace HollowPines.Game
         /// </summary>
         public static uint DevWorldSeed;
 
+        /// <summary>The last address a JOIN was attempted against, so a returning player doesn't retype
+        /// their friend's IP every launch. Defaults to loopback for same-PC testing.</summary>
+        public static string LastJoinAddress = "127.0.0.1";
+
         private static bool _loaded;
 
         public static void Load()
@@ -56,6 +61,7 @@ namespace HollowPines.Game
             DevSpecialty = PlayerPrefs.GetString(KeyDevSpecialty, "");
             // Stored as a string: PlayerPrefs has no uint, and seeds run past int.MaxValue.
             uint.TryParse(PlayerPrefs.GetString(KeyDevWorldSeed, "0"), out DevWorldSeed);
+            LastJoinAddress = PlayerPrefs.GetString(KeyLastJoin, "127.0.0.1");
             Apply();
         }
 
@@ -67,6 +73,7 @@ namespace HollowPines.Game
             PlayerPrefs.SetFloat(KeyRenderScale, RenderScale);
             PlayerPrefs.SetString(KeyDevSpecialty, DevSpecialty);
             PlayerPrefs.SetString(KeyDevWorldSeed, DevWorldSeed.ToString());
+            PlayerPrefs.SetString(KeyLastJoin, LastJoinAddress);
             PlayerPrefs.Save();
             Apply();
         }

@@ -14,18 +14,19 @@ namespace HollowPines.Game
 {
     public class TitleMenu : MonoBehaviour
     {
-        private enum Page { Root, Join, Settings }
+        private enum Page { Root, Solo, Join, Settings }
 
         private Page _page = Page.Root;
-        private string _address = "127.0.0.1";
+        private string _address; // seeded from the last successful join in Awake
         private float _connectStartedAt = -1f; // >=0 while a join attempt is in flight
         private string _error;                 // last hosting/joining failure, shown under the buttons
         private Vector2 _settingsScroll;       // settings page scroll (it's taller than a short window)
-        private GUIStyle _titleStyle, _subStyle, _buttonStyle, _labelStyle, _errorStyle;
+        private GUIStyle _titleStyle, _subStyle, _buttonStyle, _labelStyle, _errorStyle, _hintStyle;
 
         private void Awake()
         {
             HPSettings.Load();
+            _address = HPSettings.LastJoinAddress; // pre-fill JOIN with the last address used
         }
 
         private void Update()
@@ -176,6 +177,7 @@ namespace HollowPines.Game
             switch (_page)
             {
                 case Page.Root: DrawRoot(cx); break;
+                case Page.Solo: DrawSolo(cx); break;
                 case Page.Join: DrawJoin(cx); break;
                 case Page.Settings: DrawSettings(cx); break;
             }
@@ -191,24 +193,11 @@ namespace HollowPines.Game
         private void DrawRoot(float cx)
         {
             float y = Screen.height * 0.42f;
-            if (MenuButton(cx, ref y, "START NEW GAME"))
+            if (MenuButton(cx, ref y, "SINGLE PLAYER")) _page = Page.Solo;
+            if (MenuButton(cx, ref y, "HOST GAME (co-op)"))
             {
-                // Never fail silently: a menu button that does nothing is the worst failure mode.
-                // StartConnection returns false on a refused socket, and a throw here (e.g. from a
-                // scene NetworkObject's OnStartServer) would otherwise strand us on this screen.
-                _error = null;
-                try
-                {
-                    if (!InstanceFinder.ServerManager.StartConnection())
-                        _error = "server failed to start — is port 7770 already in use?";
-                    else if (!InstanceFinder.ClientManager.StartConnection())
-                        _error = "server started, but the local client could not connect";
-                }
-                catch (System.Exception e)
-                {
-                    _error = "start failed: " + e.GetType().Name + " — " + e.Message;
-                    Debug.LogException(e); // full stack trace lands in the Console
-                }
+                GameManager.SoloPending = false; // ensure a prior solo click doesn't leak in
+                StartHost();
             }
             if (MenuButton(cx, ref y, "JOIN GAME")) _page = Page.Join;
             if (MenuButton(cx, ref y, "SETTINGS")) _page = Page.Settings;
@@ -222,6 +211,29 @@ namespace HollowPines.Game
             }
 
             DrawDevStrip(cx, y + 6f);
+        }
+
+        /// <summary>
+        /// Start a local host + client. Shared by SINGLE PLAYER and HOST GAME — only the SoloPending
+        /// flag set by the caller differs. Never fails silently: a menu button that does nothing is
+        /// the worst failure mode, so a refused socket or a throw from a scene object's OnStartServer
+        /// surfaces on screen instead of stranding the player here.
+        /// </summary>
+        private void StartHost()
+        {
+            _error = null;
+            try
+            {
+                if (!InstanceFinder.ServerManager.StartConnection())
+                    _error = "server failed to start — is port 7770 already in use?";
+                else if (!InstanceFinder.ClientManager.StartConnection())
+                    _error = "server started, but the local client could not connect";
+            }
+            catch (System.Exception e)
+            {
+                _error = "start failed: " + e.GetType().Name + " — " + e.Message;
+                Debug.LogException(e); // full stack trace lands in the Console
+            }
         }
 
         /// <summary>
@@ -308,6 +320,40 @@ namespace HollowPines.Game
             return first == "Dr." ? "Mara" : first; // "Dr. Mara Okonkwo"
         }
 
+        /// <summary>
+        /// The Single Player page: pick which side you play against the CPU. No lobby and no
+        /// internet — SoloPending tells GameManager to spawn the AI and drop you straight into night
+        /// one. Playing AS Bigfoot waits on CPU searchers (a much larger AI job — filming and routing
+        /// a five-strong team), so it's shown but disabled rather than hidden, to signal it's coming.
+        /// </summary>
+        private void DrawSolo(float cx)
+        {
+            float y = Screen.height * 0.40f;
+            GUI.Label(new Rect(cx - 220f, y, 440f, 22f),
+                "you, alone, against the thing in the pines", _subStyle);
+            y += 34f;
+
+            if (MenuButton(cx, ref y, "PLAY AS SEARCHER"))
+            {
+                GameManager.SoloPending = true;
+                StartHost();
+            }
+            GUI.Label(new Rect(cx - 220f, y, 440f, 20f),
+                "find proof and get it to the duffel before the CPU Bigfoot takes you", _hintStyle);
+            y += 34f;
+
+            // Play-as-Bigfoot needs bot SEARCHERS, which don't exist yet — greyed with a note so the
+            // intent reads, rather than a live button that does nothing.
+            GUI.enabled = false;
+            MenuButton(cx, ref y, "PLAY AS BIGFOOT");
+            GUI.enabled = true;
+            GUI.Label(new Rect(cx - 220f, y, 440f, 20f),
+                "coming soon — needs CPU searchers to hunt", _hintStyle);
+            y += 34f;
+
+            if (MenuButton(cx, ref y, "BACK")) _page = Page.Root;
+        }
+
         private void DrawJoin(float cx)
         {
             float y = Screen.height * 0.42f;
@@ -334,7 +380,10 @@ namespace HollowPines.Game
 
             if (MenuButton(cx, ref y, "CONNECT"))
             {
-                InstanceFinder.ClientManager.StartConnection(_address.Trim());
+                string addr = _address.Trim();
+                HPSettings.LastJoinAddress = addr; // remember it for next launch
+                HPSettings.Save();
+                InstanceFinder.ClientManager.StartConnection(addr);
                 _connectStartedAt = Time.time;
             }
             if (MenuButton(cx, ref y, "BACK")) _page = Page.Root;
@@ -421,6 +470,7 @@ namespace HollowPines.Game
                 case HPAction.Map: return "map";
                 case HPAction.Ping: return "stakeout ping";
                 case HPAction.Flash: return "camera flash (Eli)";
+                case HPAction.Binoculars: return "binoculars (on the lookout)";
                 default: return a.ToString();
             }
         }
@@ -450,6 +500,12 @@ namespace HollowPines.Game
                 fontSize = 14, alignment = TextAnchor.UpperCenter, wordWrap = true,
             };
             _errorStyle.normal.textColor = new Color(1f, 0.45f, 0.4f);
+
+            _hintStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 12, alignment = TextAnchor.UpperCenter, wordWrap = true,
+            };
+            _hintStyle.normal.textColor = new Color(0.62f, 0.66f, 0.66f);
         }
     }
 }

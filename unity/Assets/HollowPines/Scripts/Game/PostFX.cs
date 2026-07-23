@@ -20,6 +20,7 @@ namespace HollowPines.Game
         // so neither can clobber the other (the title screen ends exactly when a role is assigned).
         private bool _bigfootVision;
         private bool _titleMode;
+        private bool _nightVision; // searcher glassing the forest through the tower binoculars
 
         /// <summary>Attach the global volume + enable post on the main camera. Safe to call once from WorldBuilder.</summary>
         public static void Ensure(GameObject host)
@@ -102,13 +103,28 @@ namespace HollowPines.Game
 
         public bool BloomEnabled => _bloom == null || _bloom.active;
 
+        /// <summary>
+        /// Binocular night vision (searcher on the lookout). A hard exposure lift plus a green cast and
+        /// a squeeze of saturation — the classic image-intensifier look — so the top of the tower
+        /// genuinely reveals the treeline you can't otherwise see. Local only, like Bigfoot's vision.
+        /// </summary>
+        public void SetNightVision(bool on)
+        {
+            _nightVision = on;
+            ApplyExposure();
+        }
+
         private void ApplyExposure()
         {
             if (_colorAdjustments == null) return;
             float ev = 0f;
             if (_titleMode) ev += 1.15f;      // menu backdrop
             if (_bigfootVision) ev += 0.9f;   // predator eyes
+            if (_nightVision) ev += 2.0f;     // image intensifier — a big lift, it's the whole point
             _colorAdjustments.postExposure.Override(ev);
+            // Green phosphor cast + desaturation while glassing; neutral otherwise.
+            _colorAdjustments.colorFilter.Override(_nightVision ? new Color(0.55f, 1f, 0.6f) : Color.white);
+            _colorAdjustments.saturation.Override(_nightVision ? -55f : -6f);
         }
     }
 }
