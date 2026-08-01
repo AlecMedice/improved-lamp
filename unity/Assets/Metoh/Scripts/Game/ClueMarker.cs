@@ -103,7 +103,7 @@ namespace Metoh.Game
                 // Crust broken through where something heavy went past — audible from a distance,
                 // which is how a searcher finds the trail. Same role the snapped branch had.
                 if (HPAudio.Instance != null)
-                    HPAudio.Instance.PlayAt(HPAudio.BranchSnap, transform.position, 0.5f, 14f); // renamed to IceCrack in the audio pass
+                    HPAudio.Instance.PlayAt(HPAudio.IceCrack, transform.position, 0.5f, 14f);
 
                 // A cracked slab: three tilted plates shoved out of the surface at angles, so the
                 // silhouette breaks the flat ground the way the crossed sticks used to.

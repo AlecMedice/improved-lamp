@@ -125,7 +125,7 @@ namespace Metoh.Game
             Build();
             BuildNavMesh();
             PostFX.Ensure(gameObject);
-            HPAudio.Ensure(gameObject); // synthesizes every cue + starts the wind/creek beds
+            HPAudio.Ensure(gameObject); // synthesizes every cue + starts the wind/tarn beds
             HPDebug.Ensure(gameObject); // F3 diagnostics overlay (costs nothing while hidden)
             SetTimeOfDay(0f);
         }

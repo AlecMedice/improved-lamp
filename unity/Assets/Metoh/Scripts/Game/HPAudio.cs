@@ -23,7 +23,7 @@ namespace Metoh.Game
         public const string Roar = "roar";
         public const string FootstepSoft = "footstep_soft";
         public const string FootstepHeavy = "footstep_heavy";
-        public const string BranchSnap = "branch_snap";
+        public const string IceCrack = "ice_crack";
         public const string FlashlightClick = "flashlight_click";
         public const string PingDrop = "ping_drop";
         public const string VideoCaptured = "video_captured";
@@ -54,7 +54,7 @@ namespace Metoh.Game
         // so parenting sources to our own transform meant a reseed silently deleted the whole pool
         // while the component itself survived (Awake never runs again, so nothing rebuilt it).
         private Transform _sfxRoot;
-        private AudioSource _wind, _creek;
+        private AudioSource _wind, _tarn;
         private float _hbIntensity, _hbTimer;
         private System.Random _rng = new System.Random(12345);
 
@@ -92,10 +92,10 @@ namespace Metoh.Game
                 var root = new GameObject("HPAudio Sources");
                 _sfxRoot = root.transform;
                 _pool = null;          // whatever it held was parented to the old, now-dead root
-                _wind = _creek = null;
+                _wind = _tarn = null;
             }
             if (_pool == null || _pool.Length != PoolSize || _pool[0] == null) BuildPool();
-            if (_wind == null || _creek == null) StartAmbience();
+            if (_wind == null || _tarn == null) StartAmbience();
         }
 
         // ------------------------------------------------------------------ playback
@@ -199,11 +199,14 @@ namespace Metoh.Game
                 _wind.Play();
             }
 
-            if (_creek != null) return;
+            if (_tarn != null) return;
 
-            // Creek: babbling water at the near edge of the lake — positional, so it guides you there.
-            var creekGo = new GameObject("CreekBed");
-            creekGo.transform.SetParent(_sfxRoot, false);
+            // Tarn: the frozen lake, still positional at its near shore. The babbling creek is gone
+            // — there is no running water up here — but the SOURCE stays exactly where it was,
+            // because its real job was never ambience: it is a landmark you can hear, and the thing
+            // that lets a searcher find the tarn in fog without opening the map.
+            var tarnGo = new GameObject("TarnBed");
+            tarnGo.transform.SetParent(_sfxRoot, false);
             var world = WorldBuilder.EnsureWorld();
             double lx = WorldData.Lake.X, lz = WorldData.Lake.Z;
             double dl = System.Math.Sqrt(lx * lx + lz * lz);
@@ -214,17 +217,73 @@ namespace Metoh.Game
                 0f,
                 (float)(lz - lz / dl * WorldData.Lake.Rz));
             edge.y = (float)world.GetHeight(edge.x, edge.z) + 0.5f;
-            creekGo.transform.position = edge;
-            _creek = creekGo.AddComponent<AudioSource>();
-            _creek.clip = NoiseClip("creek", 3f, brown: false, bandpass: true);
-            _creek.loop = true;
-            _creek.spatialBlend = 1f;
-            _creek.rolloffMode = AudioRolloffMode.Linear;
-            _creek.minDistance = 6f;
-            _creek.maxDistance = 40f; // the web build's ~30 m swell, with a little tail
-            _creek.volume = 0.16f;
-            _creek.dopplerLevel = 0f;
-            _creek.Play();
+            tarnGo.transform.position = edge;
+            _tarn = tarnGo.AddComponent<AudioSource>();
+            _tarn.clip = TarnClip();
+            _tarn.loop = true;
+            _tarn.spatialBlend = 1f;
+            _tarn.rolloffMode = AudioRolloffMode.Linear;
+            _tarn.minDistance = 6f;
+            _tarn.maxDistance = 40f; // the web build's ~30 m swell, with a little tail
+            _tarn.volume = 0.16f;
+            _tarn.dopplerLevel = 0f;
+            _tarn.Play();
+        }
+
+        /// <summary>
+        /// The tarn bed: low wind-gust noise with sparse ice groans over it.
+        ///
+        /// Eight seconds rather than the creek's three. A groan is a slow 40-70 Hz sweep with a long
+        /// attack and a long tail, and at a three-second loop you would hear the same two events
+        /// cycle often enough to register as a loop rather than as a lake making noise. Two to four
+        /// events at randomised offsets over eight seconds reads as intermittent.
+        /// </summary>
+        private AudioClip TarnClip()
+        {
+            const float dur = 8f;
+            int groans = 2 + (int)(Rand01() * 3f); // 2..4
+            var at = new float[groans];
+            var f0 = new float[groans];
+            var f1 = new float[groans];
+            for (int g = 0; g < groans; g++)
+            {
+                at[g] = Rand01() * (dur - 1.6f);
+                f0[g] = 40f + Rand01() * 30f;      // 40..70 Hz
+                f1[g] = f0[g] * (0.55f + Rand01() * 0.25f); // sags as it settles
+            }
+
+            return Synth("tarn", dur, (d, sr) =>
+            {
+                double lp = 0;
+                var phase = new double[groans * 3];
+                for (int i = 0; i < d.Length; i++)
+                {
+                    float t = (float)i / sr;
+
+                    // Wind over open ice: brown-ish noise, gusting slowly.
+                    lp += 0.012 * (Rand() - lp);
+                    double gust = 0.6 + 0.4 * System.Math.Sin(t * 0.55);
+                    double sample = lp * 1.6 * gust;
+
+                    for (int g = 0; g < groans; g++)
+                    {
+                        double gt = t - at[g];
+                        if (gt < 0 || gt > 1.6) continue;
+                        // Long attack, long decay — a sheet taking load, not an impact.
+                        double env = System.Math.Min(1.0, gt / 0.45) * System.Math.Exp(-System.Math.Max(0, gt - 0.45) * 2.2);
+                        double f = f0[g] + (f1[g] - f0[g]) * (gt / 1.6);
+                        double v = 0;
+                        for (int h = 0; h < 3; h++) // three harmonics, each quieter
+                        {
+                            int pi = g * 3 + h;
+                            phase[pi] += 2 * System.Math.PI * f * (h + 1) / sr;
+                            v += System.Math.Sin(phase[pi]) / (h + 1);
+                        }
+                        sample += v * env * 0.22;
+                    }
+                    d[i] = (float)sample;
+                }
+            });
         }
 
         private void Update()
@@ -291,6 +350,7 @@ namespace Metoh.Game
         }
 
         private double Rand() => _rng.NextDouble() * 2 - 1; // -1..1, the TS `Math.random()*2-1`
+        private float Rand01() => (float)_rng.NextDouble();  // 0..1, for picking event times/pitches
 
         private void BuildCues()
         {
@@ -312,18 +372,36 @@ namespace Metoh.Game
                 }
             });
 
-            // Footsteps: short lowpassed-noise thuds; heavier = lower cutoff, longer, louder (Yeti).
-            _clips[FootstepSoft] = Step(FootstepSoft, 0.16f, 0.05, 0.5);
-            _clips[FootstepHeavy] = Step(FootstepHeavy, 0.24f, 0.03, 0.95);
+            // Footsteps: snow crunch. Shorter bodies and a higher noise cutoff than the forest-floor
+            // thuds — snow has no low-end ring, it terminates. The ~40 Hz amplitude modulation is
+            // what makes it read as CRUNCH rather than as a hiss: it chops the noise into the
+            // individual grains collapsing under the boot. The Yeti's step keeps its low thud under
+            // the crunch, because the point of the heavy cue is that you can tell it apart.
+            _clips[FootstepSoft] = Step(FootstepSoft, 0.12f, 0.12, 0.5, am: 40);
+            _clips[FootstepHeavy] = Step(FootstepHeavy, 0.20f, 0.08, 0.95, am: 38, thump: 0.45);
 
-            // Branch snap: a sharp crack with a small secondary crackle.
-            _clips[BranchSnap] = Synth(BranchSnap, 0.14f, (d, sr) =>
+            // Ice crack: the branch snap's click transient kept intact — it is the cue searchers
+            // actually localise on — with a short descending ring under it. Two detuned partials
+            // sweeping ~800 down to ~300 Hz over the first quarter second is what separates
+            // "something broke" from "a plate of ice let go": the pitch drop reads as a surface
+            // settling rather than a stick breaking.
+            _clips[IceCrack] = Synth(IceCrack, 0.3f, (d, sr) =>
             {
+                double p1 = 0, p2 = 0;
                 for (int i = 0; i < d.Length; i++)
                 {
                     float t = (float)i / sr;
                     double env = System.Math.Exp(-t * 60) + 0.4 * System.Math.Exp(-System.Math.Max(0, t - 0.04) * 90);
-                    d[i] = (float)(Rand() * env * 0.7);
+                    double crack = Rand() * env * 0.7;
+
+                    double sweep = System.Math.Max(0.0, 1.0 - t / 0.25);       // 1 -> 0 across 0.25 s
+                    double f = 300 + 500 * sweep;                               // 800 Hz -> 300 Hz
+                    p1 += 2 * System.Math.PI * f / sr;
+                    p2 += 2 * System.Math.PI * f * 1.006 / sr;                  // detune for a beating shimmer
+                    double ring = (System.Math.Sin(p1) + System.Math.Sin(p2)) * 0.5
+                                  * System.Math.Exp(-t * 9) * 0.35;
+
+                    d[i] = (float)(crack + ring);
                 }
             });
 
@@ -474,16 +552,29 @@ namespace Metoh.Game
             });
         }
 
-        private AudioClip Step(string name, float dur, double cut, double gain)
+        /// <summary>
+        /// A footstep: lowpassed noise under a fast decay. <paramref name="am"/> amplitude-modulates
+        /// the noise (Hz) to granulate it into a crunch; <paramref name="thump"/> mixes in a short
+        /// low sine so a heavy step still lands with weight.
+        /// </summary>
+        private AudioClip Step(string name, float dur, double cut, double gain, double am = 0, double thump = 0)
         {
             return Synth(name, dur, (d, sr) =>
             {
-                double lp = 0;
+                double lp = 0, tp = 0;
                 for (int i = 0; i < d.Length; i++)
                 {
                     float t = (float)i / sr;
                     lp += cut * (Rand() - lp);
-                    d[i] = (float)(lp * System.Math.Exp(-(t / dur) * 6) * gain);
+                    double env = System.Math.Exp(-(t / dur) * 6);
+                    double grain = am > 0 ? 0.55 + 0.45 * System.Math.Sin(2 * System.Math.PI * am * t) : 1.0;
+                    double v = lp * grain;
+                    if (thump > 0)
+                    {
+                        tp += 2 * System.Math.PI * 62 / sr;
+                        v += System.Math.Sin(tp) * System.Math.Exp(-t * 26) * thump;
+                    }
+                    d[i] = (float)(v * env * gain);
                 }
             });
         }
