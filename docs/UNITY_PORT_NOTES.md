@@ -320,6 +320,67 @@ never to walking through solid geometry.
 > - **Play-as-Yeti is now live but early** — see §6d. The CPU searcher team exists as a working
 >   shell; whether it is any fun to hunt is completely unmeasured.
 
+## 5b. The realism pass — why it is materials, not models
+
+The brief was "more realistic 3D game instead of just polygons". The instinct is to blame the
+geometry, but the geometry was never the problem: a low-poly cone lit properly reads fine, and a
+high-poly one lit flat still reads as plastic. The actual cause was that **every surface in the game
+was `URP/Lit` with a flat base colour and smoothness 0.05**. A flat-shaded face takes one shade of
+light across its whole area and dies there — no microstructure, no specular break-up, nothing for the
+moon or a torch to catch. That is what "polygons" looks like.
+
+So the pass is a **material and lighting** pass:
+
+- **Procedural PBR maps** (`ProcTex.cs`). There is not one texture file in the repo and adding one
+  would break "clone it and it runs", so the maps are synthesized at load from tileable value noise —
+  snow grain, a finer snow detail layer, rock fracture, bark striation, ice pressure lines, canvas
+  weave, matted fur. ~256 KB and a few ms each, once. The noise is genuinely periodic (the lattice
+  hash wraps), because a non-tiling hash puts a visible seam every repeat across 800 m of terrain.
+- **UVs and tangents on every generated mesh.** This was the blocker, and it is worth stating plainly:
+  a normal map cannot bind without them, so no amount of material tuning would have done anything
+  until `MeshUtil` and the hand-built terrain/tarn/trail meshes carried both. `RecalculateTangents`
+  must follow the UVs, not precede them.
+- **Per-class response.** Snow is moderately smooth (its glitter is a microfacet effect, not a
+  colour); ice is the one genuinely glossy surface; rock, timber and fur are light sinks.
+- **Trilight ambient with a bright ground term.** The single most important lighting change. Flat
+  ambient lights every surface identically from every direction, which is precisely what flattens
+  geometry into cardboard. Standing on snowpack, a startling share of the light on your face has
+  bounced *up* — so the ground term is tinted toward the snow albedo and deliberately strong, and the
+  undersides of branches and figures stop going dead.
+- **Soft shadows** on the tier that can afford them. Hard shadows were defensible over a dark fogged
+  forest floor; over open snow they are one of the loudest "this is a game" tells.
+- **Split toning** — cool shadows, warm highlights. Pure grading, and the cheapest realism win here:
+  real snow at night is lit by two sources of very different colour, and the eye reads that
+  opposition as depth. A single ambient tint cannot produce it because the split happens across
+  luminance.
+- **Per-chunk colour jitter** on the forest. After flat shading, uniformity is the loudest tell:
+  2,400 trunks in exactly one brown reads as instancing. Free, because each chunk is already its own
+  draw and the SRP batcher batches by shader, not by material. Hashed from the cell index, never from
+  an RNG stream — it must not touch the tree/collider lockstep (§3c).
+
+**Cost is gated on the render-scale slider** (`HPQuality.HighDetail`), which now doubles as a detail
+tier: anyone who has already pulled it down to buy frames is not silently charged for soft shadows
+and a 55 m shadow distance too.
+
+> **The one big win that is NOT in here, and cannot be.** Screen-space ambient occlusion is a URP
+> *Renderer Feature*, and it lives on the renderer asset — a `.asset` file the repo does not carry
+> (only `Scripts/` and `Shaders/` are tracked). It is the largest remaining realism gain, because AO
+> is what visually *grounds* objects: without it, props and figures read as hovering over the snow
+> rather than sitting in it. **Owner step, in the live project:** select the URP Renderer asset →
+> Add Renderer Feature → Screen Space Ambient Occlusion; intensity ~0.5, radius ~0.3, and set it to
+> `AfterOpaque` on integrated graphics. If it costs too much, halve the sample count before turning
+> it off.
+
+Two things fixed in passing, both pre-existing: `SetTimeOfDay` re-asserted `LightShadows.Hard` every
+frame, so shadow quality could never actually be configured from anywhere; and the world leaked its
+entire material set on every reseed (`new Material` is a native object Unity does not collect), which
+was survivable at a couple of dozen and is not at ~200 after per-chunk tinting.
+
+**Nothing in this pass has been seen.** Every value is reasoned from how the materials behave, not
+observed — expect to sit in `ProcTex` (normal strengths, tiling) and the smoothness numbers and tune
+by eye. The tiling scales in particular are the kind of thing that is obviously wrong the moment you
+look and impossible to guess.
+
 ## 6d. The CPU searchers (`SearcherBot`) — a shell, deliberately
 
 Title → SINGLE PLAYER → **PLAY AS YETI** spawns four CPU searchers and hands the human the monster.

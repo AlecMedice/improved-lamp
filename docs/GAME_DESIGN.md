@@ -198,6 +198,13 @@ depth — was settled the other way by the Metoh migration. The depth ideas outl
 > below that says "forest", "ferns" or "lake" describes the web build and the pre-re-theme geometry
 > the Unity build inherited — the *structure* is unchanged, the dressing isn't.
 
+> **Direction change (Aug 2026): the Unity build is moving toward realism.** The owner's call, and it
+> supersedes the low-poly framing below for the Unity target. The geometry stays generated and
+> relatively simple — that is not what made it read as "polygons" — but every surface now carries
+> procedurally generated normal detail and a tuned PBR response, lit by a bounce-weighted ambient and
+> soft shadows. See `UNITY_PORT_NOTES.md` §5b for what changed and why the cause was materials rather
+> than mesh density. The **web build keeps the original low-poly look** along with its forest palette.
+
 - **Geometry:** low‑poly meshes with **smooth vertex normals** (`computeVertexNormals`, `flatShading: false`) → rounded, readable, *not* voxel/blocky. Trees = tapered trunks + stacked smooth conifer cones; terrain = noise‑displaced plane with smoothed normals.
 - **Materials:** `MeshStandardMaterial`, low‑saturation palette, subtle emissive on lights/eyes.
 - **Atmosphere:** `FogExp2` distance fog tuned per phase; `ACESFilmicToneMapping`; post‑processing pass for **bloom** (flashlights), **vignette**, and light **film grain**.

@@ -1463,7 +1463,9 @@ namespace Metoh.Game
                 body.transform.localScale = new Vector3(1.3f, 1.35f, 1.3f); // capsule h=2 -> ~2.7 m
                 body.transform.localPosition = new Vector3(0f, 1.35f, 0f);
                 _baseBodyColor = MeshUtil.Rgb(0x2a2018);
-                _bodyMat = MeshUtil.Lit(_baseBodyColor);
+                // Matted fur, not painted plastic. Low smoothness so it stays a light SINK — the Yeti
+                // reading as a silhouette that swallows the torch is half of what makes it scary.
+                _bodyMat = MeshUtil.Surface(_baseBodyColor, 0.08f, ProcTex.FurNormal, 1.15f, 2.2f);
                 _bodyRenderer.sharedMaterial = _bodyMat;
                 foreach (float sx in new[] { -0.16f, 0.16f })
                 {
@@ -1482,7 +1484,8 @@ namespace Metoh.Game
                 body.transform.localPosition = new Vector3(0f, 0.9f, 0f);
                 int hex = SpecialtyColors.TryGetValue(Specialty.Value ?? "", out int c) ? c : 0x9aa2aa;
                 _baseBodyColor = MeshUtil.Rgb(hex);
-                _bodyMat = MeshUtil.Lit(_baseBodyColor);
+                // Technical outerwear: a little sheen, woven surface.
+                _bodyMat = MeshUtil.Surface(_baseBodyColor, 0.24f, ProcTex.FabricNormal, 0.8f, 3f);
                 _bodyRenderer.sharedMaterial = _bodyMat;
 
                 var lightGo = new GameObject("Flashlight");

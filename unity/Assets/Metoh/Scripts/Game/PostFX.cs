@@ -55,6 +55,29 @@ namespace Metoh.Game
             _colorAdjustments = profile.Add<ColorAdjustments>();
             _colorAdjustments.postExposure.Override(0f);
             _colorAdjustments.saturation.Override(-6f); // slightly desaturated dusk palette
+            _colorAdjustments.contrast.Override(12f);   // snow without contrast is a flat grey field
+
+            // SPLIT TONING — cool shadows, warm highlights. This is the cheapest realism win in the
+            // whole pass and it is pure grading, not lighting: real snow at night is lit by two
+            // sources of very different colour, a blue-white sky and whatever warm light people
+            // brought with them, and the eye reads that opposition as depth. Tinting a single
+            // ambient colour cannot produce it, because the split has to happen across luminance.
+            var split = profile.Add<SplitToning>();
+            split.shadows.Override(MeshUtil.Rgb(0x2c4a72));    // moonlit blue in the darks
+            split.highlights.Override(MeshUtil.Rgb(0xffd9a8)); // lamp/torch warmth in the lights
+            split.balance.Override(-12f);                       // bias toward the shadow tint
+
+            // A whisper of lens character. Both are deliberately near the bottom of their useful
+            // range: this is a found-footage horror game, not a lens simulator, and either of these
+            // pushed hard is instantly cheaper-looking than having none at all.
+            var chroma = profile.Add<ChromaticAberration>();
+            chroma.intensity.Override(0.08f);
+
+            // Physically-shaped white balance — pull the whole frame slightly cold. Snow scenes that
+            // are graded neutral read as overcast daylight no matter how dark you make them.
+            var wb = profile.Add<WhiteBalance>();
+            wb.temperature.Override(-14f);
+            wb.tint.Override(4f);
 
             var vol = gameObject.AddComponent<Volume>();
             vol.isGlobal = true;

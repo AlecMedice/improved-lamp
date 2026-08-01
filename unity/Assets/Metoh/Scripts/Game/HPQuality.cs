@@ -6,6 +6,11 @@
 //
 // Applied at startup (HPSettings.Apply) and live whenever the quality slider moves, so the owner
 // can trade sharpness for frame rate without leaving the game.
+//
+// The render-scale slider doubles as the DETAIL TIER. The realism pass (normal-mapped surfaces, soft
+// shadows, a bounce-lit ambient) is not free, and the machine this is developed on has integrated
+// graphics, so the expensive half is gated: anyone who has already pulled the slider down to buy
+// frames should not silently be paying for soft shadows and a longer shadow distance as well.
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
@@ -14,10 +19,18 @@ namespace Metoh.Game
 {
     public static class HPQuality
     {
-        /// <summary>Shadow draw distance in metres. The forest is dense and fogged — 50 m was wasted work.</summary>
-        private const float ShadowDistance = 35f;
+        /// <summary>Shadow draw distance in metres, on the tier that can afford it. The world is
+        /// fogged, so beyond this a shadow is invisible anyway and pure waste.</summary>
+        private const float ShadowDistanceHigh = 55f;
+        private const float ShadowDistanceLow = 30f;
+
+        /// <summary>Render scale at or below which we drop to the cheap look.</summary>
+        private const float LowTierScale = 0.7f;
 
         private static bool _appliedOnce;
+
+        /// <summary>True when the current tier is paying for the expensive lighting.</summary>
+        public static bool HighDetail { get; private set; } = true;
 
         /// <summary>Set the URP render scale (0.4..1). Cheap to call; safe if URP isn't active yet.</summary>
         public static void ApplyRenderScale(float scale)
@@ -26,15 +39,37 @@ namespace Metoh.Game
             if (urp == null) return;
 
             urp.renderScale = Mathf.Clamp(scale, 0.4f, 1f);
+            HighDetail = urp.renderScale > LowTierScale;
+
+            // Shadow distance is the cheapest big lever on a shadow budget: cost scales with the
+            // volume the cascades have to cover, not with what ends up on screen.
+            urp.shadowDistance = HighDetail ? ShadowDistanceHigh : ShadowDistanceLow;
+
+            ApplyShadowQuality();
 
             if (!_appliedOnce)
             {
                 _appliedOnce = true;
-                urp.msaaSampleCount = 1;             // MSAA is a luxury this GPU can't afford
-                urp.shadowDistance = ShadowDistance;
-                Debug.Log($"[HPQuality] renderScale {urp.renderScale:0.00}, MSAA off, shadow distance {ShadowDistance} m " +
+                urp.msaaSampleCount = 1; // MSAA is a luxury this GPU can't afford
+                Debug.Log($"[HPQuality] renderScale {urp.renderScale:0.00}, MSAA off, " +
+                          $"detail {(HighDetail ? "HIGH" : "LOW")}, shadow distance {urp.shadowDistance} m " +
                           $"(screen {Screen.width}x{Screen.height}).");
             }
+        }
+
+        /// <summary>
+        /// Push the current tier's shadow setting onto the moon.
+        ///
+        /// Public because the light is rebuilt on every world reseed, so WorldBuilder has to be able
+        /// to re-assert this after BuildLighting — otherwise a reseed silently resets the look. Soft
+        /// shadows matter more here than they would over a forest floor: a hard-edged shadow on open
+        /// snowpack is one of the loudest "this is a game" tells there is.
+        /// </summary>
+        public static void ApplyShadowQuality()
+        {
+            var moon = WorldBuilder.MoonLight;
+            if (moon == null) return;
+            moon.shadows = HighDetail ? LightShadows.Soft : LightShadows.Hard;
         }
     }
 }

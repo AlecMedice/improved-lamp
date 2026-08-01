@@ -20,6 +20,9 @@ namespace Metoh.Game
         public static WorldBuilder Instance { get; private set; }
 
         private Light _moon;
+
+        /// <summary>The moon, for HPQuality — it re-asserts shadow quality after every world rebuild.</summary>
+        public static Light MoonLight { get; private set; }
         private float _lastTod = -1f;
         private float _appliedTod;  // last time-of-day handed to SetTimeOfDay (survives a reseed)
         private int _appliedNight = 1;
@@ -74,6 +77,14 @@ namespace Metoh.Game
         /// grid, 3.0 is roughly the 85th percentile: the ridges go white, the valleys stay green.
         /// </summary>
         private const float SnowlineHeight = 3.0f;
+
+        /// <summary>
+        /// How strongly snowpack bounces ambient light back up (the Trilight ground term). Well under
+        /// 1 — the ground does not return everything the sky delivers — but high enough that the
+        /// undersides of branches, ledges and figures never go dead, which is what actually sells a
+        /// surface as snow rather than as white plastic.
+        /// </summary>
+        private const float AmbientBounce = 0.85f;
 
         /// <summary>
         /// The evidence duffel beside the RV — the only place proof becomes permanent, and the one
@@ -176,11 +187,39 @@ namespace Metoh.Game
             // surviving, and reading it that way cost a session of dead audio: HPAudio used to
             // parent its 22 sources here and this loop ate every one of them. Anything a surviving
             // component owns must live outside this transform (HPAudio keeps a scene-root of its own).
+            ReleaseWorldMaterials(); // BEFORE the children go — it reads their renderers to find them
             for (int i = transform.childCount - 1; i >= 0; i--) Destroy(transform.GetChild(i).gameObject);
             Build();
             BuildNavMesh();           // the world moved — the CPU bot's pathing surface must follow
             InvalidatePalette();      // _lastTod would otherwise early-out and leave the new moon unlit
             SetTimeOfDay(_appliedTod, _appliedNight);
+        }
+
+        /// <summary>
+        /// Destroy the materials this world created, before the objects holding them are destroyed.
+        ///
+        /// `new Material(...)` allocates a native object that Unity does NOT collect when the last
+        /// renderer referencing it goes away — it has to be destroyed by hand. Every builder here
+        /// makes fresh materials on every reseed, so each match was quietly leaking a full set. That
+        /// was survivable while there were a couple of dozen; the per-chunk forest tinting turns it
+        /// into roughly two hundred per rebuild, which is exactly the kind of slow bleed that shows
+        /// up as "the fourth match runs worse than the first" and gets blamed on something else.
+        ///
+        /// Sweeping the renderers is deliberate over tracking every creation site: materials are
+        /// assigned in a dozen builders and several go straight onto a renderer, so a registry would
+        /// be one forgotten call away from being wrong. What is on the object graph IS the truth.
+        /// The skybox is excluded — it outlives the world and is rebuilt on its own terms.
+        /// </summary>
+        private void ReleaseWorldMaterials()
+        {
+            var seen = new HashSet<Material>();
+            foreach (var r in GetComponentsInChildren<Renderer>(true))
+            {
+                if (r == null) continue;
+                foreach (var m in r.sharedMaterials)
+                    if (m != null && m != _skyMat) seen.Add(m);
+            }
+            foreach (var m in seen) Destroy(m);
         }
 
         // --- Dev cost levers (the F3 overlay toggles these live) ------------------
@@ -235,10 +274,21 @@ namespace Metoh.Game
 
         private void BuildTerrain()
         {
-            int segs = 120; // render resolution (collision samples the analytic height, not this mesh)
+            // Render resolution (collision samples the analytic height, not this mesh, so this is
+            // purely a look/cost trade and can move freely). Raised from 120: at 120 a quad spans
+            // ~6.7 m, which is too coarse to hold a ridgeline — every crest came out as a soft blob
+            // and the horizon silhouette was visibly faceted. 192 puts a vertex every ~4.2 m for
+            // ~37k vertices in ONE mesh, which is nothing to draw; the real cost is the one-off
+            // GetHeight sweep at build/reseed time, and that is analytic and cheap.
+            int segs = 192;
             float size = (float)Sim.World.Size;
             float half = size / 2f;
             var verts = new Vector3[(segs + 1) * (segs + 1)];
+            // World-space UVs in METRES, so the snow material's tiling is set in real units rather
+            // than in "fractions of an 800 m plane". At 120 segments a quad is ~6.7 m across, which is
+            // far too coarse to carry surface detail in geometry — the normal map is doing all of that
+            // work, and it can only do it if the UVs are dense and uniform.
+            var uvs = new Vector2[(segs + 1) * (segs + 1)];
             for (int zi = 0; zi <= segs; zi++)
             {
                 for (int xi = 0; xi <= segs; xi++)
@@ -246,6 +296,7 @@ namespace Metoh.Game
                     float x = -half + size * xi / segs;
                     float z = -half + size * zi / segs;
                     verts[zi * (segs + 1) + xi] = new Vector3(x, (float)World.GetHeight(x, z), z);
+                    uvs[zi * (segs + 1) + xi] = new Vector2(x, z);
                 }
             }
             var tris = new int[segs * segs * 6];
@@ -264,10 +315,28 @@ namespace Metoh.Game
             }
             var mesh = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
             mesh.vertices = verts;
+            mesh.uv = uvs;
             mesh.triangles = tris;
             mesh.RecalculateNormals();
+            mesh.RecalculateTangents();
             mesh.RecalculateBounds();
-            NewMeshGo("Terrain", mesh, MeshUtil.Lit(GroundCol));
+            NewMeshGo("Terrain", mesh, SnowMaterial());
+        }
+
+        /// <summary>
+        /// The snowpack surface. Two normal layers at different scales: a base grain that survives to
+        /// mid distance, and a much finer detail layer that keeps structure underfoot after the base
+        /// has tiled out. Smoothness is deliberately high for a "rough" material — packed snow is
+        /// mildly specular, and that specular lobe broken up by fine normals is exactly what produces
+        /// the glitter that says snow rather than white paint.
+        /// </summary>
+        private static Material SnowMaterial()
+        {
+            return MeshUtil.Surface(
+                GroundCol, smoothness: 0.42f,
+                normal: ProcTex.SnowNormal, normalScale: 0.75f,
+                tiling: 1f / 6f,                       // one grain repeat every ~6 m
+                detailNormal: ProcTex.SnowDetailNormal, detailTiling: 1f / 0.7f);
         }
 
         // --- Forest --------------------------------------------------------------
@@ -336,14 +405,21 @@ namespace Metoh.Game
                 treeIndex++;
             }
 
-            var trunkMat = MeshUtil.Lit(TrunkCol);
-            var darkMat = MeshUtil.Lit(CrownDark);
-            var lightMat = MeshUtil.Lit(CrownLight);
+            // A material PER CHUNK, each with its colour nudged a little off the palette.
+            //
+            // After flat shading, the loudest "this is a game" tell is uniformity: 2,400 trunks in
+            // exactly one brown reads as instancing no matter how good the surface response is. Real
+            // stands of trees vary by age, aspect and how much snow they caught. This costs nothing —
+            // each chunk is already its own GameObject and its own draw, and the SRP batcher batches
+            // by shader rather than by material, so 64 tinted variants batch the same as one.
             for (int c = 0; c < cells; c++)
             {
-                NewCombinedGo($"Trunks{c}", trunkC[c], trunkMat);
-                NewCombinedGo($"CrownsDark{c}", crownDarkC[c], darkMat);
-                NewCombinedGo($"CrownsLight{c}", crownLightC[c], lightMat);
+                NewCombinedGo($"Trunks{c}", trunkC[c], MeshUtil.Surface(
+                    TintByCell(TrunkCol, c, 0.10f), 0.16f, ProcTex.BarkNormal, 0.9f, 1.5f));
+                NewCombinedGo($"CrownsDark{c}", crownDarkC[c], MeshUtil.Surface(
+                    TintByCell(CrownDark, c, 0.12f), 0.20f, ProcTex.BarkNormal, 0.45f, 2.5f));
+                NewCombinedGo($"CrownsLight{c}", crownLightC[c], MeshUtil.Surface(
+                    TintByCell(CrownLight, c, 0.08f), 0.38f, ProcTex.SnowNormal, 0.7f, 2.5f));
             }
         }
 
@@ -456,9 +532,9 @@ namespace Metoh.Game
                 else screeC[cell].Add(CI(scree, pos - Vector3.up * 0.05f, rotQ, scale));
             }
 
-            var driftMat = MeshUtil.Lit(DriftCol);
-            var screeMat = MeshUtil.Lit(ScreeCol);
-            var poleMat = MeshUtil.Lit(MeshUtil.Rgb(0x6b5b47));
+            var driftMat = MeshUtil.Surface(DriftCol, 0.44f, ProcTex.SnowNormal, 0.8f, 1.2f);
+            var screeMat = MeshUtil.Surface(ScreeCol, 0.10f, ProcTex.RockNormal, 1.0f, 1.6f);
+            var poleMat = MeshUtil.Surface(MeshUtil.Rgb(0x6b5b47), 0.14f, ProcTex.BarkNormal, 0.8f, 1.2f);
             var flagMats = new Material[FlagCols.Length];
             for (int f = 0; f < FlagCols.Length; f++) flagMats[f] = MeshUtil.Lit(MeshUtil.Rgb(FlagCols[f]));
 
@@ -501,7 +577,7 @@ namespace Metoh.Game
         /// </summary>
         private void BuildTrails()
         {
-            var mat = MeshUtil.Lit(TrailCol);
+            var mat = MeshUtil.Surface(TrailCol, 0.30f, ProcTex.SnowNormal, 0.55f, 1f / 4f);
             foreach (var path in World.Paths)
             {
                 var verts = new List<Vector3>();
@@ -538,8 +614,14 @@ namespace Metoh.Game
                 }
                 var mesh = new Mesh();
                 mesh.SetVertices(verts);
+                // World-space UVs again — a trail is a ribbon of packed snow lying on snow, so its
+                // grain has to line up with the ground it sits a few centimetres above.
+                var tuv = new Vector2[verts.Count];
+                for (int i = 0; i < verts.Count; i++) tuv[i] = new Vector2(verts[i].x, verts[i].z);
+                mesh.SetUVs(0, tuv);
                 mesh.SetTriangles(tris, 0);
                 mesh.RecalculateNormals();
+                mesh.RecalculateTangents();
                 mesh.RecalculateBounds();
                 NewMeshGo("Trail", mesh, mat);
             }
@@ -549,7 +631,7 @@ namespace Metoh.Game
 
         private void BuildLogs()
         {
-            var mat = MeshUtil.Lit(LogCol);
+            var mat = MeshUtil.Surface(LogCol, 0.14f, ProcTex.BarkNormal, 1.1f, 1.4f);
             foreach (var log in World.FallenLogs)
             {
                 float len = (float)(log.HalfLen * 2);
@@ -613,12 +695,26 @@ namespace Metoh.Game
                 }
             }
 
+            // World-space UVs in metres, matching the terrain's convention so the two surfaces agree
+            // on scale where the ice meets the shore.
+            var uvs = new Vector2[verts.Length];
+            for (int i = 0; i < verts.Length; i++) uvs[i] = new Vector2(verts[i].x, verts[i].z);
+
             var mesh = new Mesh();
             mesh.vertices = verts;
+            mesh.uv = uvs;
             mesh.triangles = tris.ToArray();
             mesh.RecalculateNormals();
+            mesh.RecalculateTangents();
             mesh.RecalculateBounds();
-            NewMeshGo("Tarn", mesh, MeshUtil.Emissive(LakeCol, MeshUtil.Rgb(0x1c4258), 0.9f));
+            // Ice is the one genuinely smooth surface out here — high smoothness so the moon and any
+            // flashlight streak across it, with pressure lines in the normal so it reads as a frozen
+            // sheet under stress rather than a pane of glass. The emissive lift survives from the old
+            // lake: it keeps the tarn findable at night, which is a gameplay job, not a look.
+            NewMeshGo("Tarn", mesh, MeshUtil.Surface(
+                LakeCol, smoothness: 0.78f,
+                normal: ProcTex.IceNormal, normalScale: 0.55f, tiling: 0.12f,
+                emission: MeshUtil.Rgb(0x1c4258), emissionIntensity: 0.9f));
             BuildPressureRidges(cx, cz, rx, rz);
         }
 
@@ -635,7 +731,7 @@ namespace Metoh.Game
         private void BuildPressureRidges(float cx, float cz, float rx, float rz)
         {
             var rand = Rng.Mulberry32(World.Seed ^ 0x1ce_c01du);
-            var mat = MeshUtil.Lit(MeshUtil.Rgb(0xbcd8e6), 0.25f);
+            var mat = MeshUtil.Surface(MeshUtil.Rgb(0xbcd8e6), 0.62f, ProcTex.IceNormal, 0.7f, 0.8f);
             int count = 4 + (int)(rand() * 3); // 4..6
             for (int i = 0; i < count; i++)
             {
@@ -700,7 +796,7 @@ namespace Metoh.Game
                 tent.transform.localRotation = Quaternion.Euler(0f, i * 24f, 0f);
                 var mf = tent.AddComponent<MeshFilter>();
                 mf.sharedMesh = MeshUtil.Cone(1.5f, 1.9f, 4); // 4 segments = a pitched A-frame
-                tent.AddComponent<MeshRenderer>().sharedMaterial = MeshUtil.Lit(MeshUtil.Rgb(0xc7563c));
+                tent.AddComponent<MeshRenderer>().sharedMaterial = MeshUtil.Surface(MeshUtil.Rgb(0xc7563c), 0.22f, ProcTex.FabricNormal, 0.7f, 3f);
             }
 
             AddBox(root, "Crate1", new Vector3(-2.4f, 0.35f, 1.9f), new Vector3(0.9f, 0.7f, 0.9f), MeshUtil.Rgb(0x6f6250));
@@ -738,7 +834,7 @@ namespace Metoh.Game
             tarp.transform.SetParent(root.transform, false);
             tarp.transform.localPosition = new Vector3(0f, 0.03f, 0f);
             tarp.AddComponent<MeshFilter>().sharedMesh = MeshUtil.EllipseDisc(1.5f, 1.2f, 14);
-            tarp.AddComponent<MeshRenderer>().sharedMaterial = MeshUtil.Lit(MeshUtil.Rgb(0x3a4650));
+            tarp.AddComponent<MeshRenderer>().sharedMaterial = MeshUtil.Surface(MeshUtil.Rgb(0x3a4650), 0.25f, ProcTex.FabricNormal, 0.6f, 2f);
 
             // The bag: a rounded body with end caps and a strap.
             var body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
@@ -748,7 +844,7 @@ namespace Metoh.Game
             body.transform.localPosition = new Vector3(0f, 0.34f, 0f);
             body.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
             body.transform.localScale = new Vector3(0.62f, 0.72f, 0.62f);
-            body.GetComponent<MeshRenderer>().sharedMaterial = MeshUtil.Lit(MeshUtil.Rgb(0xb8552f));
+            body.GetComponent<MeshRenderer>().sharedMaterial = MeshUtil.Surface(MeshUtil.Rgb(0xb8552f), 0.28f, ProcTex.FabricNormal, 0.8f, 2.5f);
 
             var strap = GameObject.CreatePrimitive(PrimitiveType.Cube);
             Object.Destroy(strap.GetComponent<UnityEngine.Collider>());
@@ -782,8 +878,8 @@ namespace Metoh.Game
             // Glacier ice, not granite: the network is now a system of crevasses cut into the
             // icefall. Only the materials and the display names change — the sim's Caves API, the
             // seeded positions and the whole fast-travel rule are untouched.
-            var rock = MeshUtil.Lit(MeshUtil.Rgb(0x8fb6c9));
-            var darkRock = MeshUtil.Lit(MeshUtil.Rgb(0x4a6a80));
+            var rock = MeshUtil.Surface(MeshUtil.Rgb(0x8fb6c9), 0.55f, ProcTex.IceNormal, 0.9f, 1.2f);
+            var darkRock = MeshUtil.Surface(MeshUtil.Rgb(0x4a6a80), 0.48f, ProcTex.IceNormal, 1.0f, 1.4f);
             // Near-black, unlit-looking interior so the opening reads as depth rather than a surface.
             var voidMat = MeshUtil.Lit(MeshUtil.Rgb(0x06121c));
 
@@ -886,7 +982,7 @@ namespace Metoh.Game
             var towerXZ = new Vector2((float)WorldData.Lookout.X, (float)WorldData.Lookout.Z);
             root.transform.position = new Vector3(towerXZ.x, baseY, towerXZ.y);
             root.transform.parent = transform;
-            var wood = MeshUtil.Lit(MeshUtil.Rgb(0x5a5148)); // grey-weathered timber
+            var wood = MeshUtil.Surface(MeshUtil.Rgb(0x5a5148), 0.12f, ProcTex.BarkNormal, 1.0f, 1.2f); // grey-weathered timber
             Mesh post = MeshUtil.TaperedCylinder(0.22f, 0.18f, 10f, 5);
             foreach (var off in new[] { new Vector2(-1.4f, -1.4f), new Vector2(1.4f, -1.4f), new Vector2(-1.4f, 1.4f), new Vector2(1.4f, 1.4f) })
             {
@@ -925,7 +1021,7 @@ namespace Metoh.Game
 
         private void BuildLadderMesh(GameObject root, float baseY, Vector2 towerXZ, Vector2 toCentre, float faceR)
         {
-            var wood = MeshUtil.Lit(MeshUtil.Rgb(0x5a3f24));
+            var wood = MeshUtil.Surface(MeshUtil.Rgb(0x5a3f24), 0.12f, ProcTex.BarkNormal, 1.0f, 1.2f);
             float topLocalY = TowerClimbH; // ladder runs from ground to the platform surface
             Vector2 side = new Vector2(-toCentre.y, toCentre.x); // perpendicular, for the two rails
             var localFace = new Vector3(toCentre.x * faceR, 0, toCentre.y * faceR); // relative to root
@@ -951,7 +1047,7 @@ namespace Metoh.Game
 
         private void BuildCamp()
         {
-            var rock = MeshUtil.Lit(MeshUtil.Rgb(0x3a3a3a));
+            var rock = MeshUtil.Surface(MeshUtil.Rgb(0x3a3a3a), 0.10f, ProcTex.RockNormal, 1.1f, 1.5f);
             for (int i = 0; i < 7; i++)
             {
                 float a = i / 7f * Mathf.PI * 2f;
@@ -1088,13 +1184,25 @@ namespace Metoh.Game
             _moon.type = LightType.Directional;
             _moon.color = MeshUtil.Rgb(0xb4c6ff);
             _moon.intensity = 0.40f; // snowpack throws moonlight back; the forest floor ate it
-            // Hard shadows: soft shadows cost real time on integrated GPUs and the forest is so
-            // fogged and dark that the difference barely reads. Revisit in the R5 art pass.
-            _moon.shadows = LightShadows.Hard;
+            // Soft shadows now, on the quality tiers that can afford them (HPQuality decides). Hard
+            // shadows were defensible over a dark fogged forest floor; over open snowpack they are
+            // the single most obvious "this is a game" tell, because a real shadow on snow has a soft
+            // penumbra and bounces light back up into itself.
+            _moon.shadows = LightShadows.Soft;
+            _moon.shadowStrength = 0.72f; // snow bounce fills shadows; a black shadow reads as a hole
+            MoonLight = _moon;
+            HPQuality.ApplyShadowQuality(); // the tier decides; a reseed must not silently reset it
 
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.ExponentialSquared;
-            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+
+            // Trilight, not Flat. Flat ambient lights every surface identically from every direction,
+            // which is precisely the look that flattens geometry into cardboard. Snow is lit almost
+            // entirely by the sky dome and by bounce off itself, so a sky/equator/ground gradient —
+            // cold from above, brighter from below than you would expect — is both cheaper than any
+            // GI solution and much closer to how the real thing is lit. The three colours are driven
+            // per-phase in SetTimeOfDay.
+            RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
 
             BuildSky();
         }
@@ -1203,12 +1311,24 @@ namespace Metoh.Game
             // scales that whole shape; altitude dims it modestly when it rides low. No term here can
             // reach zero — the moon is always up, so it is always lighting something.
             float lit = moon * (moonCfg.Light / MoonNights[0].Light) * Mathf.Lerp(MoonLowDim, 1f, moonAlt);
-            RenderSettings.ambientLight = ambient;
+            // Trilight ambient. The GROUND term is the one that matters here and it is deliberately
+            // the brightest of the three: standing on snowpack under a moon, a startling amount of
+            // the light reaching your face has bounced UP off the ground. Lighting a snow scene with
+            // sky-only ambient is what makes it look like grey plastic — the undersides of every
+            // branch, ledge and figure go dead, which never happens over snow. The ground colour is
+            // tinted toward the snowpack albedo so the bounce carries the right hue.
+            RenderSettings.ambientLight = ambient;                       // sky term (Trilight reads this)
+            RenderSettings.ambientSkyColor = ambient;
+            RenderSettings.ambientEquatorColor = ambient * 1.15f;
+            RenderSettings.ambientGroundColor = Color.Lerp(ambient, GroundCol, 0.45f) * AmbientBounce;
+
             if (_moon != null)
             {
                 _moon.intensity = lit;
                 _moon.transform.rotation = Quaternion.LookRotation(-_moonDir, Vector3.up);
-                _moon.shadows = LightShadows.Hard;
+                // Shadow quality is HPQuality's call (it knows the tier), not this per-frame path's.
+                // This line used to hard-code LightShadows.Hard and silently undo anything set at
+                // build time — a setting that is re-applied every frame can never be configured.
             }
 
             if (_skyMat != null)
@@ -1260,6 +1380,23 @@ namespace Metoh.Game
             return new CombineInstance { mesh = mesh, transform = Matrix4x4.TRS(pos, rot, scale) };
         }
 
+        /// <summary>
+        /// Nudge a palette colour deterministically per forest chunk, so neighbouring stands differ.
+        ///
+        /// Uses its own hash of the cell index rather than any RNG stream — this must never touch the
+        /// tree/collider lockstep (UNITY_PORT_NOTES §3c), and being a pure function of the index means
+        /// it is stable across a rebuild without needing a stream at all. Value-only: hue is left
+        /// alone so the palette still reads as one deliberate scheme rather than as noise.
+        /// </summary>
+        private static Color TintByCell(Color c, int cell, float amount)
+        {
+            uint h = (uint)cell * 2654435761u;
+            h ^= h >> 15;
+            float t = (h & 0xffff) / 65535f * 2f - 1f; // -1..1
+            float k = 1f + t * amount;
+            return new Color(c.r * k, c.g * k, c.b * k, c.a);
+        }
+
         private GameObject NewCombinedGo(string name, List<CombineInstance> combines, Material mat)
         {
             // Chunking leaves empty buckets (a grid cell that is all lake, or all camp clearing).
@@ -1290,8 +1427,12 @@ namespace Metoh.Game
             go.transform.localPosition = localPos;
             go.transform.localRotation = Quaternion.identity;
             go.transform.localScale = size;
-            go.GetComponent<MeshRenderer>().sharedMaterial =
-                emissive.HasValue ? MeshUtil.Emissive(color, emissive.Value, glow) : MeshUtil.Lit(color);
+            // Everything AddBox builds is a made object — hut planks, crates, the tower platform and
+            // rails — so they all get sawn-timber grain. A lit window is the exception: emission is
+            // the whole point of it and surface detail would only fight the glow.
+            go.GetComponent<MeshRenderer>().sharedMaterial = emissive.HasValue
+                ? MeshUtil.Emissive(color, emissive.Value, glow)
+                : MeshUtil.Surface(color, 0.13f, ProcTex.BarkNormal, 0.85f, 1.4f);
         }
     }
 }
