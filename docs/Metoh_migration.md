@@ -1,0 +1,257 @@
+# Metoh migration — Bigfoot/PNW → Yeti/Himalayas
+
+**Audience: this plan is written as explicit instructions for the implementing model (Opus 5). Follow it literally. Where it says "run Gate X", run it and do not proceed on red.**
+
+## Context
+
+The game is too similar to the Steam game *BIGFOOT* (app 509980). The owner decided to re-theme the whole project to a **Yeti in the Himalayas** and rebrand it **"Metoh"** (from *metoh-kangmi*, the folklore term mistranslated as "Abominable Snowman"). Branch: `yeti_port`.
+
+Owner-approved decisions (do NOT re-litigate):
+1. **Full rename** — all code identifiers, wire strings, file names.
+2. **Full rebrand to Metoh** — namespaces, directories, package names, product name, menu items.
+3. **Visual re-theme in Unity ONLY.** The web client keeps its forest visuals (identifiers renamed only); web visuals are abandoned.
+4. **One new mechanic ships with the migration: Deep snow & trails** (spec in Commit 5).
+5. New title: **Metoh**. Room class: **MountainRoom**, room id `"mountain"`, scene `Mountain.unity`.
+6. **`mothman_port` is abandoned.** That branch (6 commits, ~7k lines: an Appalachia/Point
+   Pleasant reskin, `MothmanBot.cs`, a wings/gaze creature kit) was an earlier attempt at this
+   same BIGFOOT-overlap problem. Nothing is salvaged from it; it stays in git and on origin as a
+   record. The plan below was drafted without knowledge of it — hence the corrections in Risks.
+
+## The three gates (run exactly as written)
+
+- **Gate A (client):** `cd client && npx tsc --noEmit && npx vite build`
+- **Gate B (server):** `cd server && npx tsc --noEmit && npm test`
+- **Gate C (parity):** regenerate the golden fixture whenever `shared/sim` **output or key names** change, then run the harness:
+  ```bash
+  ./server/node_modules/.bin/tsx csharp/parity/gen-golden.ts   # rewrites golden.json
+  dotnet run --project csharp/Parity                           # must end "PARITY OK"
+  ```
+  Note: `Parity.csproj` copies `golden.json` into `bin/` — always regen **then** run. Parity is NOT in CI today; you are the gate.
+  The `ts-node` line this doc originally carried is broken on this machine (`npx -p ts-node -p typescript`
+  resolves a ts-node/typescript pair that throws `Cannot read properties of undefined (reading 'fileExists')`).
+  `tsx` ships in `server/node_modules` and runs the generator as-is — `gen-golden.ts` is CommonJS
+  (`__dirname`) and there is no root `package.json`, so tsx treats it correctly with no flags.
+  Regenerating also rewrites the file with LF endings; with `core.autocrlf` on that shows as a
+  whole-file diff. Check `git diff --ignore-all-space` before assuming values moved.
+
+Run Gates A+B after **every** commit. Run Gate C after commits 1, 2, and 5.
+
+Before touching Unity code, read `docs/UNITY_PORT_NOTES.md` — especially §3/§3c (never disturb the tree/collider RNG streams) and §4 (a mechanic isn't ported until its feedback is).
+
+---
+
+## Commit 0 — land the pending bug fixes (unrelated, already in working tree)
+
+The three uncommitted modifications (`HPAudio.cs` audio-pool self-heal, `BigfootBot.cs` NavMeshPath-in-Awake fix, `WorldBuilder.cs` comment) are bug fixes unrelated to the re-theme. Commit them **as-is, first, under the old names** so the rename commit stays purely mechanical. Suggested message: `Fix HPAudio pool destruction on world rebuild + BigfootBot ctor crash`.
+
+## Commit 1 — mechanical rename: bigfoot → yeti (one atomic commit)
+
+Everything in this table lands in ONE commit so no gate ever sees a half-renamed wire contract. Nothing persists across versions and all peers rebuild together, so breaking wire renames are safe done atomically.
+
+| Old | New | Where / notes |
+|---|---|---|
+| role string `"bigfoot"` | `"yeti"` | ~30 comparison sites: `server/src/rooms/ForestRoom.ts`; `client/src/core/{Game,Network,Lobby}.ts`; `client/src/entities/{LocalPlayer,RemotePlayer}.ts`; `client/src/ui/{HUD,MapView,Briefing}.ts`; `client/src/config.ts`; `client/src/main.ts`; `<option value="bigfoot">` in `client/index.html` |
+| winner string `"bigfoot"` | `"yeti"` | `GameState.winner` comment, `ForestRoom.ts` win logic, client end screen |
+| schema field `bigfootSpeedMul` | `yetiSpeedMul` | **Replicated Colyseus schema field = wire change.** Rename in `server/src/rooms/schema/GameState.ts` + writer in `ForestRoom.ts` + every client reader (`Network.ts` `onEscalation`, `LocalPlayer` plumbing) in the same commit. Client state is typed `any` — **tsc will NOT catch stragglers; grep is the safety net.** |
+| `PLAYER.bigfootSpeedMul` | `PLAYER.yetiSpeedMul` | `shared/sim/constants.ts` + mirror `Player.BigfootSpeedMul → YetiSpeedMul` in `csharp/HollowPines.Sim/Constants.cs` |
+| `PLAYER.lakeBigfootFactor` | `PLAYER.lakeYetiFactor` | same file pair + `movement.ts` / `Movement.cs` |
+| `isBigfoot` (sim state field) | `isYeti` | `shared/sim/movement.ts`, `collision.ts`, `client/src/entities/LocalPlayer.ts`; C# `PlayerSimState.IsBigfoot → IsYeti` (`Types.cs`, `Movement.cs`); Unity `HPPlayer.IsBigfoot → IsYeti` (~59 uses) |
+| `HPPlayer.RoleBigfoot` | `RoleYeti` | **byte value 1 unchanged — rename the const name only** |
+| `GameManager.WinnerBigfoot` | `WinnerYeti` | **byte value 2 unchanged** |
+| `HPPlayer.WantsBigfoot` (SyncVar) | `WantsYeti` | FishNet keys SyncVars by codegen order, not name — safe because all peers rebuild together |
+| `BigfootBot` / `BigfootBot.cs` | `YetiBot` / `YetiBot.cs` | `git mv`; also `SpawnBigfootBot → SpawnYetiBot` and references in `GameManager.cs` |
+| `bigfoots`, `bigfootSid`, locals | `yetis`, `yetiSid`, `yeti` | `ForestRoom.ts`, `GameManager.cs` |
+| `bigfootTrajectory` golden key | `yetiTrajectory` | `csharp/parity/gen-golden.ts` + `Program.cs` (`BigfootTrajectory()` method, `bigfoot[i].*` labels) → **regen golden.json** (values identical, keys change) |
+| misc | | `getBigfootPosition`, `computeBigfootInView`, `_bigfootVision`, `SetBigfootVision`, `bigfootLeft`, `hitBigfoot`, `BigfootTrajectory`, `BigfootPickHint`, `BigfootLine`, `DrawBigfoot`, `_wantsBigfoot`, test names in `server/test/sim.movement.test.ts`, the `IsSpecialtyId("bigfoot")` probe string in `Program.cs` |
+| comments naming Bigfoot in **code** files | Yeti | sweep with grep; leave `docs/` for Commit 6 |
+
+Do **NOT** rename the `HP*` class prefix (HPPlayer, HPAudio, HPHud…) — it's a generic prefix tied to prefab names/FishNet hashes; renaming buys nothing.
+
+Verify: `grep -ri bigfoot --exclude-dir=node_modules --exclude-dir=bin --exclude-dir=obj --exclude-dir=docs .` → 0 hits (package-lock excluded/regenerated). Gates A, B, C (regen golden).
+
+## Commit 2 — rebrand to Metoh (namespaces, dirs, room, scene, packaging)
+
+| Old | New |
+|---|---|
+| namespaces `HollowPines.{Sim,Game,EditorTools,Parity}` | `Metoh.{Sim,Game,EditorTools,Parity}` — includes every `using HollowPines.Sim` in Unity scripts and `Parity/Program.cs` |
+| dir `csharp/HollowPines.Sim/` | `csharp/Metoh.Sim/` (`git mv`; fix the compile-include glob in `csharp/Parity/Parity.csproj` and the file map in `csharp/README.md`) |
+| dir `unity/Assets/HollowPines/` | `unity/Assets/Metoh/` (`git mv`) |
+| `GameSceneSetup.ScenePath` `"Assets/Scenes/Forest.unity"` | `"Assets/Scenes/Mountain.unity"` |
+| `PrefabDir` `"Assets/HollowPines/Prefabs"` | `"Assets/Metoh/Prefabs"` |
+| MenuItems `"Hollow Pines/…"` | `"Metoh/Set Up Game Scene (Mountain)"`, `"Metoh/Build Windows (Game)"` |
+| `PlayerSettings.productName` `"Hollow Pines"` | `"Metoh"`; `BuildPath` → `Build/Windows/Metoh.exe` |
+| shader name `"HollowPines/NightSky"` | `"Metoh/NightSky"` — first line of `NightSky.shader` AND the `Shader.Find` in `WorldBuilder.BuildSky` + its warning string |
+| class/file `ForestRoom` / `ForestRoom.ts` | `MountainRoom` / `MountainRoom.ts` (`git mv`) |
+| room id `define("forest", …)` | `define("mountain", MountainRoom)` in `server/src/index.ts` + `joinOrCreate("forest")` in `client/src/core/Network.ts` and `Lobby.ts` |
+| package names `hollow-pines-client` / `hollow-pines-server` | `metoh-client` / `metoh-server` — then **run `npm install` in both `client/` and `server/` to regenerate lockfiles** (the name appears twice per lockfile; don't hand-edit) |
+| `.cursor/rules/hollow-pines.mdc` | `git mv` → `.cursor/rules/metoh.mdc`; update its globs (they reference the old paths) and prose |
+| `client/index.html` `<title>` | `Metoh`; `"FOREST MAP"` → `"MOUNTAIN MAP"` (full copy pass is Commit 6) |
+| `TitleMenu.cs` `"HOLLOW PINES"` + hints | `"METOH"` (Bigfoot text in hints already fixed in Commit 1) |
+| `unity/README.md`, banner comments, `GameSceneSetup` log strings, `HPAudio.cs` header | quick brand pass now; full rewrite in Commit 6 |
+
+Gates A, B, C (namespace-only — **no golden regen needed**, values and keys unchanged).
+
+## Commit 3 — Unity visual re-theme (`unity/Assets/Metoh/Scripts/Game/WorldBuilder.cs`)
+
+**Hard rule (UNITY_PORT_NOTES §3c): never touch tree/collider RNG streams or any shared-sim value.** Only colors, mesh choices, and material selection — plus the undergrowth pass, which owns its private stream (`seed ^ 0x5eedb115`) and may be freely retuned.
+
+Palette constants (lines ~50–59) — suggested values, tune by eye:
+
+| Constant | Old | New |
+|---|---|---|
+| `GroundCol` | `0x2e4023` | `0xc9d6e2` moonlit snowpack |
+| `TrunkCol` | `0x4a3828` | `0x3b3129` |
+| `CrownDark` | `0x3a6028` | `0x2c4437` blue-green conifer |
+| `CrownLight` | `0x4a7835` | `0x8fa3ad` snow-laden bough |
+| `RockCol` | `0x585860` | `0x6b7078` granite |
+| `LogCol` | `0x5a4030` | `0x4a3c30` |
+| `LakeCol` | `0x2a5a6a` | `0x9fc4d8` ice sheet (inner emissive `0x0a2a3a` → `0x1c4258`) |
+| `FernCol` | `0x35521f` | repurpose as `DriftCol 0xdde7ee` |
+| `BushCol` | `0x2b4a26` | repurpose as `ScreeCol 0x565c66` |
+| `TrailCol` | `0x51452f` | `0xaebac4` packed snow — must stay visually distinct from `GroundCol`; it becomes a gameplay surface in Commit 5 |
+
+Builder changes:
+- **`BuildForest`** — snowline: crown material currently alternates by `treeIndex % 2` (NOT an RNG draw, so safe to change). New rule: `World.GetHeight(x,z)` above ~60% of `HillHeight` → all `CrownLight` (snow-caked) and skip the third cone so high trees read stunted; below → mix as today. Placement/scale/rotation draws untouched.
+- **`BuildUndergrowth`** — keep the same draw count and order (`x, z, kind, s, rot`): replace fern/bush meshes with **snow drifts** (squashed sphere, `DriftCol`), **scree rocks** (`ScreeCol`), and for a narrow `kind` band (~3%) a **prayer-flag pole** (thin cylinder + 4–5 tiny colored cubes: `0xc0392b/0xf1c40f/0x2980b9/0x27ae60/0xecf0f1`) — a navigation landmark in a white palette. Bias by `GetHeight`: high → scree, valley → drifts (pure `if`, no extra draws).
+- **`BuildLake`** — frozen tarn: keep the terrain-conforming sheet and the `LakeDepth` slow (now read as slick ice/breaking crust). Brighter emissive ice material; optional 4–6 pressure-ridge boxes from a private RNG stream (render-only).
+- **`BuildRv` → `BuildBasecamp`** — expedition basecamp on the **same seeded transform** (`WorldData.Rv` — keep the sim field name; the collider box is parity-locked, so the hut body must fill roughly the RV's 6.6×2.5×2.3 footprint): plank hut (`0x8a7a62`) + canvas A-frame tents (`0xc7563c` expedition orange) + crates. **Keep the warm lit window + porch lamp** (the safe-place beacon). `DuffelPosition()` derivation unchanged.
+- **`BuildDuffel`** — recolor to expedition kit.
+- **`BuildCaves`** — ice crevasses by recolor: rock → `0x8fb6c9`, dark rock → `0x4a6a80`, void → `0x06121c`, glow `0x4a6ab0` → `0x7fc0e8`. Display names `"Cave"` → `"Crevasse"`; sim `Caves` API untouched.
+- **`BuildTower`** — stays; grey-weathered timber `0x5a5148`, cooler lamp.
+- **`BuildCamp`** — campfire stays (expedition fire ring).
+- **`BuildLighting` / `SkyKeys` (~line 1016)** — colder, slightly brighter (snow bounces moonlight): shift keys blue (dusk `0x3a3550→0x354060`, deep night `0x0a0e1c→0x0a1220`), Ambient +~20%, FogDensity −~10%, Stars up slightly at dusk/dawn. `NightSky.shader` needs **no edit** — driven from these keys.
+- **`ClueMarker.cs`** — footprint → blue-shadowed snow print; branch clue → cracked-ice slab. `TrailMark` orange flag stays (pops on snow).
+- **`MapView.cs`** — baked ground/lake/trail colors must match the new palette.
+
+Gates A/B unaffected (Unity-only C#); smoke-compile per UNITY_PORT_NOTES §8 if the scratch csproj rig exists.
+
+## Commit 4 — audio re-theme (`unity/Assets/Metoh/Scripts/Game/HPAudio.cs`)
+
+- **`BranchSnap` → `IceCrack`** (`"ice_crack"`): keep the click transient, add a short descending ring (2 detuned sine partials ~800→300 Hz over ~0.25 s under the noise burst). Update both call sites (`GameManager` clue drop, `HPPlayer`).
+- **`CreekBed` → tarn bed**: keep the positional source anchored at the lake (its guide-you-there function survives). Loop = low wind-gust noise + sparse **ice groans** (slow 40–70 Hz sine sweeps, 2–3 harmonics, 2–4 per loop at randomized offsets, long attack/decay). Rename `_creek → _tarn`, GameObject `"CreekBed" → "TarnBed"`.
+- **Footsteps → snow crunch**: shorter bodies (soft 0.16→0.12 s, heavy 0.24→0.20 s), higher noise cutoff, amplitude-modulate the noise at ~40 Hz; heavy (Yeti) keeps the low thud.
+- Optional tie-in with Commit 5: `inDeepSnow` flag into `PlayFootstep` for a duller off-trail crunch (pure presentation).
+- Web `client/src/core/AudioEngine.ts` stays forest-themed (decision 3).
+
+## Commit 5 — signature mechanic: Deep snow & trails
+
+**Design:** snow records movement both ways — searchers track the Yeti's existing clue trail, and
+**searchers now leave snow prints only the Yeti can see** (feeds its senses overlay) — while the
+deep drifts that actually *impede* you collect in the valley floors: **searchers wade them, the
+Yeti does not**. Zones are **derived, not replicated**, from `generatePaths`/`pathDepth`,
+`lakeDepth` and `getHeight`, all already seed-deterministic.
+
+**Owner decision — the print zone and the slow zone are SEPARATE rules.** The original spec
+below applied `deepSnowFactor` everywhere off-trail. Measured against the real world
+(400×400 sample grid, `WORLD.seed`), the camp clearing is 0.16% of the map, the tarn 1.32% and
+the trail corridors 1.96% — so "everywhere off-trail" is **96.6%** of the map. That is not a
+routing choice, it is a flat searcher nerf: it would move the Yeti's speed edge from 1.22× to
+1.56× before per-night escalation. So:
+
+- **Prints** drop everywhere off-trail (96.6% coverage) — the Yeti's tracking signal stays dense.
+- **The slow** applies only in low-lying drift basins, ~⅓ of the map, which a searcher can read
+  and route around. Terrain runs −10.2 … +7.8 on this seed, so the threshold is a height cut.
+
+### 5a. Shared sim (edit the TS/C# pair identically — parity-locked)
+
+`shared/sim/constants.ts` + `csharp/Metoh.Sim/Constants.cs`:
+```ts
+deepSnowFactor: 0.78,  // searcher speed multiplier at full drift depth (Yeti unaffected)
+driftHeight: -2.0,     // at/above this terrain height the wind scours the crust bare — no slow
+driftDepth: 1.5,       // metres below driftHeight at which the drift reaches full depth
+trailPacked: 0.35,     // fraction of a corridor's half-width that feathers; the core is fully packed
+```
+
+Two exported predicates (mirror as `Movement.DeepSnowDepth` / `Movement.LeavesSnowPrints` in C#):
+
+```ts
+/** 0 = wind-scoured crust .. 1 = full knee-deep drift. Trails pack it flat; camp and tarn are exempt. */
+export function deepSnowDepth(world: World, x: number, z: number): number;
+/** Does a searcher standing here press a track into unbroken snow? True everywhere off-trail. */
+export function leavesSnowPrints(world: World, x: number, z: number): boolean;
+```
+
+`deepSnowDepth` = basin depth × (1 − packed), where basin depth ramps over `driftDepth` below
+`driftHeight`, and `packed` ramps to 1 across the outer `trailPacked` of the corridor. Feathering
+the corridor rather than the plan's `lerp(deepSnowFactor, 1, pathDepth)` matters: `pathDepth`
+decays to 0 at the corridor *edge*, so that form gave full speed only on the exact centreline and
+made a trail feel slow everywhere but its middle. `leavesSnowPrints` is the same exclusions
+without the height cut, so the slow zone is a strict subset of the print zone.
+
+In `stepPlayer`, immediately after the lake-slow block, before displacement:
+```ts
+if (!st.isYeti && st.grounded && lakeDep === 0) {
+  const drift = deepSnowDepth(world, st.x, st.z);
+  if (drift > 0) speed *= lerp(1, PLAYER.deepSnowFactor, drift);
+}
+```
+(Cost is trivial: `pathDepth` = 4 paths × ≤41 points per step at 20 Hz × 6 players.)
+
+**Parity:** regen `golden.json` (the hunter trajectory starts at the origin, which is inside the camp clearing, so it may not move — check rather than assume), add a vitest case in `server/test/sim.movement.test.ts` ("a searcher in a drift basin covers less ground than one on scoured crust; the Yeti covers the same in both") and mirror it as `DeepSnowTests(seed)` in `csharp/Parity/Program.cs`. Gate C.
+
+**How the slow applies:** web — automatic on both sides (client prediction + `MountainRoom.applyMove` re-validation; the speed-gate token bucket only ever over-allows a slowed player, so anti-cheat needs no change). Unity — automatic via `HPPlayer.StepSim`/`ServerBotDrive` running the same `Movement.StepPlayer`; movement is interim client-authoritative, so a hacked client could skip the slow — same trust level as all Unity movement today; note this in UNITY_PORT_NOTES §0.
+
+### 5b. Searcher snow prints — reuse the Clue pipeline
+
+**Server/web (`server/src/rooms/MountainRoom.ts`, `GameState.ts`, client):**
+- Tuning consts: `SNOWPRINT_STRIDE = 2.4` (m), `SNOWPRINT_LIFETIME = 35` (s, NOT escalated), `MAX_SNOWPRINTS = 120`.
+- New clue ctype `"snowprint"` — reuses the existing `Clue` schema class, no schema change.
+- In `update()`: `dropSnowPrints(searchers)` — per active searcher keep a last-print position (like the Yeti's clue stride tracker); when horizontal distance ≥ stride AND `leavesSnowPrints(world, x, z)`, add a snowprint. **Cap/expire snowprints in their own accounting so they can never evict the Yeti's clue trail** (the hunters' win-condition resource; `MAX_CLUES` untouched).
+- Visibility: replicated to all (Colyseus state is shared) but **render-filtered** — `client/src/world/ClueField.ts` and `MapView.ts` draw `"snowprint"` only when the local role is `"yeti"`. This is the one web-client change this mechanic ships with.
+
+**Unity (`GameManager.cs`, `ClueMarker.cs`, `MapView.cs`):**
+- `ClueMarker`: `public const byte TypeSnowPrint = 3`. Visual: two small flattened dark-blue ellipse discs (boot pair), no glow.
+- `GameManager` host tick: `DropSnowPrints()` — same rule via `Movement.LeavesSnowPrints(WorldBuilder.World, x, z)` reading each searcher's replicated transform (no new RPC). Spawn `_cluePrefab` with `TypeSnowPrint` into a **separate `_snowPrints` list** with its own 35 s lifetime and FIFO cap 120 — being outside `_clues` automatically excludes prints from collect/cast/hair/duffel logic.
+- Visibility: `ClueMarker.OnStartClient` disables the print's renderers unless the local player `IsYeti`; the senses overlay (`V`) adds prints to its glow pass (same emissive-swap treatment as the scent trail). `MapView` draws print dots for the Yeti only.
+- `YetiBot` steering toward fresh prints = optional follow-up, not in scope.
+
+**Feedback (required per UNITY_PORT_NOTES §4):** searcher HUD shows a "DEEP SNOW" pill while `DeepSnowDepth > 0.35` — a threshold, not `> 0`, so the pill doesn't flicker across a feathered basin edge (Unity `HPHud.cs` required; web `HUD.ts` optional); off-trail footsteps duller (Commit 4 hook); one briefing-card sentence per role. Note the pill tracks the *slow*, which is the thing the searcher can act on; prints are deliberately not surfaced to them.
+
+Gates A, B (new vitest case), C (regen golden + mirrored test).
+
+## Commit 6 — docs + copy rewrite
+
+- `docs/STORY.md` — Himalayan rewrite: a high valley near a glacial tarn; metoh-kangmi folklore; keep the five characters/specialties, re-ground them as an expedition.
+- `docs/GAME_DESIGN.md` — Yeti terminology; add the Deep snow & trails section (zone rule, `deepSnowFactor`, print stride/lifetime/visibility); lake wading → ice/slush.
+- `docs/CHARACTER_FUNC_DEV.md` — terminology pass (plaster casts → snow casts).
+- `docs/ROADMAP.md` — touch-ups; note parity-regen events.
+- `docs/BIGFOOT_DEPTH.md` — **delete** (its premise is the BIGFOOT-overlap decision this migration resolves); port any still-relevant depth ideas into GAME_DESIGN.md first.
+- `docs/UNITY_PORT_NOTES.md` — sync paths in §8 (**live project is `C:\Users\amedi\Mothman_port`** — doc is stale), three-trees list (`unity/Assets/Metoh/{Scripts,Shaders}`, `csharp/Metoh.Sim`), `Metoh.exe` cmdline, menu names, add the client-auth deep-snow caveat to §0.
+- `README.md`, `CLAUDE.md` — full rewrite (orientation, message contract with `yetiSpeedMul` + `"snowprint"`, room `"mountain"`, run instructions).
+- `client/index.html` + `ui/Briefing.ts` — copy strings.
+- `docs/July19Work.md` — **leave as-is** (explicit historical record); it's the one allowed grep hit.
+
+## Commit 7 (optional) — add a `parity` CI job to `.github/workflows/ci.yml` (`actions/setup-dotnet@v4`, .NET 8, `dotnet run --project csharp/Parity`). First confirm `csharp/Parity/bin|obj` are untracked.
+
+---
+
+## Risks / gotchas (read before starting)
+
+1. **Owner must re-sync the live Unity project after Commit 2 — into a NEW folder.** The repo has
+   no `.meta`/`Library`; the playable copy is a SEPARATE tree at `C:\Users\amedi\Mothman_port`.
+   **Correction to the original plan:** that tree is not the Bigfoot build this doc assumed. It is
+   the **Mothman** build — `MothmanBot.cs`, `SignText.cs`, `Screech`/`Gaze` cues, the Point Pleasant
+   palette, and no `BigfootBot.cs` at all. The plan's original instruction ("delete the old
+   `Assets/HollowPines/` and copy the new trees over") would therefore overwrite the abandoned
+   Mothman build in place. Instead: **set up a fresh `C:\Users\amedi\Metoh_port`** and leave
+   `Mothman_port` untouched as a working record. Steps: create the new Unity project, copy the
+   three trees in, run **Metoh → Set Up Game Scene (Mountain)** (scene/prefabs/SceneIds/
+   AssetPathHashes all regenerate together — that's why the PrefabDir change is safe), rebuild
+   `Metoh.exe`. Old builds can never talk to new ones. **Give the owner click-by-click steps when
+   reaching that point** (they're new to Unity).
+2. **`yetiSpeedMul` is a breaking Colyseus wire change** — client+server deploy together (fine, nothing persists), but client state is `any`-typed: grep, not tsc, catches missed readers.
+3. **FishNet SyncVar renames** (`WantsYeti`) are safe only across a synchronized rebuild — never mix old/new builds.
+4. **Golden regen discipline:** regen in Commits 1 and 5 only, then immediately `dotnet run`.
+5. **Never disturb tree/collider RNG lockstep** (§3c) — Commit 3 changes must be material/mesh-level or in the undergrowth's private stream; the height-based crown rule uses no RNG draw, which is why it's legal.
+6. **Snowprints must live in their own list/cap** on both server implementations so they can't evict the Yeti trail.
+7. Trail coupling raises the stakes on any future "bigger map" work: paths stopping short would strand players in permanent deep snow.
+8. No case-only path renames on Windows (none are planned; keep it that way).
+
+## Verification checklist
+
+1. Gates A+B green after every commit; Gate C ends `PARITY OK` after Commits 1, 2, 5.
+2. `grep -ri "bigfoot\|hollowpines\|hollow.pines" --exclude-dir=node_modules --exclude-dir=bin --exclude-dir=obj --exclude-dir=dist --exclude-dir=.git .` → zero hits outside `docs/July19Work.md` and this file. `dist/` and `.git` must be excluded too: `client/dist/` exists locally as an untracked build artifact and currently holds stale Mothman-era bundles, and `.git` holds old commit messages — all three would otherwise show as false hits.
+3. Web smoke (throwaway `client/_smoke.mjs`, per CLAUDE.md pattern): yeti + searcher join; roar/grab/film; winner `"yeti"`; off-trail searcher measurably slower; snowprint clues appear in state.
+4. Unity solo (owner play-test): snow world with legible packed trails, prayer flags/basecamp/crevasses, "DEEP SNOW" pill + slow off-trail, ice-crack + tarn-groan audio, title "METOH", `Metoh.exe`.
+5. Unity two-instance: snow prints appear behind the searcher, visible only in the Yeti instance (+ glow under `V`); Yeti unaffected by deep snow; grab/dazzle/film/revive intact.
+6. New vitest deep-snow case + `DeepSnowTests` in `Program.cs` both green.
