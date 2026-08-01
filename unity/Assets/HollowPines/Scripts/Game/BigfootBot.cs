@@ -60,7 +60,12 @@ namespace HollowPines.Game
 
         private HPPlayer _self;
         private float _dbgAt; // throttle for the [botAI] guard trace
-        private readonly NavMeshPath _path = new NavMeshPath();
+        // MUST be built in Awake, never as a field initializer: NavMeshPath's constructor calls
+        // InitializeNavMeshPath, which Unity forbids from a MonoBehaviour constructor. C# compiles
+        // field initializers into the constructor in declaration order, so a throw here abandons
+        // EVERY initializer below it (_corners, _lastPos, _speed) and leaves them null — the brain
+        // then dies on the first dereference of Update(), every frame, having never thought once.
+        private NavMeshPath _path;
         private Vector3[] _corners = System.Array.Empty<Vector3>();
         private int _corner;
         private float _repathAt;
@@ -80,7 +85,11 @@ namespace HollowPines.Game
         private float _wanderUntil;
         private Vector3 _wanderGoal;
 
-        private void Awake() => _self = GetComponent<HPPlayer>();
+        private void Awake()
+        {
+            _self = GetComponent<HPPlayer>();
+            _path = new NavMeshPath(); // see the field — this cannot be an initializer
+        }
 
         private void Update()
         {

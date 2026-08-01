@@ -155,7 +155,10 @@ namespace HollowPines.Game
         {
             // Every mesh, prop and light the builders make is parented to this transform, so the
             // children ARE the world. PostFX/HPAudio are components on this GameObject rather than
-            // children, so they survive — which matters: re-synthesizing the cues would cut the beds.
+            // children, so the COMPONENTS survive — but that is not the same as their objects
+            // surviving, and reading it that way cost a session of dead audio: HPAudio used to
+            // parent its 22 sources here and this loop ate every one of them. Anything a surviving
+            // component owns must live outside this transform (HPAudio keeps a scene-root of its own).
             for (int i = transform.childCount - 1; i >= 0; i--) Destroy(transform.GetChild(i).gameObject);
             Build();
             BuildNavMesh();           // the world moved — the CPU bot's pathing surface must follow

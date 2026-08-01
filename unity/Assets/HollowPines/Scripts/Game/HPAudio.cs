@@ -49,6 +49,11 @@ namespace HollowPines.Game
         private readonly Dictionary<string, AudioClip> _clips = new Dictionary<string, AudioClip>();
         private AudioSource[] _pool;
         private int _next;
+        // Scene-root parent for every source we own. This engine lives as a COMPONENT on the
+        // WorldBuilder object, and WorldBuilder.Rebuild() destroys all of that object's CHILDREN —
+        // so parenting sources to our own transform meant a reseed silently deleted the whole pool
+        // while the component itself survived (Awake never runs again, so nothing rebuilt it).
+        private Transform _sfxRoot;
         private AudioSource _wind, _creek;
         private float _hbIntensity, _hbTimer;
         private System.Random _rng = new System.Random(12345);
@@ -64,8 +69,33 @@ namespace HollowPines.Game
         {
             Instance = this;
             BuildCues();
-            BuildPool();
-            StartAmbience();
+            EnsureSources();
+        }
+
+        private void OnDestroy()
+        {
+            // The root is scene-level, so it does not go away with us — take it down by hand.
+            if (_sfxRoot != null) Destroy(_sfxRoot.gameObject);
+        }
+
+        /// <summary>
+        /// (Re)create the source root, the pool and the ambient beds if anything is missing. Called
+        /// from Awake and before every cue, so a world rebuild that outruns us self-heals instead of
+        /// throwing MissingReferenceException on each sound for the rest of the session. Cues
+        /// themselves are NOT rebuilt — they are just clips, they survive, and re-synthesizing them
+        /// would cut the beds mid-play.
+        /// </summary>
+        private void EnsureSources()
+        {
+            if (_sfxRoot == null)
+            {
+                var root = new GameObject("HPAudio Sources");
+                _sfxRoot = root.transform;
+                _pool = null;          // whatever it held was parented to the old, now-dead root
+                _wind = _creek = null;
+            }
+            if (_pool == null || _pool.Length != PoolSize || _pool[0] == null) BuildPool();
+            if (_wind == null || _creek == null) StartAmbience();
         }
 
         // ------------------------------------------------------------------ playback
@@ -112,18 +142,24 @@ namespace HollowPines.Game
 
         private AudioSource Take(string cue)
         {
+            EnsureSources();
             if (!_clips.TryGetValue(cue, out AudioClip clip) || _pool == null) return null;
-            // Round-robin; prefer a free source but never block a cue on a full pool.
+            // Round-robin; prefer a free source but never block a cue on a full pool. Each source is
+            // null-checked: a DESTROYED element is not a null ARRAY, so the guard above cannot catch
+            // it, and a throw here unwinds the caller's whole frame — HandleAbilities dropping its
+            // PushVitals() is how a dead pool turned into a "delayed flashlight". Silence is an
+            // acceptable failure mode for audio; a half-executed gameplay frame is not.
             for (int i = 0; i < PoolSize; i++)
             {
                 var s = _pool[(_next + i) % PoolSize];
-                if (s.isPlaying) continue;
+                if (s == null || s.isPlaying) continue;
                 _next = (_next + i + 1) % PoolSize;
                 s.clip = clip;
                 return s;
             }
             var fallback = _pool[_next];
             _next = (_next + 1) % PoolSize;
+            if (fallback == null) return null;
             fallback.Stop();
             fallback.clip = clip;
             return fallback;
@@ -135,7 +171,7 @@ namespace HollowPines.Game
             for (int i = 0; i < PoolSize; i++)
             {
                 var go = new GameObject("Sfx" + i);
-                go.transform.SetParent(transform, false);
+                go.transform.SetParent(_sfxRoot, false);
                 var s = go.AddComponent<AudioSource>();
                 s.playOnAwake = false;
                 s.spatialBlend = 0f;
@@ -148,19 +184,26 @@ namespace HollowPines.Game
 
         private void StartAmbience()
         {
-            // Wind: brown noise (already smooth/lowpassed by construction), always audible, gusting.
-            var windGo = new GameObject("WindBed");
-            windGo.transform.SetParent(transform, false);
-            _wind = windGo.AddComponent<AudioSource>();
-            _wind.clip = NoiseClip("wind", 3f, brown: true);
-            _wind.loop = true;
-            _wind.spatialBlend = 0f;
-            _wind.volume = 0.12f;
-            _wind.Play();
+            // Each bed is guarded on its own: a rebuild takes both, but rebuilding a live one would
+            // leak the old source and restart its loop with an audible seam.
+            if (_wind == null)
+            {
+                // Wind: brown noise (already smooth/lowpassed by construction), always audible, gusting.
+                var windGo = new GameObject("WindBed");
+                windGo.transform.SetParent(_sfxRoot, false);
+                _wind = windGo.AddComponent<AudioSource>();
+                _wind.clip = NoiseClip("wind", 3f, brown: true);
+                _wind.loop = true;
+                _wind.spatialBlend = 0f;
+                _wind.volume = 0.12f;
+                _wind.Play();
+            }
+
+            if (_creek != null) return;
 
             // Creek: babbling water at the near edge of the lake — positional, so it guides you there.
             var creekGo = new GameObject("CreekBed");
-            creekGo.transform.SetParent(transform, false);
+            creekGo.transform.SetParent(_sfxRoot, false);
             var world = WorldBuilder.EnsureWorld();
             double lx = WorldData.Lake.X, lz = WorldData.Lake.Z;
             double dl = System.Math.Sqrt(lx * lx + lz * lz);
