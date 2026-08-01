@@ -127,11 +127,18 @@ namespace Metoh.Game
             src.Play();
         }
 
-        /// <summary>The local player's own footstep (heavy = Yeti; Wren treads quietly).</summary>
-        public void PlayFootstep(bool sprinting, bool heavy, float volumeMul = 1f)
+        /// <summary>
+        /// The local player's own footstep (heavy = Yeti; Wren treads quietly).
+        ///
+        /// <paramref name="deepSnow"/> dulls the step: unbroken drift swallows the crunch instead of
+        /// packing against it. Pure presentation, but it is the moment-to-moment confirmation that
+        /// the DEEP SNOW pill is telling the truth — you hear the ground change as you enter a basin.
+        /// </summary>
+        public void PlayFootstep(bool sprinting, bool heavy, float volumeMul = 1f, bool deepSnow = false)
         {
-            PlayOnce(heavy ? FootstepHeavy : FootstepSoft,
-                (heavy ? 0.3f : sprinting ? 0.22f : 0.15f) * volumeMul);
+            float vol = (heavy ? 0.3f : sprinting ? 0.22f : 0.15f) * volumeMul;
+            if (deepSnow) vol *= 0.72f;
+            PlayOnce(heavy ? FootstepHeavy : FootstepSoft, vol);
         }
 
         /// <summary>Hunters' dread bed: 0 = Yeti far away, 1 = right on top of you.</summary>

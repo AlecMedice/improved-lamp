@@ -30,7 +30,7 @@ import { RemotePlayer } from "../entities/RemotePlayer";
 import {
   climbSupport, nearestCaveIndex, caveEmergePoint, SPECIALTY_IDS,
   staminaMax as staminaMaxFor, staminaDrainMul as staminaDrainMulFor,
-  clueWindowMul, evidenceSightMul, hearRangeMul, reviveMul, roarDirPersistSec,
+  clueWindowMul, evidenceSightMul, hearRangeMul, reviveMul, roarDirPersistSec, deepSnowDepth,
 } from "../../../shared/sim";
 import { Input } from "./Input";
 import { Network, SelfInfo, EscalationInfo } from "./Network";
@@ -149,7 +149,7 @@ export class Game {
     this.env = new Environment(this.scene);
     this.audio.groundSampler = (x, z) => this.env.getHeight(x, z);
     this.map.setBakedMap(this.env.generateMapCanvas(600, 400));
-    this.clues = new ClueField(this.scene, this.env);
+    this.clues = new ClueField(this.scene, this.env, this.isYeti);
     // Online: use the server-assigned spawn. Offline/solo: pick one locally.
     const spawn = spawnFor(role, room);
     this.player = new LocalPlayer(this.camera, this.env, role, spawn, this.audio);
@@ -408,6 +408,10 @@ export class Game {
         currentCave: this.nearestCaveIndex(),
         others: hunter ? this.net.getRemoteSearchers() : [],
         clues: hunter && this.clueVisionActive() ? this.clues.getRecentDots(MAP.clueWindow * clueWindowMul(this.self.specialty)) : [],
+        // The Yeti's counterpart to the hunters' clue trail: where searchers have broken snow.
+        // Ungated — unlike the hunters' trail there's no "contact" condition, because reading
+        // tracks IS the Yeti's contact.
+        prints: this.isYeti ? this.clues.getRecentDots(MAP.printWindow, "snowprint") : [],
         pings: hunter ? this.net.getPings() : [],
         marks: hunter ? this.net.getMarks() : [],
         yeti: this.isYeti,
@@ -484,6 +488,10 @@ export class Game {
     this.hud.setStamina((this.player.stamina / this.player.staminaMax) * 100); // % of this persona's max
     this.updateRoarDirHud();
     this.hud.setBeam(!this.isYeti && this.player.isFlashlightOn); // beam mask + lens grime while lit
+    // Threshold rather than > 0, so the pill doesn't flicker crossing a feathered basin edge.
+    this.hud.setDeepSnow(
+      !this.isYeti && deepSnowDepth(this.env.simWorld, this.player.position.x, this.player.position.z) > 0.35
+    );
 
     // Drive the post FX: moving grain + a vignette that tightens toward the dead of night.
     this.fxPass.uniforms.time.value = t;

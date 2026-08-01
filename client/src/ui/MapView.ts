@@ -14,6 +14,7 @@ export type MapData = {
   currentCave: number; // index of the cave the player is standing in, or -1
   others: Dot[]; // teammates to show (already filtered by role)
   clues: Dot[]; // clue trail to show (already filtered by role)
+  prints: Dot[]; // searcher snow prints — Yeti only (already filtered by role)
   pings: Dot[]; // stakeout pings to show (already filtered by role)
   marks: Dot[]; // Wren's team-visible trail markers (already filtered by role)
   yeti: boolean; // the local player is Yeti (drives the legend)
@@ -128,6 +129,19 @@ export class MapView {
 
     this.drawGrid(ctx);
     this.drawLandmarks(ctx);
+
+    // Searcher snow prints (Yeti only) — cold dots, no connecting line. Deliberately unlike the
+    // hunters' warm breadcrumb trail: several searchers print at once, so joining them up would
+    // draw lines between people who were never walking together.
+    if (d.prints.length) {
+      ctx.fillStyle = "rgba(130,190,235,0.85)";
+      for (const p0 of d.prints) {
+        const p = toMap(p0.x, p0.z);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
 
     // clue trail (hunters) — a fading breadcrumb line + dots
     if (d.clues.length) {

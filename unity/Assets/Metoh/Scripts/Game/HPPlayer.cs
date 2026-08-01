@@ -441,7 +441,10 @@ namespace Metoh.Game
 
             _stepTimer -= Time.deltaTime;
             if (_stepTimer > 0f) return;
-            audio.PlayFootstep(_lastStep.Sprinting, IsYeti, (float)Specialties.FootstepVolumeMul(Specialty.Value));
+            var w = WorldBuilder.World;
+            bool deepSnow = !IsYeti && w != null
+                && Movement.DeepSnowDepth(w, transform.position.x, transform.position.z) > 0.35;
+            audio.PlayFootstep(_lastStep.Sprinting, IsYeti, (float)Specialties.FootstepVolumeMul(Specialty.Value), deepSnow);
             _stepTimer = (float)(_lastStep.Sprinting
                 ? Sim.Player.StepIntervalSprint
                 : Sim.Player.StepIntervalWalk * (_crouching ? 1.6 : 1));

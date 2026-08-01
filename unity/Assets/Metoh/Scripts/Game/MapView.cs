@@ -28,6 +28,7 @@ namespace Metoh.Game
         public const float ClueWindow = 15f;    // only tracks from the last N seconds show
         public const float HearRange = 35f;     // Yeti this close counts as "heard nearby"
         public const float EvidenceSight = 18f; // a clue this close counts as "sees recent evidence"
+        public const float SnowPrintWindow = 20f; // Yeti's map: how recent a searcher's print must be
 
         private const int BgRes = 256; // baked background resolution
 
@@ -130,6 +131,10 @@ namespace Metoh.Game
                 DrawTeammates(me);
                 DrawProofPiles(); // last of the searcher layers — a spill outranks everything under it
             }
+            else
+            {
+                DrawSnowPrints(); // the Yeti's own read: where searchers have broken snow
+            }
 
             int currentCave = Caves.NearestCaveIndex(world.Caves, me.transform.position.x, me.transform.position.z);
             DrawCaves(world, me, currentCave);
@@ -197,11 +202,28 @@ namespace Metoh.Game
             float window = ClueWindow * (float)Specialties.ClueWindowMul(spec);
             foreach (var c in ClueMarker.All)
             {
-                if (c == null || Time.time - c.Born > window) continue;
+                if (c == null || !c.IsYetiTrail || Time.time - c.Born > window) continue;
                 float dx = c.transform.position.x - p.x, dz = c.transform.position.z - p.z;
                 if (dx * dx + dz * dz < sight * sight) return true;
             }
             return false;
+        }
+
+        /// <summary>
+        /// Searcher snow prints, Yeti only — the mirror of the hunters' clue trail.
+        ///
+        /// Dots with no connecting line, unlike DrawClueTrail: several searchers print at once, so
+        /// joining them in time order would draw a path between people who were never together.
+        /// Ungated too — the hunters' trail needs "contact", but reading tracks IS the Yeti's contact.
+        /// </summary>
+        private void DrawSnowPrints()
+        {
+            foreach (var c in ClueMarker.All)
+            {
+                if (c == null || c.IsYetiTrail) continue;
+                if (Time.time - c.Born > SnowPrintWindow) continue;
+                Dot(ToMap(c.transform.position), 1.9f, new Color(0.51f, 0.75f, 0.92f, 0.85f));
+            }
         }
 
         private void DrawClueTrail(HPPlayer me)
@@ -209,7 +231,7 @@ namespace Metoh.Game
             float window = ClueWindow * (float)Specialties.ClueWindowMul(me.Specialty.Value);
             var trail = new System.Collections.Generic.List<ClueMarker>();
             foreach (var c in ClueMarker.All)
-                if (c != null && Time.time - c.Born <= window) trail.Add(c);
+                if (c != null && c.IsYetiTrail && Time.time - c.Born <= window) trail.Add(c);
             trail.Sort((a, b) => a.Born.CompareTo(b.Born));
 
             // A faint breadcrumb line through the tracks, then the tracks themselves.

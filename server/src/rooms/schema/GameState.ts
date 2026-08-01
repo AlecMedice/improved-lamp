@@ -36,7 +36,11 @@ export class Player extends Schema {
  */
 export class Clue extends Schema {
   @type("string") id = "";
-  @type("string") ctype = "footprint"; // "footprint" | "branch"
+  // "footprint" | "branch" = the Yeti's trail, visible to searchers.
+  // "snowprint" = a SEARCHER's track in deep snow, render-filtered to the Yeti only. It rides this
+  // same class deliberately (no schema change, no second array), but the room caps and expires the
+  // two kinds separately so prints can never evict the Yeti trail.
+  @type("string") ctype = "footprint";
   @type("number") x = 0;
   @type("number") z = 0;
   @type("number") ry = 0; // heading the track points along

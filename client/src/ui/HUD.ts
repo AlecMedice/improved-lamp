@@ -69,6 +69,17 @@ export class HUD {
   }
 
   /** Yeti's ability readout (roar cooldown). Pass null to clear. */
+  /**
+   * "DEEP SNOW" while the local searcher is wading a drift.
+   *
+   * Tracks the SLOW, not the print zone — the slow is the part a searcher can act on by moving to
+   * higher ground, and telling them they're leaving tracks would hand away the Yeti's whole
+   * information edge.
+   */
+  setDeepSnow(on: boolean) {
+    this.el("deepsnow-pill").style.display = on ? "" : "none";
+  }
+
   setAbility(text: string | null) {
     const el = this.el("ability");
     if (text) {

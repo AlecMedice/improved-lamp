@@ -390,6 +390,25 @@ namespace Metoh.Game
             if (me.CharacterName.Value != "")
                 GUI.Label(new Rect(16f, y + 42f, 300f, 22f), $"{me.CharacterName.Value} — {me.Specialty.Value}");
 
+            // DEEP SNOW — you are wading, and it is costing you speed.
+            //
+            // Tracks the SLOW, not the print zone. The slow is the part a searcher can act on, by
+            // climbing to scoured ground; telling them they are leaving tracks would hand away the
+            // Yeti's whole information edge. Thresholded rather than > 0 so it doesn't flicker as
+            // you cross a feathered basin edge.
+            var w = WorldBuilder.World;
+            if (w != null)
+            {
+                Vector3 p = me.transform.position;
+                if (Sim.Movement.DeepSnowDepth(w, p.x, p.z) > 0.35)
+                {
+                    Color oc2 = GUI.color;
+                    GUI.color = new Color(0.72f, 0.85f, 1f, 0.92f);
+                    GUI.Box(new Rect(16f, y - 26f, 120f, 22f), "DEEP SNOW");
+                    GUI.color = oc2;
+                }
+            }
+
             // What you're CARRYING — the single most decision-relevant number a searcher has. It is
             // worth nothing until it's in the duffel and it dies with you, so it shouts.
             if (me.CarriedTotal > 0)
@@ -597,6 +616,21 @@ namespace Metoh.Game
                 float alpha = 0.5f * (1f - age / HPPlayer.ScentLifetime);
                 GUI.color = new Color(0.35f, 1f, 0.5f, alpha);
                 GUI.DrawTexture(new Rect(sp.x - 7f, Screen.height - sp.y - 7f, 14f, 14f), _blobTex);
+            }
+
+            // Searcher snow prints glow through the terrain under the overlay, the same treatment
+            // the scent trail gets — cold blue against the trail's green, so the Yeti can tell
+            // "they went that way" from "I went that way" at a glance.
+            foreach (var c in ClueMarker.All)
+            {
+                if (c == null || c.CType.Value != ClueMarker.TypeSnowPrint) continue;
+                float d = Vector3.Distance(c.transform.position, me.transform.position);
+                if (d > 140f) continue;
+                Vector3 sp = cam.WorldToScreenPoint(c.transform.position + Vector3.up * 0.35f);
+                if (sp.z <= 0f) continue;
+                float alpha = 0.55f * Mathf.Clamp01(1f - d / 140f);
+                GUI.color = new Color(0.45f, 0.75f, 1f, alpha);
+                GUI.DrawTexture(new Rect(sp.x - 6f, Screen.height - sp.y - 6f, 12f, 12f), _blobTex);
             }
             GUI.color = old;
         }
@@ -847,6 +881,7 @@ namespace Metoh.Game
                                 "• They carry it back to a bag at the camp. You cannot touch the bag.\n" +
                                 "• So take them on the walk home, while their hands are full\n" +
                                 "• You shed hair on every tree you shoulder past — the trees remember you\n" +
+                                "• The drifts are nothing to you, and they cannot cross one without printing it\n" +
                                 $"• Crouch ({HPKeybinds.Label(HPAction.Crouch)}): no tracks, no hair, no sound — at half speed", perk);
             }
             else
@@ -873,6 +908,7 @@ namespace Metoh.Game
                                 "• What you carry is worth NOTHING until it's in the bag\n" +
                                 "• Caught carrying, you drop it where you fall — go back for it\n" +
                                 "• Its caves aren't on your map. Find one and the whole team sees it.\n" +
+                                "• The valleys lie deep — DEEP SNOW means you're wading. The ridges are faster.\n" +
                                 "• The duffel is the one thing out here it cannot touch. Walk it home.", objective);
             }
             GUILayout.EndScrollView();

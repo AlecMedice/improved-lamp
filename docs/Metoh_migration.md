@@ -189,7 +189,20 @@ if (!st.isYeti && st.grounded && lakeDep === 0) {
 
 **Parity:** regen `golden.json` (the hunter trajectory starts at the origin, which is inside the camp clearing, so it may not move — check rather than assume), add a vitest case in `server/test/sim.movement.test.ts` ("a searcher in a drift basin covers less ground than one on scoured crust; the Yeti covers the same in both") and mirror it as `DeepSnowTests(seed)` in `csharp/Parity/Program.cs`. Gate C.
 
-**How the slow applies:** web — automatic on both sides (client prediction + `MountainRoom.applyMove` re-validation; the speed-gate token bucket only ever over-allows a slowed player, so anti-cheat needs no change). Unity — automatic via `HPPlayer.StepSim`/`ServerBotDrive` running the same `Movement.StepPlayer`; movement is interim client-authoritative, so a hacked client could skip the slow — same trust level as all Unity movement today; note this in UNITY_PORT_NOTES §0.
+**How the slow applies — corrected.** The plan claimed the web build enforces it "on both sides
+(client prediction + `MountainRoom.applyMove` re-validation)". It does not. `applyMove` validates a
+move — world-bounds clamp, speed-gate token bucket, collision pushout, terrain feet-clamp — but it
+never re-runs `stepPlayer`, so the drift slow is applied entirely by the **client's** prediction and
+the server only bounds the maximum. A hacked web client can ignore deep snow exactly like a hacked
+Unity client; the speed gate still caps it at sprint speed + margin, so the exploit is "not slowed",
+never "faster than legitimate". That is the same trust level as all movement in the Unity build
+today, and the same as `lakeHunterFactor`, which has always worked this way.
+
+Consequence for verification: the slow **cannot** be asserted from a socket-level smoke test, since
+driving the socket by hand measures the harness rather than the sim. It is covered by vitest and the
+C# parity harness instead. The smoke test covers what the server genuinely owns: where prints drop
+and how they are capped. Note the client-auth caveat in UNITY_PORT_NOTES §0 for both builds, not
+just Unity.
 
 ### 5b. Searcher snow prints — reuse the Clue pipeline
 

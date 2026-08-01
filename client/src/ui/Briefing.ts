@@ -15,7 +15,11 @@ export class Briefing {
     const title = isYeti ? "You are Yeti" : "Searcher briefing";
     const objective = isYeti
       ? "Survive three nights. Hunt the searchers, drag them off, and erase their footage — just don't get filmed."
-      : "Capture three solid videos of Yeti before the third dawn. Track its footprints and broken branches — and don't get caught alone.";
+      : "Capture three solid videos of the Yeti before the third dawn. Track its prints and broken crust — and don't get caught alone.";
+    // Deep snow, stated as capability rather than as numbers (UNITY_PORT_NOTES §9).
+    const snowLine = isYeti
+      ? "The drifts don't slow you, and the searchers can't help printing their way across them — read the tracks."
+      : "The valleys lie deep and slow you down; the wind-scoured high ground is faster going. Watch for DEEP SNOW.";
     const rows: [string, string][] = isYeti
       ? [
           ["Move / look", `${move} · Mouse`],
@@ -40,6 +44,7 @@ export class Briefing {
         <div class="brief-kicker">Night 1 · 8:00 PM</div>
         <h1>${title}</h1>
         <p class="tag">${objective}</p>
+        <p class="tag">${snowLine}</p>
         <div class="brief-grid">${list}</div>
         <div class="brief-foot">Adjust or rebind anything with the ⚙ / <kbd>Esc</kbd> menu · <b>press any key to begin</b></div>
       </div>`;

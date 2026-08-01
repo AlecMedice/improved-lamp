@@ -1,7 +1,7 @@
 import { Room, Client } from "@colyseus/core";
 import { GameState, Player, Clue, Ping, Mark } from "./schema/GameState";
 import {
-  WORLD, PLAYER, CAVE, CLUE_LIFETIME, generateCaves, makeWorld, resolveCollision, lineBlocked, climbSupport,
+  WORLD, PLAYER, CAVE, CLUE_LIFETIME, generateCaves, makeWorld, resolveCollision, lineBlocked, climbSupport, leavesSnowPrints,
   nearestCaveIndex, caveEmergePoint, dealSpecialties, CHARACTER_NAME, isSpecialtyId, type SpecialtyId,
   reviveMul, staminaMax, filmProgressMul, TRACKING_MARK,
 } from "../../../shared/sim";
@@ -20,7 +20,14 @@ const WORLD_HALF = WORLD.size / 2; // ±400 on x/z
 // --- Clue (hint) framework tuning ---
 const STRIDE = 2.4; // metres Yeti travels between dropped footprints
 const BRANCH_CHANCE = 0.18; // chance a footstep also snaps a nearby branch
-const MAX_CLUES = 80; // hard cap on live clues
+const MAX_CLUES = 80; // hard cap on live YETI clues (snowprints are capped separately)
+
+// Searcher snow prints — the Yeti's half of the deep-snow mechanic. Deliberately NOT escalated:
+// the per-night table tightens the hunters' clue window, and letting it touch prints too would
+// hand the Yeti a compounding advantage on exactly the nights it already has one.
+const SNOWPRINT_STRIDE = 2.4; // metres between prints
+const SNOWPRINT_LIFETIME = 35; // seconds before a print drifts over
+const MAX_SNOWPRINTS = 120;
 
 // --- Hunter ping (stakeout markers) tuning ---
 const PING_LIFETIME = 35; // seconds a ping stays before fading off the map
@@ -111,6 +118,7 @@ export class MountainRoom extends Room<GameState> {
   private clueSeq = 0;
   private clueAge = new Map<string, number>(); // clue id -> elapsed when created
   private lastTrack = new Map<string, { x: number; z: number }>(); // yeti sid -> last footprint
+  private lastPrint = new Map<string, { x: number; z: number }>(); // searcher sid -> last snow print
   private filmFlags = new Map<string, FilmFlag>(); // hunter sid -> live recording flags
   private lastMoveMs = new Map<string, number>(); // sid -> Date.now() of last accepted move (speed gate)
   private moveAllowance = new Map<string, number>(); // sid -> distance token bucket (metres) for the speed gate
@@ -379,6 +387,7 @@ export class MountainRoom extends Room<GameState> {
     this.state.players.delete(sid);
     this.filmFlags.delete(sid);
     this.lastTrack.delete(sid);
+    this.lastPrint.delete(sid);
     this.removePing(sid);
     this.frozenUntil.delete(sid);
     this.incapUntil.delete(sid);
@@ -523,6 +532,7 @@ export class MountainRoom extends Room<GameState> {
     this.state.marks.clear();
     this.clueAge.clear();
     this.lastTrack.clear();
+    this.lastPrint.clear();
     this.pingAge.clear();
     this.pingOwner.clear();
     this.markAge.clear();
@@ -585,6 +595,7 @@ export class MountainRoom extends Room<GameState> {
     });
 
     this.dropClues(yetis);
+    this.dropSnowPrints(hunters);
     this.expireClues();
     this.expirePings();
     this.expireMarks();
@@ -741,10 +752,52 @@ export class MountainRoom extends Room<GameState> {
     }
   }
 
+  /**
+   * Searchers press tracks into unbroken snow — and only the Yeti can see them (the clients
+   * render-filter by role). This is the Yeti's counterpart to the clue trail: the searchers read
+   * its prints, it reads theirs.
+   *
+   * Note the zone rule is `leavesSnowPrints`, NOT the drift-basin slow: snow records a footfall
+   * anywhere it lies, so prints keep working on the scoured high ground where wading doesn't slow
+   * you. That is what keeps the signal dense enough to actually hunt by.
+   */
+  private dropSnowPrints(hunters: Array<{ sid: string; p: Player }>) {
+    for (const { sid, p } of hunters) {
+      if (p.status !== "active") continue;
+      const last = this.lastPrint.get(sid);
+      if (!last) {
+        this.lastPrint.set(sid, { x: p.x, z: p.z });
+        continue;
+      }
+      const dx = p.x - last.x;
+      const dz = p.z - last.z;
+      if (dx * dx + dz * dz < SNOWPRINT_STRIDE * SNOWPRINT_STRIDE) continue;
+      this.lastPrint.set(sid, { x: p.x, z: p.z });
+      if (!leavesSnowPrints(this.world, p.x, p.z)) continue;
+      this.addClue("snowprint", p.x, p.z, p.ry);
+    }
+  }
+
+  /**
+   * Add a clue, capping each KIND against its own budget.
+   *
+   * Snowprints and Yeti clues share one replicated array but must never share an eviction queue:
+   * searchers out-number the Yeti five to one and print at a shorter stride, so a single shared
+   * cap would let their prints push the Yeti's trail out of the array within seconds — deleting
+   * the hunters' entire win condition as a side effect of their own movement.
+   */
   private addClue(ctype: string, x: number, z: number, ry: number) {
-    if (this.state.clues.length >= MAX_CLUES) {
-      const oldest = this.state.clues.shift();
-      if (oldest) this.clueAge.delete(oldest.id);
+    const isPrint = ctype === "snowprint";
+    const cap = isPrint ? MAX_SNOWPRINTS : MAX_CLUES;
+    let live = 0;
+    for (const c of this.state.clues) if ((c.ctype === "snowprint") === isPrint) live++;
+    if (live >= cap) {
+      // Evict the oldest of THIS kind only — never the other kind's oldest.
+      const victim = this.state.clues.findIndex((c) => (c.ctype === "snowprint") === isPrint);
+      if (victim >= 0) {
+        const [gone] = this.state.clues.splice(victim, 1);
+        if (gone) this.clueAge.delete(gone.id);
+      }
     }
     const c = new Clue();
     c.id = "c" + this.clueSeq++;
@@ -762,7 +815,9 @@ export class MountainRoom extends Room<GameState> {
       const c = this.state.clues[i];
       if (!c) continue;
       const born = this.clueAge.get(c.id) ?? this.elapsed;
-      if (this.elapsed - born > lifetime) {
+      // Prints run on their own fixed clock — the per-night escalation is the Yeti's, not theirs.
+      const life = c.ctype === "snowprint" ? SNOWPRINT_LIFETIME : lifetime;
+      if (this.elapsed - born > life) {
         this.state.clues.splice(i, 1);
         this.clueAge.delete(c.id);
       }

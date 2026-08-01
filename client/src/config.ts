@@ -61,6 +61,7 @@ export const YETI_VISION = {
 /** Map readout tuning for the clue trail (the "in-contact" gating). */
 export const MAP = {
   clueWindow: 15, // only tracks from the last N seconds show on the map
+  printWindow: 20, // Yeti's map: how recent a searcher's snow print must be to show
   hearRange: 35, // Yeti within this distance counts as "heard nearby"
   evidenceSight: 18, // a clue within this distance counts as "sees recent evidence"
 };

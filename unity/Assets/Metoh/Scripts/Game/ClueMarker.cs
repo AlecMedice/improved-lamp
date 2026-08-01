@@ -20,6 +20,14 @@ namespace Metoh.Game
         /// </summary>
         public const byte TypeHair = 2;
 
+        /// <summary>
+        /// A SEARCHER's track pressed into deep snow — the only clue type that runs the other way.
+        /// Replicated to everyone (FishNet spawns are global) and hidden at the RENDERER on every
+        /// client that isn't the Yeti. Never enters GameManager's _clues list, so it is excluded
+        /// from collect/cast/hair/duffel logic for free.
+        /// </summary>
+        public const byte TypeSnowPrint = 3;
+
         public readonly SyncVar<byte> CType = new SyncVar<byte>(TypeFootprint);
         public readonly SyncVar<float> YawRad = new SyncVar<float>(0f);
         /// <summary>
@@ -38,6 +46,16 @@ namespace Metoh.Game
 
         /// <summary>Is this clue something a searcher can turn into proof? (Prompt + map both ask.)</summary>
         public bool IsCollectable => Castable.Value || CType.Value == TypeHair;
+
+        /// <summary>
+        /// Evidence of the YETI, as opposed to a searcher's own snow print.
+        ///
+        /// Every consumer of <see cref="All"/> must ask this. Snow prints are spawned to all clients
+        /// and only hidden at the renderer, so they are still in that list on a searcher's machine —
+        /// and counting them as evidence would let a searcher's own tracks satisfy the
+        /// evidence-in-sight test and permanently unlock the clue-trail map layer.
+        /// </summary>
+        public bool IsYetiTrail => CType.Value != TypeSnowPrint;
 
         /// <summary>Live clues on this client — the map's "recent trail" reads this (see MapView).</summary>
         public static readonly List<ClueMarker> All = new List<ClueMarker>();
@@ -64,12 +82,13 @@ namespace Metoh.Game
 
             if (CType.Value == TypeFootprint)
             {
-                // A big two-pad print pressed into the ground, faintly luminous. A CASTABLE print sits
-                // deeper in softer ground: bigger, darker, ringed with displaced earth, and marked with
-                // a pale glint so it reads as workable from a distance.
-                // Snow prints read by their SHADOW, not their colour: a hollow pressed into white
-                // pack is blue where the sky doesn't reach it. Hence dark blue bodies against the
-                // pale ground rather than the old pale-on-dark forest treatment.
+                // A big two-pad print pressed into the snow. A CASTABLE print sits deeper in softer
+                // pack: bigger, ringed with displaced snow, and marked with a pale glint so it reads
+                // as workable from a distance.
+                //
+                // Prints read by their SHADOW, not their colour — a hollow pressed into white pack
+                // is blue where the sky can't reach it — so these are dark bodies on pale ground,
+                // the inverse of the old pale-on-dark forest treatment.
                 bool deep = Castable.Value;
                 var mat = deep
                     ? MeshUtil.Emissive(MeshUtil.Rgb(0x1b3450), MeshUtil.Rgb(0x9fc4e8), 0.5f)
@@ -97,6 +116,15 @@ namespace Metoh.Game
                     _glint = glint.transform;
                     _glintScale = _glint.localScale;
                 }
+            }
+            else if (CType.Value == TypeSnowPrint)
+            {
+                // A boot pair, flat and cold. No glint and no glow: this is not workable evidence,
+                // it is a read on where somebody went, and it has to stay visually distinct from the
+                // Yeti's own prints so it can never be mistaken for its own back-trail.
+                var mat = MeshUtil.Lit(MeshUtil.Rgb(0x1d3550));
+                AddPad(root, new Vector3(-0.11f, 0.02f, 0f), new Vector3(0.17f, 0.015f, 0.30f), mat);
+                AddPad(root, new Vector3(0.11f, 0.02f, 0.07f), new Vector3(0.17f, 0.015f, 0.30f), mat);
             }
             else if (CType.Value == TypeBranch)
             {
@@ -144,6 +172,7 @@ namespace Metoh.Game
                 _glintBaseY = 1.0f;
             }
 
+            ResolveSnowPrintVisibility(); // hide from searchers as early as we can; Update retries
             CacheMaterials(root); // must run after every piece exists — Update fades these
         }
 
@@ -180,8 +209,32 @@ namespace Metoh.Game
         /// Driven by the host's own (escalating) lifetime, so the visuals can't drift from the
         /// replicated trail.
         /// </summary>
+        /// <summary>
+        /// Snow prints are visible ONLY to the Yeti, enforced by switching the renderers off on
+        /// every other client.
+        ///
+        /// Re-checked each frame until it resolves rather than being decided once in
+        /// OnStartClient, because a print can arrive before HPPlayer.Local exists — during a join,
+        /// or on the host, where the world is already ticking as the local player spawns. Deciding
+        /// once against a null Local would silently show every searcher the tracks they are trying
+        /// not to leave, and the failure would be invisible until someone play-tested two instances.
+        /// </summary>
+        private bool _visibilityResolved;
+
+        private void ResolveSnowPrintVisibility()
+        {
+            if (_visibilityResolved || CType.Value != TypeSnowPrint) return;
+            var me = HPPlayer.Local;
+            if (me == null) return;
+            _visibilityResolved = true;
+            if (me.IsYeti) return;
+            foreach (var r in GetComponentsInChildren<Renderer>(true)) r.enabled = false;
+        }
+
         private void Update()
         {
+            ResolveSnowPrintVisibility();
+
             float life = GameManager.Instance != null ? GameManager.Instance.ClueLifetimeSec.Value : 50f;
             float age01 = Mathf.Clamp01((Time.time - Born) / Mathf.Max(1f, life));
             float cold = Mathf.InverseLerp(HoldFraction, 1f, age01); // 0 = fresh, 1 = gone

@@ -30,6 +30,13 @@ namespace Metoh.Game
         private const double Stride = 2.4;
         private const double BranchChance = 0.18;
         private const int MaxClues = 80;
+
+        // Searcher snow prints. Deliberately NOT escalated: the per-night table tightens the hunters'
+        // clue window, and letting it touch prints too would compound the Yeti's advantage on exactly
+        // the nights it already has one.
+        private const double SnowPrintStride = 2.4;
+        private const double SnowPrintLifetime = 35;
+        private const int MaxSnowPrints = 120;
         public const double FilmRange = 38; // public: the briefing quotes Eli's real reach
         private static readonly double FilmAimCos = System.Math.Cos(0.6);
         private const double FilmSeconds = 3.0;
@@ -247,6 +254,8 @@ namespace Metoh.Game
         private readonly Dictionary<HPPlayer, double> _chargeReadyAt = new Dictionary<HPPlayer, double>();
         private readonly Dictionary<HPPlayer, Vec2> _lastTrack = new Dictionary<HPPlayer, Vec2>();
         private readonly List<(NetworkObject nob, double born)> _clues = new List<(NetworkObject, double)>();
+        private readonly Dictionary<HPPlayer, Vec2> _lastPrint = new Dictionary<HPPlayer, Vec2>();
+        private readonly List<(NetworkObject nob, double born)> _snowPrints = new List<(NetworkObject, double)>();
         private readonly Dictionary<HPPlayer, double> _markReadyAt = new Dictionary<HPPlayer, double>();
         private readonly List<(NetworkObject nob, double born)> _marks = new List<(NetworkObject, double)>();
         private readonly List<(NetworkObject nob, double born)> _pings = new List<(NetworkObject, double)>();
@@ -569,6 +578,10 @@ namespace Metoh.Game
             foreach (var (nob, _) in _clues)
                 if (nob != null) InstanceFinder.ServerManager.Despawn(nob);
             _clues.Clear();
+            _lastPrint.Clear();
+            foreach (var (nob, _) in _snowPrints)
+                if (nob != null) InstanceFinder.ServerManager.Despawn(nob);
+            _snowPrints.Clear();
             foreach (var (nob, _) in _marks)
                 if (nob != null) InstanceFinder.ServerManager.Despawn(nob);
             _marks.Clear();
@@ -1358,7 +1371,9 @@ namespace Metoh.Game
             }
 
             DropClues(yetis);
+            DropSnowPrints(hunters);
             ExpireClues(e);
+            ExpireSnowPrints();
             ExpireMarks();
             ExpirePings();
             ExpirePiles();
@@ -1376,6 +1391,76 @@ namespace Metoh.Game
                 if (StoredProof >= VideosRequired.Value) Winner.Value = WinnerHunters;
                 else if (nightsComplete) Winner.Value = WinnerYeti;
                 if (Winner.Value != WinnerNone) MatchPhase.Value = PhaseResults;
+            }
+        }
+
+        /// <summary>
+        /// Searchers press tracks into unbroken snow, and only the Yeti can see them — the Yeti's
+        /// counterpart to the clue trail the searchers read off it.
+        ///
+        /// The zone rule is Movement.LeavesSnowPrints, NOT the drift-basin slow: snow records a
+        /// footfall anywhere it lies, so prints keep working on the scoured high ground where wading
+        /// costs you nothing. That is what keeps the signal dense enough to hunt by.
+        ///
+        /// Reads each searcher's replicated transform, so this needs no new RPC.
+        /// </summary>
+        private void DropSnowPrints(List<HPPlayer> hunters)
+        {
+            if (_cluePrefab == null) return;
+            foreach (var h in hunters)
+            {
+                if (h.Status.Value != HPPlayer.StatusActive) continue;
+                Vector3 pos = h.transform.position;
+                if (!_lastPrint.TryGetValue(h, out Vec2 last))
+                {
+                    _lastPrint[h] = new Vec2(pos.x, pos.z);
+                    continue;
+                }
+                double dx = pos.x - last.X, dz = pos.z - last.Z;
+                if (dx * dx + dz * dz < SnowPrintStride * SnowPrintStride) continue;
+                _lastPrint[h] = new Vec2(pos.x, pos.z);
+                if (!Movement.LeavesSnowPrints(_world, pos.x, pos.z)) continue;
+                SpawnSnowPrint(pos.x, pos.z, h.transform.eulerAngles.y * Mathf.Deg2Rad);
+            }
+        }
+
+        /// <summary>
+        /// Spawn a print into its OWN list with its own FIFO cap.
+        ///
+        /// Keeping prints out of _clues is not tidiness, it is the whole safety property: five
+        /// searchers printing at a 2.4 m stride would otherwise push the Yeti's trail out of a
+        /// shared cap within seconds, deleting the hunters' win condition as a side effect of their
+        /// own movement. Being outside _clues also excludes prints from the collect, cast, hair and
+        /// duffel logic for free, since all of those walk _clues.
+        /// </summary>
+        private void SpawnSnowPrint(double x, double z, float yawRad)
+        {
+            while (_snowPrints.Count >= MaxSnowPrints)
+            {
+                if (_snowPrints[0].nob != null) InstanceFinder.ServerManager.Despawn(_snowPrints[0].nob);
+                _snowPrints.RemoveAt(0);
+            }
+            float y = (float)_world.GetHeight(x, z);
+            NetworkObject nob = Instantiate(_cluePrefab, new Vector3((float)x, y, (float)z), Quaternion.identity);
+            var marker = nob.GetComponent<ClueMarker>();
+            marker.CType.Value = ClueMarker.TypeSnowPrint;
+            marker.YawRad.Value = yawRad;
+            marker.Castable.Value = false; // set BEFORE Spawn so it arrives with the payload
+            InstanceFinder.ServerManager.Spawn(nob);
+            _snowPrints.Add((nob, _elapsed));
+        }
+
+        /// <summary>Prints run on a fixed clock — the per-night escalation is the Yeti's, not theirs.</summary>
+        private void ExpireSnowPrints()
+        {
+            for (int i = _snowPrints.Count - 1; i >= 0; i--)
+            {
+                if (_snowPrints[i].nob == null) { _snowPrints.RemoveAt(i); continue; }
+                if (_elapsed - _snowPrints[i].born > SnowPrintLifetime)
+                {
+                    InstanceFinder.ServerManager.Despawn(_snowPrints[i].nob);
+                    _snowPrints.RemoveAt(i);
+                }
             }
         }
 
