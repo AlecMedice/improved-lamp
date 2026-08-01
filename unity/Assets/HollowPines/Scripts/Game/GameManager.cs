@@ -21,7 +21,7 @@ namespace HollowPines.Game
         public const byte PhaseResults = 2;
         public const byte WinnerNone = 0;
         public const byte WinnerHunters = 1;
-        public const byte WinnerBigfoot = 2;
+        public const byte WinnerYeti = 2;
 
         // --- Tuning (ForestRoom.ts values) ---
         private const int TotalNightsCount = 3;
@@ -43,8 +43,8 @@ namespace HollowPines.Game
         public const double GrabRadius = 3.5;
         private const double IncapSeconds = 60;
         private const double SlowSeconds = 30;
-        // (The Bigfoot charge burst was removed 2026-07-19 — owner call. Bigfoot simply SPRINTS now,
-        // and the sim's BigfootSpeedMul already makes that faster than a searcher's sprint. Roar plus
+        // (The Yeti charge burst was removed 2026-07-19 — owner call. Yeti simply SPRINTS now,
+        // and the sim's YetiSpeedMul already makes that faster than a searcher's sprint. Roar plus
         // a permanent speed edge was judged enough without a cooldown ability on top.)
         private const double ReviveRadius = 3.5;
         public const double ReviveSeconds = 4; // public: the briefing quotes Sam's real revive time
@@ -63,10 +63,10 @@ namespace HollowPines.Game
         private const int MaxPings = 12;
 
         // --- Casting tracks — the searchers' second win path (CHARACTER_FUNC_DEV §8) ---
-        // Bigfoot does NOT shed evidence. It leaves TRACKS; a plaster cast is something a person makes
+        // Yeti does NOT shed evidence. It leaves TRACKS; a plaster cast is something a person makes
         // from one. Some prints land in ground soft and deep enough to be worth working (`Castable`),
         // only a few are live at a time (newer ones override older), and only MARA carries the kit.
-        // Slow and stationary, but it never requires closing on Bigfoot — the safe, patient win path.
+        // Slow and stationary, but it never requires closing on Yeti — the safe, patient win path.
         private const double CastableChance = 0.16;   // chance a dropped footprint is deep enough
         private const int MaxCastablePrints = 4;      // older workable prints are overridden by newer
         private const double CastSeconds = 6;         // a cast takes real time to set
@@ -79,10 +79,10 @@ namespace HollowPines.Game
         // it dead weight whenever she was downed, absent, or simply not in the deal. Hair is the
         // hedge, and it sheds two ways (owner design, 2026-07-20):
         //
-        //   1. AT RANDOM along the trail, rolled per stride like a castable print — Bigfoot is simply
+        //   1. AT RANDOM along the trail, rolled per stride like a castable print — Yeti is simply
         //      shedding as it moves, so a trail is worth following even when no branch snapped.
         //   2. GUARANTEED wherever it shoulders past a TREE. This is the good one: it turns the
-        //      forest's own density into evidence, and it means the thing Bigfoot does constantly
+        //      forest's own density into evidence, and it means the thing Yeti does constantly
         //      (weave through trunks at speed) is the thing that incriminates it. Running the tight
         //      lines is fast and leaves a bright trail; the open ground is clean but exposed.
         //
@@ -94,14 +94,14 @@ namespace HollowPines.Game
         private const double TreeBrushSlack = 0.25;
         /// <summary>
         /// Minimum gap between tree-shed tufts. Without it, standing inside a trunk's collider is a
-        /// hair farm, and worse, a Bigfoot pinned against a tree in a chase would carpet the spot.
+        /// hair farm, and worse, a Yeti pinned against a tree in a chase would carpet the spot.
         /// </summary>
         private const double TreeHairCooldown = 7;
 
         // --- Dropped proof piles (CHARACTER_FUNC_DEV §8, "still open" → shipped) ---
         // A grab used to DELETE what the victim was carrying. It now spills it on the ground instead,
         // which turns the worst moment in a searcher's night into a decision for everyone else rather
-        // than a silent subtraction. Crucially Bigfoot cannot destroy a pile — same rule as the duffel
+        // than a silent subtraction. Crucially Yeti cannot destroy a pile — same rule as the duffel
         // — it can only GUARD one. That's the positional strategy the extraction loop was missing:
         // camp the spill and dare them to come back for it. The pile's only enemy is the clock.
         private const double PileLifetime = 120;   // long enough for a real recovery run, short enough to hurt
@@ -121,7 +121,7 @@ namespace HollowPines.Game
 
         // --- The evidence duffel (camp) ---
         // Proof is only ever WON here. Everything a searcher gathers is carried, unsafe, until they
-        // walk it back and store it; the duffel itself is untouchable by Bigfoot, which makes the trip
+        // walk it back and store it; the duffel itself is untouchable by Yeti, which makes the trip
         // home the risk rather than the bag. Accepts every evidence type, present and future.
         private const double DuffelRadius = 3.0;
         /// <summary>Brief, deliberate — not an instant tap. Public for the same reason as
@@ -131,7 +131,7 @@ namespace HollowPines.Game
         // --- Eli's camera flash (SPECIALTIES.photo.flash) ---
         private const double FlashRange = 22;                            // short reach (< dazzle's 40)
         private static readonly double FlashAimCos = System.Math.Cos(0.5); // ~29 deg — an aimed shot
-        private const double FlashDazzleSeconds = 3;                     // locks Bigfoot's roar/grab
+        private const double FlashDazzleSeconds = 3;                     // locks Yeti's roar/grab
         private const double FlashRevealSeconds = 5;                     // ...but screams "here I am"
         private const int FlashChargesPerNight = 1;
 
@@ -174,13 +174,13 @@ namespace HollowPines.Game
         /// <summary>
         /// This session's forest. Everything seed-derived hangs off it — terrain, tree placement,
         /// the trail network and, most importantly, WHERE THE CAVES ARE. A fixed seed meant a group
-        /// that played twice already knew every lair; rolling it per session puts Bigfoot's map back
+        /// that played twice already knew every lair; rolling it per session puts Yeti's map back
         /// in play. Clients rebuild their world when this lands (see the OnChange wiring below).
         /// </summary>
         public readonly SyncVar<uint> WorldSeed = new SyncVar<uint>(Sim.World.Seed);
         /// <summary>
         /// Bitmask of cave mouths the searchers have physically found (bit i = world.Caves[i]).
-        /// Team-wide and permanent for the match; Bigfoot ignores it and always sees all five.
+        /// Team-wide and permanent for the match; Yeti ignores it and always sees all five.
         /// </summary>
         public readonly SyncVar<int> CavesFound = new SyncVar<int>(0);
         /// <summary>True if searchers have discovered cave <paramref name="index"/> — the map asks this.</summary>
@@ -207,7 +207,7 @@ namespace HollowPines.Game
         /// <summary>
         /// Casts taken from workable prints. Counted separately from footage only so the HUD can show
         /// the team where their case came from — a grab erases BOTH (see TryGrab). Casting is the
-        /// patient path: it never requires closing on Bigfoot, but it is no safer once banked.
+        /// patient path: it never requires closing on Yeti, but it is no safer once banked.
         /// </summary>
         public readonly SyncVar<int> EvidenceCollected = new SyncVar<int>(0);
         /// <summary>Hair samples stored. Counted apart from casts only so the duffel manifest can
@@ -270,7 +270,7 @@ namespace HollowPines.Game
 
         /// <summary>
         /// Set by the title screen's SINGLE PLAYER button just before hosting. Read once when the host
-        /// client loads in (OnClientLoadedStartScenes): it spawns a CPU Bigfoot and auto-starts the
+        /// client loads in (OnClientLoadedStartScenes): it spawns a CPU Yeti and auto-starts the
         /// match, so the offline player never sees the multiplayer lobby. Static because it must
         /// survive the scene load between the menu click and the server coming up.
         /// </summary>
@@ -340,34 +340,34 @@ namespace HollowPines.Game
             NetworkObject nob = Instantiate(_playerPrefab, pos, Quaternion.Euler(0f, 180f, 0f));
             var hp = nob.GetComponent<HPPlayer>();
             hp.PlayerName.Value = SoloPending ? "You" : "Player " + (conn.ClientId + 1);
-            if (SoloPending) hp.WantsBigfoot.Value = false; // solo: the human is always a searcher
+            if (SoloPending) hp.WantsYeti.Value = false; // solo: the human is always a searcher
             InstanceFinder.ServerManager.Spawn(nob, conn);
 
-            // Single-player: also spawn a CPU Bigfoot and arm the auto-start. Consumed once, so a
+            // Single-player: also spawn a CPU Yeti and arm the auto-start. Consumed once, so a
             // later multiplayer host on the same process doesn't inherit it.
             if (SoloPending)
             {
                 SoloPending = false;
-                SpawnBigfootBot();
+                SpawnYetiBot();
                 _soloArmed = true;
             }
         }
 
         /// <summary>
         /// The offline opponent. A server-owned HPPlayer (no connection), flagged a bot and marked as
-        /// wanting Bigfoot so the normal role deal hands it the monster while the lone human becomes a
+        /// wanting Yeti so the normal role deal hands it the monster while the lone human becomes a
         /// searcher. The brain attaches once its role is settled, in ServerBotPlace.
         /// </summary>
-        private void SpawnBigfootBot()
+        private void SpawnYetiBot()
         {
             if (_playerPrefab == null) { Debug.LogError("[solo] no player prefab — bot cannot spawn"); return; }
             NetworkObject nob = Instantiate(_playerPrefab, CampSpot(), Quaternion.identity);
             var hp = nob.GetComponent<HPPlayer>();
-            hp.PlayerName.Value = "Bigfoot";
-            hp.WantsBigfoot.Value = true;
+            hp.PlayerName.Value = "Yeti";
+            hp.WantsYeti.Value = true;
             hp.ServerMarkBot();
             InstanceFinder.ServerManager.Spawn(nob, null); // null owner => host-driven, no client
-            Debug.Log("[solo] CPU Bigfoot spawned (server-owned); waiting to auto-start the match");
+            Debug.Log("[solo] CPU Yeti spawned (server-owned); waiting to auto-start the match");
         }
 
         /// <summary>
@@ -394,7 +394,7 @@ namespace HollowPines.Game
 
         // ------------------------------------------------------------------ lifecycle RPCs
 
-        /// <summary>Host-only: assign roles (one Bigfoot if 2+ or someone opted in), deal specialties, start night 1.</summary>
+        /// <summary>Host-only: assign roles (one Yeti if 2+ or someone opted in), deal specialties, start night 1.</summary>
         [ServerRpc(RequireOwnership = false)]
         public void ServerStartMatch(NetworkConnection sender = null)
         {
@@ -408,21 +408,21 @@ namespace HollowPines.Game
             var players = LivePlayers();
             if (players.Count == 0) return;
 
-            // Bigfoot pick: whoever opted in wins the coin toss; otherwise random when 2+; solo = no Bigfoot.
-            var wanting = players.FindAll(p => p.WantsBigfoot.Value);
-            HPPlayer bigfoot = null;
-            if (wanting.Count > 0) bigfoot = wanting[_rng.Next(wanting.Count)];
-            else if (players.Count >= 2) bigfoot = players[_rng.Next(players.Count)];
-            Debug.Log($"[match] start: {players.Count} players, {wanting.Count} want Bigfoot -> " +
-                      (bigfoot != null ? $"Bigfoot = {bigfoot.PlayerName.Value} (bot={bigfoot.IsBot})" : "NO BIGFOOT"));
+            // Yeti pick: whoever opted in wins the coin toss; otherwise random when 2+; solo = no Yeti.
+            var wanting = players.FindAll(p => p.WantsYeti.Value);
+            HPPlayer yeti = null;
+            if (wanting.Count > 0) yeti = wanting[_rng.Next(wanting.Count)];
+            else if (players.Count >= 2) yeti = players[_rng.Next(players.Count)];
+            Debug.Log($"[match] start: {players.Count} players, {wanting.Count} want Yeti -> " +
+                      (yeti != null ? $"Yeti = {yeti.PlayerName.Value} (bot={yeti.IsBot})" : "NO YETI"));
 
             ResetMatchState(players);
 
             var searcherIds = new List<string>();
             foreach (var p in players)
             {
-                p.Role.Value = p == bigfoot ? HPPlayer.RoleBigfoot : HPPlayer.RoleSearcher;
-                if (p != bigfoot) searcherIds.Add(p.ObjectId.ToString());
+                p.Role.Value = p == yeti ? HPPlayer.RoleYeti : HPPlayer.RoleSearcher;
+                if (p != yeti) searcherIds.Add(p.ObjectId.ToString());
             }
 
             // DEV persona overrides (title-screen picker). DealSpecialties honours forced picks and
@@ -431,7 +431,7 @@ namespace HollowPines.Game
             Dictionary<string, string> forced = null;
             foreach (var p in players)
             {
-                if (p == bigfoot || !Specialties.IsSpecialtyId(p.DevSpecialty.Value)) continue;
+                if (p == yeti || !Specialties.IsSpecialtyId(p.DevSpecialty.Value)) continue;
                 if (forced == null) forced = new Dictionary<string, string>();
                 forced[p.ObjectId.ToString()] = p.DevSpecialty.Value;
             }
@@ -439,7 +439,7 @@ namespace HollowPines.Game
             var deal = Specialties.DealSpecialties(searcherIds, forced, _rng.NextDouble);
             foreach (var p in players)
             {
-                if (p == bigfoot || !deal.TryGetValue(p.ObjectId.ToString(), out string spec))
+                if (p == yeti || !deal.TryGetValue(p.ObjectId.ToString(), out string spec))
                 {
                     p.Specialty.Value = "";
                     p.CharacterName.Value = "";
@@ -452,14 +452,14 @@ namespace HollowPines.Game
                     p.Stamina.Value = (float)Specialties.StaminaMax(spec);
                 }
 
-                if (p == bigfoot)
+                if (p == yeti)
                 {
                     var cave = _world.Caves[_rng.Next(_world.Caves.Count)];
                     var emerge = Caves.CaveEmergePoint(cave);
                     var pos = new Vector3((float)emerge.X, (float)_world.GetHeight(emerge.X, emerge.Z), (float)emerge.Z);
                     // A bot has no Owner, so the TargetRpc can't reach it — place it server-side and
-                    // spin up its brain now that its role (and so its sim's IsBigfoot) is settled.
-                    if (p.IsBot) { p.ServerBotPlace(pos, (float)emerge.Yaw); Debug.Log($"[match] CPU Bigfoot placed at cave {pos} (has BigfootBot={p.GetComponent<BigfootBot>() != null})"); }
+                    // spin up its brain now that its role (and so its sim's IsYeti) is settled.
+                    if (p.IsBot) { p.ServerBotPlace(pos, (float)emerge.Yaw); Debug.Log($"[match] CPU Yeti placed at cave {pos} (has YetiBot={p.GetComponent<YetiBot>() != null})"); }
                     else p.TargetTeleport(p.Owner, pos, (float)emerge.Yaw);
                 }
                 else
@@ -475,7 +475,7 @@ namespace HollowPines.Game
 
         /// <summary>
         /// Open the next night after the recap: advance the clock, refill nightly charges, and reset
-        /// EVERYONE to their start — searchers to camp, Bigfoot to a fresh cave — so each night begins
+        /// EVERYONE to their start — searchers to camp, Yeti to a fresh cave — so each night begins
         /// from the same footing no matter where it ended. Downed/frozen/slowed states clear too; a new
         /// night is a clean slate. Carried (unbanked) proof is kept — you're now standing by the duffel
         /// to bank it. Called only for nights 1->2 and 2->3 (the final night ends in the results screen).
@@ -503,14 +503,14 @@ namespace HollowPines.Game
                 _incapUntil.Remove(p);
                 _slowUntil.Remove(p);
                 _grabbedBy.Remove(p);
-                RemoveByValue(_grabbedBy, p); // if this was the Bigfoot dragging someone
+                RemoveByValue(_grabbedBy, p); // if this was the Yeti dragging someone
                 _recording.Remove(p);
                 _reviveIntent.Remove(p);
                 if (p.Status.Value != HPPlayer.StatusActive) p.Status.Value = HPPlayer.StatusActive;
                 if (p.Slowed.Value) p.Slowed.Value = false;
                 if (p.GrabberObjectId.Value != -1) p.GrabberObjectId.Value = -1;
 
-                if (p.IsBigfoot)
+                if (p.IsYeti)
                 {
                     var cave = _world.Caves[_rng.Next(_world.Caves.Count)];
                     var emerge = Caves.CaveEmergePoint(cave);
@@ -619,7 +619,7 @@ namespace HollowPines.Game
         public void SetRecording(HPPlayer p, bool recording)
         {
             if (recording) _recording.Add(p); else _recording.Remove(p);
-            p.Filming.Value = recording && !p.IsBigfoot;
+            p.Filming.Value = recording && !p.IsYeti;
         }
 
         public void SetReviveTarget(HPPlayer reviver, int targetObjectId)
@@ -631,14 +631,14 @@ namespace HollowPines.Game
 
         public void TryRoar(HPPlayer bf)
         {
-            if (MatchPhase.Value != PhasePlaying || !bf.IsBigfoot) return;
+            if (MatchPhase.Value != PhasePlaying || !bf.IsYeti) return;
             if (_elapsed < Get(_dazzledUntil, bf)) return; // blinded — can't roar
             if (_elapsed < Get(_roarReadyAt, bf)) return;
             Esc e = CurrentEsc();
             _roarReadyAt[bf] = _elapsed + RoarCooldown * e.RoarCd;
             foreach (var h in LivePlayers())
             {
-                if (h.IsBigfoot || h.Status.Value != HPPlayer.StatusActive) continue;
+                if (h.IsYeti || h.Status.Value != HPPlayer.StatusActive) continue;
                 if (Dist2(h, bf) <= RoarRadius * RoarRadius)
                 {
                     h.Status.Value = HPPlayer.StatusFrozen;
@@ -650,7 +650,7 @@ namespace HollowPines.Game
 
         public void TryGrab(HPPlayer bf)
         {
-            if (MatchPhase.Value != PhasePlaying || !bf.IsBigfoot) return;
+            if (MatchPhase.Value != PhasePlaying || !bf.IsYeti) return;
             if (_elapsed < Get(_dazzledUntil, bf)) return; // blinded — can't grab
 
             // Dragging someone already? This drops them where they are.
@@ -678,7 +678,7 @@ namespace HollowPines.Game
             best.Status.Value = HPPlayer.StatusIncap;
             best.Filming.Value = false;
             best.FilmProgress.Value = 0f;
-            bf.StatIncaps.Value++; // recap: Bigfoot's success this match
+            bf.StatIncaps.Value++; // recap: Yeti's success this match
             _recording.Remove(best);
             _frozenUntil.Remove(best);
             _incapUntil[best] = _elapsed + IncapSeconds;
@@ -692,7 +692,7 @@ namespace HollowPines.Game
             // footage (swingy, and nobody but the victim could influence it); the interim version
             // deleted just the victim's carry (proportional, but still a silent subtraction the
             // moment you were downed). Spilling keeps the proportionality AND gives the loss a
-            // second act: the team can mount a recovery run, Bigfoot can stand over the spill and
+            // second act: the team can mount a recovery run, Yeti can stand over the spill and
             // dare them, and the downed player watches their own night hang in the balance.
             int spilled = best.CarriedTotal;
             if (spilled > 0)
@@ -742,7 +742,7 @@ namespace HollowPines.Game
                 HPPlayer p = kv.Key;
                 NetworkObject nob = kv.Value;
                 if (p == null || nob == null) continue;
-                if (p.IsBigfoot || p.Status.Value != HPPlayer.StatusActive) continue;
+                if (p.IsYeti || p.Status.Value != HPPlayer.StatusActive) continue;
 
                 bool hair = IsHairSample(nob);
                 // Only Mara carries the casting kit. Hair needs no kit — you just bag it.
@@ -798,14 +798,14 @@ namespace HollowPines.Game
 
             foreach (var p in LivePlayers())
             {
-                if (p.IsBigfoot || p.CollectProgress01.Value == 0f) continue;
+                if (p.IsYeti || p.CollectProgress01.Value == 0f) continue;
                 if (!_collectIntent.ContainsKey(p)) p.CollectProgress01.Value = 0f;
             }
         }
 
-        // (Bigfoot used to RUIN a workable print by treading on it — removed 2026-07-20, owner call.
+        // (Yeti used to RUIN a workable print by treading on it — removed 2026-07-20, owner call.
         // Evidence now leaves play exactly two ways: it goes cold on the clue lifetime, or a searcher
-        // collects it. Bigfoot has no delete button anywhere in the evidence loop — not on prints, not
+        // collects it. Yeti has no delete button anywhere in the evidence loop — not on prints, not
         // on hair, not on a spilled pack. Its answer to evidence is positional: be where the evidence
         // is. That is one rule instead of three exceptions, and it means a searcher who finds a
         // workable print can always trust that getting there in time is enough.)
@@ -845,13 +845,13 @@ namespace HollowPines.Game
 
         /// <summary>
         /// Store everything a searcher is carrying. This is the ONLY way proof is banked, and once
-        /// banked it is permanent — Bigfoot has no interaction with the duffel at all. Deliberately
+        /// banked it is permanent — Yeti has no interaction with the duffel at all. Deliberately
         /// type-agnostic: it moves whatever the player holds into the team totals, so adding a new
         /// evidence kind means adding a carried counter and nothing here.
         /// </summary>
         public void TryDeposit(HPPlayer p)
         {
-            if (MatchPhase.Value != PhasePlaying || p.IsBigfoot) return;
+            if (MatchPhase.Value != PhasePlaying || p.IsYeti) return;
             if (p.Status.Value != HPPlayer.StatusActive) return;
             if (p.CarriedTotal <= 0 || !AtDuffel(p.transform.position)) return;
 
@@ -891,7 +891,7 @@ namespace HollowPines.Game
         /// </summary>
         public void TryRecoverPile(HPPlayer p, int pileObjectId)
         {
-            if (MatchPhase.Value != PhasePlaying || p.IsBigfoot) return;
+            if (MatchPhase.Value != PhasePlaying || p.IsYeti) return;
             if (p.Status.Value != HPPlayer.StatusActive) return;
 
             for (int i = 0; i < _piles.Count; i++)
@@ -916,14 +916,14 @@ namespace HollowPines.Game
         /// Cave mouths are UNKNOWN to the searchers until somebody walks up to one.
         ///
         /// The map used to hand the team all five lairs at spawn, which quietly deleted the entire
-        /// exploration half of the game: you could stake out Bigfoot's front doors on night 1 without
+        /// exploration half of the game: you could stake out Yeti's front doors on night 1 without
         /// ever having seen the forest. Discovery is TEAM-WIDE and permanent for the match — one
         /// scout's find lights it up for everyone, so scouting is worth doing and worth shouting
         /// about, and a downed searcher's knowledge isn't lost with them.
         ///
         /// Host-side from replicated positions, never client-reported: movement is still
         /// client-authoritative, so a self-reported "I found a cave" would be a free full map.
-        /// Bigfoot is not involved — it always sees its own lairs.
+        /// Yeti is not involved — it always sees its own lairs.
         /// </summary>
         private void DiscoverCaves(List<HPPlayer> hunters)
         {
@@ -956,9 +956,9 @@ namespace HollowPines.Game
         }
 
         /// <summary>
-        /// Spills go cold. This is the pile's ONLY enemy — Bigfoot has no way to destroy one (the same
+        /// Spills go cold. This is the pile's ONLY enemy — Yeti has no way to destroy one (the same
         /// guarantee the duffel has), so guarding it and running out the clock is the play, and the
-        /// searchers' answer is to make Bigfoot choose which spill to stand over.
+        /// searchers' answer is to make Yeti choose which spill to stand over.
         /// </summary>
         private void ExpirePiles()
         {
@@ -1002,13 +1002,13 @@ namespace HollowPines.Game
         // ------------------------------------------------------------------ Eli's flash / Sam's battery
 
         /// <summary>
-        /// Eli's camera flash: a short, tight, aimed burst that dazzles Bigfoot like a held torch does
+        /// Eli's camera flash: a short, tight, aimed burst that dazzles Yeti like a held torch does
         /// — but instantly, and at the cost of painting Eli's own position for it to hunt. One charge
         /// per night. The whole trade is "I can stop it right now, and it will know exactly where I am."
         /// </summary>
         public void TryFlash(HPPlayer p)
         {
-            if (MatchPhase.Value != PhasePlaying || p.IsBigfoot) return;
+            if (MatchPhase.Value != PhasePlaying || p.IsYeti) return;
             if (p.Specialty.Value != "photo" || p.Status.Value != HPPlayer.StatusActive) return;
             if (p.AbilityCharges.Value <= 0) return;
             p.AbilityCharges.Value--;
@@ -1016,7 +1016,7 @@ namespace HollowPines.Game
             bool hit = false;
             foreach (var bf in LivePlayers())
             {
-                if (!bf.IsBigfoot) continue;
+                if (!bf.IsYeti) continue;
                 if (!ConeVisible(p, bf, FlashRange, FlashAimCos)) continue;
                 _dazzledUntil[bf] = _elapsed + FlashDazzleSeconds;
                 _dazzleFill[bf] = 0; // a fresh burst, not a continuation of a torch hold
@@ -1043,12 +1043,12 @@ namespace HollowPines.Game
         /// </summary>
         public void TryBatteryGift(HPPlayer giver, int targetObjectId)
         {
-            if (MatchPhase.Value != PhasePlaying || giver.IsBigfoot) return;
+            if (MatchPhase.Value != PhasePlaying || giver.IsYeti) return;
             if (giver.Specialty.Value != "endurance" || giver.Status.Value != HPPlayer.StatusActive) return;
             if (giver.AbilityCharges.Value <= 0) return;
 
             HPPlayer target = FindLive(targetObjectId);
-            if (target == null || target == giver || target.IsBigfoot) return;
+            if (target == null || target == giver || target.IsYeti) return;
             if (target.Battery.Value >= 99f) return;
             if (Dist2(giver, target) > BatteryGiftRadius * BatteryGiftRadius) return;
 
@@ -1103,7 +1103,7 @@ namespace HollowPines.Game
         public void TryPing(HPPlayer p, float x, float z)
         {
             if (MatchPhase.Value != PhasePlaying || _pingPrefab == null) return;
-            if (p.IsBigfoot || p.Status.Value != HPPlayer.StatusActive) return;
+            if (p.IsYeti || p.Status.Value != HPPlayer.StatusActive) return;
 
             float half = (float)Sim.World.Size / 2f;
             x = Mathf.Clamp(x, -half, half);
@@ -1137,7 +1137,7 @@ namespace HollowPines.Game
         ///
         /// The per-player state is spread across a dozen dictionaries; a leaver has to come out of all
         /// of them, and out of the ones where they appear as a VALUE too — the teammate someone was
-        /// reviving, or the Bigfoot who was dragging them. Miss one and you get a null-key lookup or a
+        /// reviving, or the Yeti who was dragging them. Miss one and you get a null-key lookup or a
         /// searcher pinned in a grab by a monster who has gone.
         /// </summary>
         public void ServerForgetPlayer(HPPlayer p)
@@ -1170,17 +1170,17 @@ namespace HollowPines.Game
 
             if (!base.IsServerStarted || MatchPhase.Value != PhasePlaying) return;
 
-            // Playability: the match needs a Bigfoot AND at least one searcher. Count the players who
+            // Playability: the match needs a Yeti AND at least one searcher. Count the players who
             // REMAIN — exclude the leaver explicitly, since OnStopClient may or may not have pulled it
             // from HPPlayer.All yet on the host.
-            bool bigfootLeft = false, searcherLeft = false;
+            bool yetiLeft = false, searcherLeft = false;
             foreach (var q in HPPlayer.All)
             {
                 if (q == null || q == p) continue;
-                if (q.IsBigfoot) bigfootLeft = true; else searcherLeft = true;
+                if (q.IsYeti) yetiLeft = true; else searcherLeft = true;
             }
 
-            if (!bigfootLeft) AbortToLobby("Bigfoot left the game.");
+            if (!yetiLeft) AbortToLobby("Yeti left the game.");
             else if (!searcherLeft) AbortToLobby("all searchers left the game.");
         }
 
@@ -1238,14 +1238,14 @@ namespace HollowPines.Game
         }
 
         /// <summary>
-        /// Bigfoot fast-travels between cave mouths (ForestRoom's `caveTravel` handler): it must be
+        /// Yeti fast-travels between cave mouths (ForestRoom's `caveTravel` handler): it must be
         /// standing in SOME mouth, pick a different valid cave, and clear the cooldown. The emerge
         /// point comes from the shared sim, so host and client land on the same spot and heading.
         /// </summary>
         public void TryCaveTravel(HPPlayer p, int index)
         {
             if (MatchPhase.Value != PhasePlaying) return;
-            if (!p.IsBigfoot || p.Status.Value != HPPlayer.StatusActive) return;
+            if (!p.IsYeti || p.Status.Value != HPPlayer.StatusActive) return;
             if (index < 0 || index >= _world.Caves.Count) return;
 
             Vector3 at = p.transform.position;
@@ -1277,9 +1277,9 @@ namespace HollowPines.Game
         {
             HPHud.NotifyRoar(pos);
             // Positional so it carries beyond the freeze radius and you can tell WHERE it came from.
-            // The roaring Bigfoot already heard its own roar up close when it pressed the button.
+            // The roaring Yeti already heard its own roar up close when it pressed the button.
             var me = HPPlayer.Local;
-            if (HPAudio.Instance != null && (me == null || !me.IsBigfoot))
+            if (HPAudio.Instance != null && (me == null || !me.IsYeti))
                 HPAudio.Instance.PlayAt(HPAudio.Roar, pos, 0.95f, 30f);
         }
 
@@ -1340,11 +1340,11 @@ namespace HollowPines.Game
             ClueLifetimeSec.Value = (float)(Clue.Lifetime * e.ClueLife);
 
             var players = LivePlayers();
-            var bigfoots = players.FindAll(p => p.IsBigfoot);
-            var hunters = players.FindAll(p => !p.IsBigfoot);
+            var yetis = players.FindAll(p => p.IsYeti);
+            var hunters = players.FindAll(p => !p.IsYeti);
 
-            // Publish the roar cooldown so Bigfoot's HUD can count it down honestly.
-            foreach (var bf in bigfoots)
+            // Publish the roar cooldown so Yeti's HUD can count it down honestly.
+            foreach (var bf in yetis)
             {
                 float rr = (float)System.Math.Max(0, Get(_roarReadyAt, bf) - _elapsed);
                 if (bf.RoarReadyIn.Value != rr) bf.RoarReadyIn.Value = rr;
@@ -1357,32 +1357,32 @@ namespace HollowPines.Game
                 if (h.RevealedFor.Value != rev) h.RevealedFor.Value = rev;
             }
 
-            DropClues(bigfoots);
+            DropClues(yetis);
             ExpireClues(e);
             ExpireMarks();
             ExpirePings();
             ExpirePiles();
-            ShedHairOnTrees(bigfoots);
+            ShedHairOnTrees(yetis);
             DiscoverCaves(hunters);
             UpdateCasting(dt);
             UpdateRevives(dt, hunters);
             UpdateStatuses();
-            UpdateDazzle(dt, hunters, bigfoots);
-            UpdateFilming(dt, hunters, bigfoots);
+            UpdateDazzle(dt, hunters, yetis);
+            UpdateFilming(dt, hunters, yetis);
 
             if (hunters.Count > 0)
             {
                 // Proof is footage PLUS physical evidence — either path, or any mix, gets there.
                 if (StoredProof >= VideosRequired.Value) Winner.Value = WinnerHunters;
-                else if (nightsComplete) Winner.Value = WinnerBigfoot;
+                else if (nightsComplete) Winner.Value = WinnerYeti;
                 if (Winner.Value != WinnerNone) MatchPhase.Value = PhaseResults;
             }
         }
 
-        private void DropClues(List<HPPlayer> bigfoots)
+        private void DropClues(List<HPPlayer> yetis)
         {
             if (_cluePrefab == null) return;
-            foreach (var bf in bigfoots)
+            foreach (var bf in yetis)
             {
                 Vector3 pos = bf.transform.position;
                 if (!_lastTrack.TryGetValue(bf, out Vec2 last))
@@ -1393,7 +1393,7 @@ namespace HollowPines.Game
                 double dx = pos.x - last.X, dz = pos.z - last.Z;
                 if (dx * dx + dz * dz < Stride * Stride) continue;
 
-                // Crouching Bigfoot leaves NO trail — no prints, no snapped branches, no castable
+                // Crouching Yeti leaves NO trail — no prints, no snapped branches, no castable
                 // tracks. The sim already halves crouch speed, so this is a real trade rather than a
                 // free upgrade: move silently, or move quickly. The stride counter still advances, so
                 // standing up doesn't immediately dump the print you just avoided leaving.
@@ -1427,18 +1427,18 @@ namespace HollowPines.Game
         }
 
         /// <summary>
-        /// Bigfoot sheds hair on any tree it shoulders past. Detected HOST-SIDE from the replicated
+        /// Yeti sheds hair on any tree it shoulders past. Detected HOST-SIDE from the replicated
         /// position rather than reported by the client: movement is still client-authoritative, so a
         /// self-reported "I hit a tree" would be a free evidence-suppression switch for a cheater.
-        /// Nothing new goes over the wire for this — the host already knows where Bigfoot is standing.
+        /// Nothing new goes over the wire for this — the host already knows where Yeti is standing.
         ///
         /// A tree is any collider with no ClimbH; every structure in the world (RV, cave boulders,
         /// lookout tower) is climbable, so that test needs no change to the parity-locked sim.
         /// </summary>
-        private void ShedHairOnTrees(List<HPPlayer> bigfoots)
+        private void ShedHairOnTrees(List<HPPlayer> yetis)
         {
             if (_world == null) return;
-            foreach (var bf in bigfoots)
+            foreach (var bf in yetis)
             {
                 if (bf.Status.Value != HPPlayer.StatusActive) continue;
                 if (bf.Crouched.Value) continue;             // crouching leaves no trace of any kind
@@ -1452,7 +1452,7 @@ namespace HollowPines.Game
                     double reach = c.R + Player.Radius + TreeBrushSlack;
                     if (dx * dx + dz * dz > reach * reach) continue;
 
-                    // Put the tuft on the trunk face it brushed, not at Bigfoot's feet — the searcher
+                    // Put the tuft on the trunk face it brushed, not at Yeti's feet — the searcher
                     // should read it as "it squeezed past HERE", which is a direction as well as proof.
                     double d = System.Math.Sqrt(dx * dx + dz * dz);
                     double nx = d > 0.001 ? dx / d : 1, nz = d > 0.001 ? dz / d : 0;
@@ -1533,7 +1533,7 @@ namespace HollowPines.Game
             {
                 HPPlayer reviver = kv.Key, target = kv.Value;
                 if (reviver == null || target == null) { continue; }
-                if (reviver.IsBigfoot || reviver.Status.Value != HPPlayer.StatusActive) continue;
+                if (reviver.IsYeti || reviver.Status.Value != HPPlayer.StatusActive) continue;
                 if (target.Status.Value != HPPlayer.StatusIncap) continue;
                 if (Dist2(reviver, target) > ReviveRadius * ReviveRadius) continue;
 
@@ -1590,7 +1590,7 @@ namespace HollowPines.Game
         {
             foreach (var p in LivePlayers())
             {
-                if (p.IsBigfoot) continue;
+                if (p.IsYeti) continue;
 
                 if (p.Status.Value == HPPlayer.StatusFrozen)
                 {
@@ -1622,9 +1622,9 @@ namespace HollowPines.Game
             }
         }
 
-        private void UpdateDazzle(double dt, List<HPPlayer> hunters, List<HPPlayer> bigfoots)
+        private void UpdateDazzle(double dt, List<HPPlayer> hunters, List<HPPlayer> yetis)
         {
-            foreach (var bf in bigfoots)
+            foreach (var bf in yetis)
             {
                 bool aimed = false;
                 foreach (var h in hunters)
@@ -1644,12 +1644,12 @@ namespace HollowPines.Game
             }
         }
 
-        private void UpdateFilming(double dt, List<HPPlayer> hunters, List<HPPlayer> bigfoots)
+        private void UpdateFilming(double dt, List<HPPlayer> hunters, List<HPPlayer> yetis)
         {
             foreach (var h in hunters)
             {
                 if (h.Status.Value != HPPlayer.StatusActive) continue;
-                bool gaining = _recording.Contains(h) && bigfoots.Exists(b => ConeVisible(h, b, FilmRange * Specialties.FilmRangeMul(h.Specialty.Value), FilmAimCos));
+                bool gaining = _recording.Contains(h) && yetis.Exists(b => ConeVisible(h, b, FilmRange * Specialties.FilmRangeMul(h.Specialty.Value), FilmAimCos));
 
                 if (gaining)
                 {
@@ -1727,7 +1727,7 @@ namespace HollowPines.Game
                 var me = HPPlayer.Local;
                 if (Winner.Value != WinnerNone && me != null)
                 {
-                    bool won = me.IsBigfoot ? Winner.Value == WinnerBigfoot : Winner.Value == WinnerHunters;
+                    bool won = me.IsYeti ? Winner.Value == WinnerYeti : Winner.Value == WinnerHunters;
                     audio.PlayOnce(won ? HPAudio.Victory : HPAudio.Defeat, 0.7f);
                 }
             }

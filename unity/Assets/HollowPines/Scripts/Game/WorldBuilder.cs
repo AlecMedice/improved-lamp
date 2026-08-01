@@ -26,8 +26,8 @@ namespace HollowPines.Game
         private int _lastNight = -1;
 
         /// <summary>
-        /// Local fog-density multiplier. Bigfoot's trade-off (web Phase 3): brighter near vision
-        /// (PostFX exposure) but a murkier distance — set to ~1.35 for the local Bigfoot.
+        /// Local fog-density multiplier. Yeti's trade-off (web Phase 3): brighter near vision
+        /// (PostFX exposure) but a murkier distance — set to ~1.35 for the local Yeti.
         /// </summary>
         public static float FogMul = 1f;
 
@@ -60,7 +60,7 @@ namespace HollowPines.Game
 
         /// <summary>
         /// The evidence duffel beside the RV — the only place proof becomes permanent, and the one
-        /// thing in the forest Bigfoot cannot touch. Derived from the RV's seeded transform so the
+        /// thing in the forest Yeti cannot touch. Derived from the RV's seeded transform so the
         /// renderer and the host agree without a second copy of the coordinates.
         /// </summary>
         public static Vector3 DuffelPosition()
@@ -144,7 +144,7 @@ namespace HollowPines.Game
             SetUndergrowthVisible(undergrowthWasOn);
 
             // Confirm the bake actually produced walkable ground — an empty NavMesh is the leading
-            // suspect when the CPU Bigfoot stands still. Cheap, and only logged once per (re)build.
+            // suspect when the CPU Yeti stands still. Cheap, and only logged once per (re)build.
             var tri = UnityEngine.AI.NavMesh.CalculateTriangulation();
             Debug.Log($"[navmesh] baked: {tri.vertices.Length} verts, {tri.indices.Length / 3} tris" +
                       (tri.indices.Length == 0 ? "  <-- EMPTY: bot will fall back to beeline steering" : ""));
@@ -589,12 +589,12 @@ namespace HollowPines.Game
         /// A cave mouth: a rock mound built into the hillside with a dark opening facing map centre,
         /// framed by an overhang and flanking boulders, with rubble at the threshold. Read as an
         /// ENTRANCE — the earlier three-boulders-in-a-row version read as scenery, which mattered
-        /// because Bigfoot's whole fast-travel network hangs off recognising these.
+        /// because Yeti's whole fast-travel network hangs off recognising these.
         /// </summary>
         /// <summary>
         /// The evidence duffel: a canvas holdall on a tarp beside the RV, lit by its own lamp so it
         /// reads as a destination from across the clearing. Purely a landmark — the deposit rule is
-        /// server-side (GameManager.TryDeposit) and Bigfoot can do nothing to it.
+        /// server-side (GameManager.TryDeposit) and Yeti can do nothing to it.
         /// </summary>
         private void BuildDuffel()
         {
@@ -732,7 +732,7 @@ namespace HollowPines.Game
         // a player standing on top at base+9.5 (GroundHeightAt) and stops pushing them out of its
         // footprint up there — for ANY role, no parity change needed. The platform MESH is aligned to
         // that same 9.5 so a searcher's feet land on the boards, not inside them. All that was missing
-        // was a way UP for a searcher (Bigfoot scales it; searchers can't), which the ladder provides
+        // was a way UP for a searcher (Yeti scales it; searchers can't), which the ladder provides
         // as a client-side climb (HPPlayer) — see LadderXZ / LadderTopY below.
 
         private const float TowerClimbH = 9.5f; // MUST equal WorldData.Lookout's collider ClimbH

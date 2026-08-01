@@ -17,13 +17,13 @@ namespace HollowPines.Game
 #if ENABLE_INPUT_SYSTEM
         private static readonly Dictionary<HPAction, Key> Defaults = new Dictionary<HPAction, Key>
         {
-            { HPAction.Sprint, Key.LeftShift },   // sprint — both roles (Bigfoot's is faster)
+            { HPAction.Sprint, Key.LeftShift },   // sprint — both roles (Yeti's is faster)
             { HPAction.Jump, Key.Space },         // jump / vault / leap / (hold) climb
             { HPAction.Crouch, Key.LeftCtrl },
             { HPAction.Flashlight, Key.F },
             { HPAction.Revive, Key.E },
             { HPAction.Mark, Key.T },             // Wren's trail mark
-            { HPAction.Senses, Key.V },           // Bigfoot's senses overlay
+            { HPAction.Senses, Key.V },           // Yeti's senses overlay
             { HPAction.Map, Key.Tab },            // map overlay — you keep walking while it's up
             { HPAction.Ping, Key.Q },             // searcher stakeout ping at your feet
             { HPAction.Flash, Key.G },            // Eli's camera flash

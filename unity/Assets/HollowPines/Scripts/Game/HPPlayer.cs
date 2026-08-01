@@ -1,4 +1,4 @@
-// The networked player — searcher or Bigfoot. Unity port of the web build's LocalPlayer +
+// The networked player — searcher or Yeti. Unity port of the web build's LocalPlayer +
 // RemotePlayer, driven by the shared deterministic sim (HollowPines.Sim.Movement.StepPlayer):
 // the owner samples input, steps the sim at a fixed 20 Hz, and streams its transform
 // (client-authoritative NetworkTransform for THIS milestone — host-side re-validation returns
@@ -23,7 +23,7 @@ namespace HollowPines.Game
     public class HPPlayer : NetworkBehaviour
     {
         public const byte RoleSearcher = 0;
-        public const byte RoleBigfoot = 1;
+        public const byte RoleYeti = 1;
         public const byte StatusActive = 0;
         public const byte StatusFrozen = 1;
         public const byte StatusIncap = 2;
@@ -40,17 +40,17 @@ namespace HollowPines.Game
         public readonly SyncVar<string> Specialty = new SyncVar<string>("");
         public readonly SyncVar<string> CharacterName = new SyncVar<string>("");
         public readonly SyncVar<bool> FlashOn = new SyncVar<bool>(false);
-        /// <summary>Crouching. Replicated because the host suppresses Bigfoot's trail while it is.</summary>
+        /// <summary>Crouching. Replicated because the host suppresses Yeti's trail while it is.</summary>
         public readonly SyncVar<bool> Crouched = new SyncVar<bool>(false);
         public readonly SyncVar<float> Battery = new SyncVar<float>(100f);
         public readonly SyncVar<float> Stamina = new SyncVar<float>(100f);
         public readonly SyncVar<bool> Filming = new SyncVar<bool>(false);
         public readonly SyncVar<float> FilmProgress = new SyncVar<float>(0f);
         public readonly SyncVar<int> GrabberObjectId = new SyncVar<int>(-1);
-        public readonly SyncVar<bool> WantsBigfoot = new SyncVar<bool>(false);
+        public readonly SyncVar<bool> WantsYeti = new SyncVar<bool>(false);
         /// <summary>DEV: the persona this player asked to be dealt ("" = normal random deal).</summary>
         public readonly SyncVar<string> DevSpecialty = new SyncVar<string>("");
-        /// <summary>Bigfoot only: seconds until the next roar is available (HUD cooldown).</summary>
+        /// <summary>Yeti only: seconds until the next roar is available (HUD cooldown).</summary>
         public readonly SyncVar<float> RoarReadyIn = new SyncVar<float>(0f);
         /// <summary>Incapacitated only: 0..1 revive progress a teammate has accrued on this player.</summary>
         public readonly SyncVar<float> ReviveProgress01 = new SyncVar<float>(0f);
@@ -59,7 +59,7 @@ namespace HollowPines.Game
         /// <summary>
         /// Proof this searcher is CARRYING and has not yet stored in the duffel — tapes, casts and
         /// hair counted separately for the HUD, but they behave identically: unsafe until deposited,
-        /// and SPILLED on the ground as a recoverable pile if Bigfoot takes you (GameManager.TryGrab
+        /// and SPILLED on the ground as a recoverable pile if Yeti takes you (GameManager.TryGrab
         /// → SpawnProofPile). Any future evidence type joins these and needs no change to the deposit
         /// path (see GameManager.TryDeposit / CarriedTotal).
         /// </summary>
@@ -71,13 +71,13 @@ namespace HollowPines.Game
         public int CarriedTotal => CarriedFilm.Value + CarriedCasts.Value + CarriedHair.Value;
 
         // Match stats, for the between-nights recap. Searcher: proof BANKED into the duffel (the real
-        // contribution — carried proof can still be spilled). Bigfoot: searchers TAKEN (incaps landed).
+        // contribution — carried proof can still be spilled). Yeti: searchers TAKEN (incaps landed).
         public readonly SyncVar<int> StatBanked = new SyncVar<int>(0);
         public readonly SyncVar<int> StatIncaps = new SyncVar<int>(0);
         /// <summary>Per-night ability charges — Eli's flash, Sam's spare battery. 0 for everyone else.</summary>
         public readonly SyncVar<int> AbilityCharges = new SyncVar<int>(0);
         /// <summary>
-        /// Seconds this searcher stays lit up on Bigfoot's screen after firing a camera flash —
+        /// Seconds this searcher stays lit up on Yeti's screen after firing a camera flash —
         /// the cost side of Eli's ability. A countdown, so no shared clock is needed to read it.
         /// </summary>
         public readonly SyncVar<float> RevealedFor = new SyncVar<float>(0f);
@@ -86,7 +86,7 @@ namespace HollowPines.Game
         public static readonly List<HPPlayer> All = new List<HPPlayer>();
         public static HPPlayer Local { get; private set; }
 
-        public bool IsBigfoot => Role.Value == RoleBigfoot;
+        public bool IsYeti => Role.Value == RoleYeti;
 
         // --- Owner-side sim ---
         /// <summary>Longest frame the sim will step in one go — a hitch stalls you, never teleports you.</summary>
@@ -134,9 +134,9 @@ namespace HollowPines.Game
         private byte _builtRole = 255;
         private Color _baseBodyColor;
 
-        // --- Senses overlay (V, Bigfoot, client-only render toggle like the web build) ---
+        // --- Senses overlay (V, Yeti, client-only render toggle like the web build) ---
         public static bool SensesOn;
-        /// <summary>Bigfoot's own recent positions — its scent trail for the senses overlay.</summary>
+        /// <summary>Yeti's own recent positions — its scent trail for the senses overlay.</summary>
         public static readonly List<(Vector3 pos, float time)> ScentTrail = new List<(Vector3, float)>();
         public const float ScentLifetime = 30f;
 
@@ -169,7 +169,7 @@ namespace HollowPines.Game
             {
                 Local = this;
                 HPHud.PauseOpen = false; // fresh session, no stale pause
-                _sim = NewSimState(transform.position, IsBigfoot);
+                _sim = NewSimState(transform.position, IsYeti);
                 _yaw = SimYawFromTransform();
                 _cam = Camera.main;
                 if (_cam != null)
@@ -215,26 +215,26 @@ namespace HollowPines.Game
             if (!asServer) BuildVisuals();
             if (base.IsOwner && _sim != null)
             {
-                _sim.IsBigfoot = next == RoleBigfoot;
-                _sim.EyeHeight = next == RoleBigfoot ? 2.4 : Sim.Player.EyeHeight;
-                if (PostFX.Instance != null) PostFX.Instance.SetBigfootVision(next == RoleBigfoot);
-                // The other half of Bigfoot's vision trade: brighter up close, murkier far away.
-                WorldBuilder.FogMul = next == RoleBigfoot ? 1.35f : 1f;
+                _sim.IsYeti = next == RoleYeti;
+                _sim.EyeHeight = next == RoleYeti ? 2.4 : Sim.Player.EyeHeight;
+                if (PostFX.Instance != null) PostFX.Instance.SetYetiVision(next == RoleYeti);
+                // The other half of Yeti's vision trade: brighter up close, murkier far away.
+                WorldBuilder.FogMul = next == RoleYeti ? 1.35f : 1f;
                 if (WorldBuilder.Instance != null) WorldBuilder.Instance.InvalidatePalette();
                 SensesOn = false;
                 ScentTrail.Clear();
             }
         }
 
-        private static PlayerSimState NewSimState(Vector3 pos, bool bigfoot)
+        private static PlayerSimState NewSimState(Vector3 pos, bool yeti)
         {
             var world = WorldBuilder.EnsureWorld();
             double gy = world.GetHeight(pos.x, pos.z);
             return new PlayerSimState
             {
                 X = pos.x, Z = pos.z, FeetY = gy, GroundY = gy, Grounded = true,
-                Stamina = 100, Battery = 100, EyeHeight = bigfoot ? 2.4 : Sim.Player.EyeHeight,
-                CurEye = bigfoot ? 2.4 : Sim.Player.EyeHeight, IsBigfoot = bigfoot,
+                Stamina = 100, Battery = 100, EyeHeight = yeti ? 2.4 : Sim.Player.EyeHeight,
+                CurEye = yeti ? 2.4 : Sim.Player.EyeHeight, IsYeti = yeti,
             };
         }
 
@@ -242,7 +242,7 @@ namespace HollowPines.Game
         [FishNet.Object.TargetRpc]
         public void TargetTeleport(FishNet.Connection.NetworkConnection conn, Vector3 pos, float yawRad)
         {
-            _sim = NewSimState(pos, IsBigfoot);
+            _sim = NewSimState(pos, IsYeti);
             _sim.Stamina = Stamina.Value;
             _yaw = yawRad;
             _pitch = 0f;
@@ -295,7 +295,7 @@ namespace HollowPines.Game
             }
 
             if (canAct) HandleAbilities(playing);
-            if (canAct && !IsBigfoot) UpdateBinoculars(); else EndGlassing();
+            if (canAct && !IsYeti) UpdateBinoculars(); else EndGlassing();
             PushVitals();
             UpdateBob();
             UpdateScent();
@@ -434,14 +434,14 @@ namespace HollowPines.Game
         {
             var audio = HPAudio.Instance;
             if (audio == null) return;
-            // Crouching is silent for BOTH roles — the same rule that suppresses Bigfoot's tracks.
+            // Crouching is silent for BOTH roles — the same rule that suppresses Yeti's tracks.
             // Half speed buys you leaving no trace at all, in prints or in sound.
             if (_crouching) { _stepTimer = 0f; return; }
             if (!_lastStep.Moving || !_sim.Grounded) { _stepTimer = 0f; return; }
 
             _stepTimer -= Time.deltaTime;
             if (_stepTimer > 0f) return;
-            audio.PlayFootstep(_lastStep.Sprinting, IsBigfoot, (float)Specialties.FootstepVolumeMul(Specialty.Value));
+            audio.PlayFootstep(_lastStep.Sprinting, IsYeti, (float)Specialties.FootstepVolumeMul(Specialty.Value));
             _stepTimer = (float)(_lastStep.Sprinting
                 ? Sim.Player.StepIntervalSprint
                 : Sim.Player.StepIntervalWalk * (_crouching ? 1.6 : 1));
@@ -458,10 +458,10 @@ namespace HollowPines.Game
             else if (Status.Value == StatusIncap) audio.PlayOnce(HPAudio.GrabImpact, 0.95f);
         }
 
-        /// <summary>Bigfoot leaves a scent memory of where it's been (fuel for the senses overlay).</summary>
+        /// <summary>Yeti leaves a scent memory of where it's been (fuel for the senses overlay).</summary>
         private void UpdateScent()
         {
-            if (!IsBigfoot) return;
+            if (!IsYeti) return;
             _scentTimer += Time.deltaTime;
             if (_scentTimer < 1.5f) return;
             _scentTimer = 0f;
@@ -580,7 +580,7 @@ namespace HollowPines.Game
             {
                 _pressedJump = true;
                 _pressedMount = true; // consumed by the ladder-mount check after the step
-                if (IsBigfoot) _pressedLeap = true; else _pressedVault = true;
+                if (IsYeti) _pressedLeap = true; else _pressedVault = true;
             }
 
             // Step ONCE PER FRAME with the real frame delta — exactly what the web build's LocalPlayer
@@ -608,10 +608,10 @@ namespace HollowPines.Game
                     Jump = _pressedJump,
                     Leap = _pressedLeap,
                     Vault = _pressedVault,
-                    Climb = locked && IsBigfoot && HPKeybinds.Down(kb, HPAction.Jump),
-                    // Bigfoot sprints too (it replaced the charge burst): the sim's BigfootSpeedMul
+                    Climb = locked && IsYeti && HPKeybinds.Down(kb, HPAction.Jump),
+                    // Yeti sprints too (it replaced the charge burst): the sim's YetiSpeedMul
                     // makes its sprint outrun a searcher's outright, and sprinting drains its stamina
-                    // the same way — which is what finally gives Bigfoot's stamina bar a purpose.
+                    // the same way — which is what finally gives Yeti's stamina bar a purpose.
                     Sprint = locked && HPKeybinds.Down(kb, HPAction.Sprint),
                     Crouch = locked && HPKeybinds.Down(kb, HPAction.Crouch),
                     Dt = frameDt,
@@ -623,8 +623,8 @@ namespace HollowPines.Game
                 transform.position = new Vector3((float)_sim.X, (float)_sim.FeetY, (float)_sim.Z);
 
                 // Mount the tower ladder: a searcher pressing jump while alongside the ladder line
-                // starts climbing instead of hopping. (Bigfoot scales the tower with its own climb.)
-                if (_pressedMount && !IsBigfoot && NearLadder()) EnterLadder();
+                // starts climbing instead of hopping. (Yeti scales the tower with its own climb.)
+                if (_pressedMount && !IsYeti && NearLadder()) EnterLadder();
                 _pressedMount = false;
             }
 #endif
@@ -735,7 +735,7 @@ namespace HollowPines.Game
         {
 #if ENABLE_INPUT_SYSTEM
             var kb = Keyboard.current;
-            bool want = kb != null && !IsBigfoot && Status.Value == StatusActive && !_onLadder &&
+            bool want = kb != null && !IsYeti && Status.Value == StatusActive && !_onLadder &&
                         Cursor.lockState == CursorLockMode.Locked &&
                         OnLookoutPlatform() && HPKeybinds.Down(kb, HPAction.Binoculars);
 
@@ -772,7 +772,7 @@ namespace HollowPines.Game
             var gm = GameManager.Instance;
             float esc = gm != null ? gm.EscSpeed.Value : 1f;
             double speedMul = 1;
-            if (IsBigfoot) speedMul = esc;               // per-night escalation only
+            if (IsYeti) speedMul = esc;               // per-night escalation only
             else if (Slowed.Value) speedMul = Sim.Player.SlowFactor;
 
             return new StepModifiers
@@ -792,7 +792,7 @@ namespace HollowPines.Game
             if (kb == null || mouse == null || Cursor.lockState != CursorLockMode.Locked) return;
 
             var audio = HPAudio.Instance;
-            if (IsBigfoot)
+            if (IsYeti)
             {
                 // Roar is gated CLIENT-SIDE as well as server-side (the web build's tryRoar does the
                 // same). Without this the request fires on every click: the server correctly refuses
@@ -835,7 +835,7 @@ namespace HollowPines.Game
                     if (audio != null) audio.PlayOnce(HPAudio.PingDrop, 0.4f);
                 }
 
-                // Eli's camera flash — an aimed burst that stuns Bigfoot and paints Eli for it.
+                // Eli's camera flash — an aimed burst that stuns Yeti and paints Eli for it.
                 if (playing && HPKeybinds.Pressed(kb, HPAction.Flash) &&
                     Specialty.Value == "photo" && AbilityCharges.Value > 0)
                     ServerFlash();
@@ -860,7 +860,7 @@ namespace HollowPines.Game
                 if (_depositHeld >= GameManager.DepositSeconds) { _depositHeld = 0f; ServerDeposit(); }
 
                 // Gathering up a spilled pack is the same shape — a beat of standing still, which is
-                // exactly the beat Bigfoot is waiting for if it chose to guard the spill.
+                // exactly the beat Yeti is waiting for if it chose to guard the spill.
                 _recoverHeld = recoverTarget >= 0 ? _recoverHeld + Time.deltaTime : 0f;
                 if (_recoverHeld >= GameManager.PileRecoverSeconds) { _recoverHeld = 0f; ServerRecoverPile(recoverTarget); }
 
@@ -916,7 +916,7 @@ namespace HollowPines.Game
             _vitalsTimer += Time.deltaTime;
             bool flashChanged = _sim.FlashlightOn != _lastFlashSent;
             // Crouch is replicated because the HOST decides whether to drop a footprint, and a
-            // crouching Bigfoot leaves no trail. Send it the instant it changes rather than waiting
+            // crouching Yeti leaves no trail. Send it the instant it changes rather than waiting
             // for the 5 Hz tick, or you'd shed a print or two after going quiet.
             bool crouchChanged = _crouching != _lastCrouchSent;
             if (_vitalsTimer < 0.2f && !flashChanged && !crouchChanged) return;
@@ -1019,7 +1019,7 @@ namespace HollowPines.Game
                 float bestB = 3.5f * 3.5f;
                 foreach (var p in All)
                 {
-                    if (p == null || p == this || p.IsBigfoot) continue;
+                    if (p == null || p == this || p.IsYeti) continue;
                     if (p.Status.Value != StatusActive || p.Battery.Value >= 99f) continue;
                     float d = (p.transform.position - transform.position).sqrMagnitude;
                     if (d <= bestB) { bestB = d; lowBattery = p; }
@@ -1041,7 +1041,7 @@ namespace HollowPines.Game
             float bestD = radius * radius;
             foreach (var p in All)
             {
-                if (p == this || p.IsBigfoot || p.Status.Value != StatusIncap) continue;
+                if (p == this || p.IsYeti || p.Status.Value != StatusIncap) continue;
                 float d = (p.transform.position - transform.position).sqrMagnitude;
                 if (d <= bestD) { bestD = d; best = p; }
             }
@@ -1089,7 +1089,7 @@ namespace HollowPines.Game
         /// <summary>
         /// Flag this as a bot at SPAWN, before roles are dealt. ServerStartMatch reads IsBot to place
         /// it server-side (a bot has no Owner, so the TargetRpc teleport can't reach it) and to leave
-        /// its role to the normal deal — the bot just carries WantsBigfoot so the deal hands it Bigfoot.
+        /// its role to the normal deal — the bot just carries WantsYeti so the deal hands it Yeti.
         /// </summary>
         public void ServerMarkBot() => _isBot = true;
 
@@ -1105,7 +1105,7 @@ namespace HollowPines.Game
             _yaw = yawRad;
             if (_sim != null) { _sim.X = pos.x; _sim.Z = pos.z; }
             ApplyBodyYaw();
-            Debug.Log($"[bot] ServerBotPlace -> {pos}  (bigfoot={IsBigfoot}, brain={GetComponent<BigfootBot>() != null})");
+            Debug.Log($"[bot] ServerBotPlace -> {pos}  (yeti={IsYeti}, brain={GetComponent<YetiBot>() != null})");
         }
 
         /// <summary>
@@ -1116,7 +1116,7 @@ namespace HollowPines.Game
         public void ServerBecomeBot()
         {
             _isBot = true;
-            _sim = NewSimState(transform.position, IsBigfoot);
+            _sim = NewSimState(transform.position, IsYeti);
             _yaw = SimYawFromTransform();
 
             // The player prefab's NetworkTransform is CLIENT-authoritative (humans own and drive their
@@ -1132,7 +1132,7 @@ namespace HollowPines.Game
             // The brain is a plain host-side component; it needs no networking of its own because it
             // only ever calls this player's public server methods. Added dynamically so the shared
             // player prefab stays exactly what a human uses.
-            if (IsBigfoot && GetComponent<BigfootBot>() == null) gameObject.AddComponent<BigfootBot>();
+            if (IsYeti && GetComponent<YetiBot>() == null) gameObject.AddComponent<YetiBot>();
         }
 
         /// <summary>
@@ -1146,7 +1146,7 @@ namespace HollowPines.Game
             if (!_isBot || _sim == null) return default;
             if (Status.Value != StatusActive) return default; // a frozen/incap bot is as stuck as a human
 
-            _sim.IsBigfoot = IsBigfoot;
+            _sim.IsYeti = IsYeti;
             input.Yaw = _yaw;
             var before = new Vector2((float)_sim.X, (float)_sim.Z);
             var mods = CurrentModifiers();
@@ -1188,8 +1188,8 @@ namespace HollowPines.Game
         public bool OwnGrounded => _sim == null || _sim.Grounded;
         /// <summary>HUD hints for the tower (searcher, owner). All computed from the live transform.</summary>
         public bool OwnOnLadder => _onLadder;
-        public bool OwnNearLadder => !IsBigfoot && !_onLadder && NearLadder();
-        public bool OwnOnLookout => !IsBigfoot && OnLookoutPlatform();
+        public bool OwnNearLadder => !IsYeti && !_onLadder && NearLadder();
+        public bool OwnOnLookout => !IsYeti && OnLookoutPlatform();
         public bool OwnGlassing => _glassing;
         /// <summary>True while the sim is actually sprinting this frame (not merely holding the key).</summary>
         public bool OwnSprinting => _lastStep.Sprinting;
@@ -1212,15 +1212,15 @@ namespace HollowPines.Game
         /// <summary>Searcher drops a stakeout ping (Q at your feet, or a click on the open map).</summary>
         public void RequestPing(float x, float z)
         {
-            if (!base.IsOwner || IsBigfoot || Status.Value != StatusActive) return;
+            if (!base.IsOwner || IsYeti || Status.Value != StatusActive) return;
             ServerPing(x, z);
             if (HPAudio.Instance != null) HPAudio.Instance.PlayOnce(HPAudio.PingDrop, 0.5f);
         }
 
-        /// <summary>Bigfoot picks a destination cave off the map; the server re-validates every rule.</summary>
+        /// <summary>Yeti picks a destination cave off the map; the server re-validates every rule.</summary>
         public void RequestCaveTravel(int index)
         {
-            if (!base.IsOwner || !IsBigfoot || Status.Value != StatusActive) return;
+            if (!base.IsOwner || !IsYeti || Status.Value != StatusActive) return;
             if (Time.time < _caveReadyAt) return;
 
             // Mirror the server's checks before spending the local cooldown — otherwise a request the
@@ -1334,9 +1334,9 @@ namespace HollowPines.Game
         }
 
         [ServerRpc]
-        public void ServerSetWantsBigfoot(bool wants)
+        public void ServerSetWantsYeti(bool wants)
         {
-            WantsBigfoot.Value = wants;
+            WantsYeti.Value = wants;
         }
 
         /// <summary>DEV persona request. Validated here so a client can't invent a specialty id.</summary>
@@ -1370,7 +1370,7 @@ namespace HollowPines.Game
             body.transform.SetParent(_visualRoot, false);
             _bodyRenderer = body.GetComponent<MeshRenderer>();
 
-            if (IsBigfoot)
+            if (IsYeti)
             {
                 body.transform.localScale = new Vector3(1.3f, 1.35f, 1.3f); // capsule h=2 -> ~2.7 m
                 body.transform.localPosition = new Vector3(0f, 1.35f, 0f);
@@ -1406,7 +1406,7 @@ namespace HollowPines.Game
                 // than the original port did (range 60 -> 90, intensity 11 -> 20, hotter core). Three's
                 // `angle` was a HALF-angle (0.5 rad -> ~57 deg full cone); the wider inner angle throws
                 // a broader lit pool so you can actually read the forest floor while moving. It stays a
-                // trade: the brighter the beam, the farther Bigfoot sees you carrying it (the bot's
+                // trade: the brighter the beam, the farther Yeti sees you carrying it (the bot's
                 // TorchSightRange, and the dazzle beam, both key off the same light being ON).
                 _flashlight.range = 90f;
                 _flashlight.spotAngle = 62f;
@@ -1434,7 +1434,7 @@ namespace HollowPines.Game
 
         /// <summary>
         /// Remote players' footsteps: accrue the ground they cover and emit a positional step each
-        /// stride (Bigfoot's gait is longer and heavier). This is how you hear someone in the dark.
+        /// stride (Yeti's gait is longer and heavier). This is how you hear someone in the dark.
         /// </summary>
         private void UpdateRemoteFootsteps()
         {
@@ -1450,12 +1450,12 @@ namespace HollowPines.Game
             _lastAudioPos = pos;
             if (moved > 3f) return; // a jump this large is a teleport (cave travel), not a step
 
-            float stride = IsBigfoot ? 2.3f : 1.7f;
+            float stride = IsYeti ? 2.3f : 1.7f;
             _remoteStepDist += moved;
             if (_remoteStepDist < stride) return;
             _remoteStepDist = 0f;
-            audio.PlayAt(IsBigfoot ? HPAudio.FootstepHeavy : HPAudio.FootstepSoft, pos,
-                (IsBigfoot ? 0.7f : 0.4f) * (float)Specialties.FootstepVolumeMul(Specialty.Value), 7f);
+            audio.PlayAt(IsYeti ? HPAudio.FootstepHeavy : HPAudio.FootstepSoft, pos,
+                (IsYeti ? 0.7f : 0.4f) * (float)Specialties.FootstepVolumeMul(Specialty.Value), 7f);
         }
 
         private void UpdateSharedVisuals()
@@ -1499,7 +1499,7 @@ namespace HollowPines.Game
             }
 
             // Camera eye follows crouch for the owner; remotes just show the capsule.
-            if (base.IsOwner && Specialty.Value != null && _bodyRenderer != null && !IsBigfoot)
+            if (base.IsOwner && Specialty.Value != null && _bodyRenderer != null && !IsYeti)
             {
                 // Body colour can change when the specialty is dealt mid-session.
                 int hex = SpecialtyColors.TryGetValue(Specialty.Value, out int c) ? c : 0x9aa2aa;

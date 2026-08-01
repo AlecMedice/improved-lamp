@@ -30,11 +30,11 @@ namespace HollowPines.Sim
 
     public static class Player
     {
-        public const double EyeHeight = 1.7;         // searcher; Bigfoot is taller
+        public const double EyeHeight = 1.7;         // searcher; Yeti is taller
         public const double Radius = 0.4;            // collision radius
         public const double WalkSpeed = 5;
         public const double SprintSpeed = 8.5;
-        public const double BigfootSpeedMul = 1.22;  // Bigfoot is faster
+        public const double YetiSpeedMul = 1.22;  // Yeti is faster
         public const double MouseSensitivity = 0.0022;
         public const double BatteryDrainPerSec = 1.4; // while flashlight is on
         public const double StaminaDrainPerSec = 18;  // while sprinting
@@ -52,13 +52,13 @@ namespace HollowPines.Sim
                                                       // (logs are solid, so you can never stand inside one)
         public const double VaultHopSpeed = 4.6;      // upward velocity when a hunter vaults a log
         public const double VaultStaminaCost = 12;    // stamina spent to vault a log (the only way through)
-        public const double ClimbSpeed = 3.6;         // Bigfoot's vertical climb rate (m/s)
+        public const double ClimbSpeed = 3.6;         // Yeti's vertical climb rate (m/s)
         public const double ClimbStaminaDrain = 22;   // stamina/sec while climbing/clinging
-        public const double ClimbReach = 0.7;         // how far past a structure's edge Bigfoot can grab on (m)
+        public const double ClimbReach = 0.7;         // how far past a structure's edge Yeti can grab on (m)
         public const double LakeHunterFactor = 0.28;  // hunter speed multiplier while wading
-        public const double LakeBigfootFactor = 0.72; // Bigfoot speed multiplier while wading
+        public const double LakeYetiFactor = 0.72; // Yeti speed multiplier while wading
         public const double JumpSpeed = 5.2;          // initial upward velocity on jump (m/s)
-        public const double LeapSpeed = 9.5;          // Bigfoot's leap: initial upward velocity (m/s)
+        public const double LeapSpeed = 9.5;          // Yeti's leap: initial upward velocity (m/s)
         public const double LeapStaminaCost = 30;     // stamina spent per leap
         public const double Gravity = 16;             // downward acceleration while airborne (m/s^2)
         public const double CrouchFactor = 0.55;      // eye-height multiplier while crouched
@@ -69,7 +69,7 @@ namespace HollowPines.Sim
     /// <summary>Cave fast-travel rules — shared because the host validates `caveTravel` with them.</summary>
     public static class CaveRules
     {
-        public const double TriggerRadius = 6;   // how close Bigfoot must be to a mouth to use it
+        public const double TriggerRadius = 6;   // how close Yeti must be to a mouth to use it
         public const double TravelCooldown = 2.0;
         public const double EmergeOffset = 8;    // metres toward map centre a traveller emerges (outside the horseshoe)
     }

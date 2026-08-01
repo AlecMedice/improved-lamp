@@ -41,7 +41,7 @@ namespace HollowPines.Parity
             CollidersCheck(g, seed);
             WorldCheck(g, seed);
             HunterTrajectory(g, seed);
-            BigfootTrajectory(g, seed);
+            YetiTrajectory(g, seed);
             SpecialtiesGolden(g);
 
             Console.WriteLine("\n== mirrored property tests (from server/test/*.ts) ==");
@@ -185,7 +185,7 @@ namespace HollowPines.Parity
             {
                 X = 0, Z = 0, FeetY = gy, GroundY = gy, Vy = 0, Grounded = true,
                 Yaw = 0, Stamina = 100, Exhausted = false, Battery = 100, CurEye = 1.7,
-                FlashlightOn = true, IsBigfoot = false, EyeHeight = 1.7,
+                FlashlightOn = true, IsYeti = false, EyeHeight = 1.7,
             };
             var input = new MoveInput { W = true, Yaw = 0.6, Sprint = true, Dt = 1.0 / 20.0 };
             var expected = g.GetProperty("hunterTrajectory");
@@ -204,7 +204,7 @@ namespace HollowPines.Parity
             }
         }
 
-        private static void BigfootTrajectory(JsonElement g, uint seed)
+        private static void YetiTrajectory(JsonElement g, uint seed)
         {
             var world = GameWorld.MakeWorld(seed);
             double gy = world.GetHeight(30, 30);
@@ -212,9 +212,9 @@ namespace HollowPines.Parity
             {
                 X = 30, Z = 30, FeetY = gy, GroundY = gy, Vy = 0, Grounded = true,
                 Yaw = 1.0, Stamina = 100, Exhausted = false, Battery = 100, CurEye = 2.4,
-                FlashlightOn = false, IsBigfoot = true, EyeHeight = 2.4,
+                FlashlightOn = false, IsYeti = true, EyeHeight = 2.4,
             };
-            var expected = g.GetProperty("bigfootTrajectory");
+            var expected = g.GetProperty("yetiTrajectory");
             int ei = 0;
             for (int i = 0; i < 30; i++)
             {
@@ -223,10 +223,10 @@ namespace HollowPines.Parity
                 if (i % 6 == 5)
                 {
                     var e = expected[ei++];
-                    Near($"bigfoot[{i}].x", st.X, e.GetProperty("x").GetDouble());
-                    Near($"bigfoot[{i}].feetY", st.FeetY, e.GetProperty("feetY").GetDouble());
-                    Near($"bigfoot[{i}].vy", st.Vy, e.GetProperty("vy").GetDouble());
-                    Near($"bigfoot[{i}].stamina", st.Stamina, e.GetProperty("stamina").GetDouble());
+                    Near($"yeti[{i}].x", st.X, e.GetProperty("x").GetDouble());
+                    Near($"yeti[{i}].feetY", st.FeetY, e.GetProperty("feetY").GetDouble());
+                    Near($"yeti[{i}].vy", st.Vy, e.GetProperty("vy").GetDouble());
+                    Near($"yeti[{i}].stamina", st.Stamina, e.GetProperty("stamina").GetDouble());
                 }
             }
         }
@@ -274,7 +274,7 @@ namespace HollowPines.Parity
             {
                 X = 0, Z = 0, FeetY = gy, GroundY = gy, Vy = 0, Grounded = true, Yaw = 0,
                 Stamina = 100, Exhausted = false, Battery = 100, CurEye = Player.EyeHeight,
-                FlashlightOn = false, IsBigfoot = false, EyeHeight = Player.EyeHeight,
+                FlashlightOn = false, IsYeti = false, EyeHeight = Player.EyeHeight,
             };
             over?.Invoke(st);
             return st;
@@ -358,7 +358,7 @@ namespace HollowPines.Parity
         private static void LeapTests(uint seed)
         {
             var world = GameWorld.MakeWorld(seed);
-            var st = MakeState(world, s => s.IsBigfoot = true);
+            var st = MakeState(world, s => s.IsYeti = true);
             double groundY = st.GroundY;
             Movement.StepPlayer(st, MakeInput(b => b.Leap = true), world, Mods);
             Check("leap leaves the ground", !st.Grounded);
@@ -375,7 +375,7 @@ namespace HollowPines.Parity
             Check("leap apex near analytic v^2/2g", (apex - groundY) > analytic - 0.3 && (apex - groundY) < analytic + 0.4);
             Check("leap comes back down", st.Grounded);
 
-            var st2 = MakeState(world, s => { s.IsBigfoot = true; s.Stamina = Player.LeapStaminaCost - 1; });
+            var st2 = MakeState(world, s => { s.IsYeti = true; s.Stamina = Player.LeapStaminaCost - 1; });
             Movement.StepPlayer(st2, MakeInput(b => b.Leap = true), world, Mods);
             Check("won't leap without enough stamina", st2.Grounded);
         }
@@ -429,7 +429,7 @@ namespace HollowPines.Parity
             }
             Check("forced pick honoured and never duplicated", held);
 
-            Check("isSpecialtyId validates", Specialties.IsSpecialtyId("tracking") && !Specialties.IsSpecialtyId("bigfoot") && !Specialties.IsSpecialtyId(null));
+            Check("isSpecialtyId validates", Specialties.IsSpecialtyId("tracking") && !Specialties.IsSpecialtyId("yeti") && !Specialties.IsSpecialtyId(null));
         }
 
         private static int DistinctCount(List<string> sids, Dictionary<string, string> deal)

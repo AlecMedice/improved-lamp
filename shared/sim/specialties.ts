@@ -40,8 +40,8 @@ export const SPECIALTIES = {
     flash: {
       range: 22, // short reach (< dazzle's 40)
       aimCos: Math.cos(0.5), // ~29° cone — an aimed shot
-      dazzleSeconds: 3, // reuse DAZZLE_SECONDS: locks Bigfoot's roar/grab + cuts its sight
-      revealSeconds: 5, // Bigfoot sees Eli's position marked for this long
+      dazzleSeconds: 3, // reuse DAZZLE_SECONDS: locks Yeti's roar/grab + cuts its sight
+      revealSeconds: 5, // Yeti sees Eli's position marked for this long
       chargesPerNight: 1, // one flash per night, refills at nightfall
     },
   },

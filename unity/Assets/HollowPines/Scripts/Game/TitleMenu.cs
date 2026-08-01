@@ -323,7 +323,7 @@ namespace HollowPines.Game
         /// <summary>
         /// The Single Player page: pick which side you play against the CPU. No lobby and no
         /// internet — SoloPending tells GameManager to spawn the AI and drop you straight into night
-        /// one. Playing AS Bigfoot waits on CPU searchers (a much larger AI job — filming and routing
+        /// one. Playing AS Yeti waits on CPU searchers (a much larger AI job — filming and routing
         /// a five-strong team), so it's shown but disabled rather than hidden, to signal it's coming.
         /// </summary>
         private void DrawSolo(float cx)
@@ -339,13 +339,13 @@ namespace HollowPines.Game
                 StartHost();
             }
             GUI.Label(new Rect(cx - 220f, y, 440f, 20f),
-                "find proof and get it to the duffel before the CPU Bigfoot takes you", _hintStyle);
+                "find proof and get it to the duffel before the CPU Yeti takes you", _hintStyle);
             y += 34f;
 
-            // Play-as-Bigfoot needs bot SEARCHERS, which don't exist yet — greyed with a note so the
+            // Play-as-Yeti needs bot SEARCHERS, which don't exist yet — greyed with a note so the
             // intent reads, rather than a live button that does nothing.
             GUI.enabled = false;
-            MenuButton(cx, ref y, "PLAY AS BIGFOOT");
+            MenuButton(cx, ref y, "PLAY AS YETI");
             GUI.enabled = true;
             GUI.Label(new Rect(cx - 220f, y, 440f, 20f),
                 "coming soon — needs CPU searchers to hunt", _hintStyle);
@@ -466,7 +466,7 @@ namespace HollowPines.Game
                 case HPAction.Flashlight: return "flashlight";
                 case HPAction.Revive: return "revive (hold)";
                 case HPAction.Mark: return "trail mark (Wren)";
-                case HPAction.Senses: return "senses (Bigfoot)";
+                case HPAction.Senses: return "senses (Yeti)";
                 case HPAction.Map: return "map";
                 case HPAction.Ping: return "stakeout ping";
                 case HPAction.Flash: return "camera flash (Eli)";

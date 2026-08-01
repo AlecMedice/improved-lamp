@@ -1,4 +1,4 @@
-// A spawned clue — Bigfoot's footprint or a snapped branch. Server places it (position/yaw/type
+// A spawned clue — Yeti's footprint or a snapped branch. Server places it (position/yaw/type
 // set before Spawn so they arrive with the payload) and despawns it when the trail goes cold
 // (GameManager owns the lifetime; escalation shortens it on later nights). Client-side this is
 // pure visuals: primitive meshes with a faint glow so evidence reads at night.
@@ -14,7 +14,7 @@ namespace HollowPines.Game
         public const byte TypeFootprint = 0;
         public const byte TypeBranch = 1;
         /// <summary>
-        /// A tuft snagged on a branch. The one kind of evidence Bigfoot genuinely SHEDS rather than
+        /// A tuft snagged on a branch. The one kind of evidence Yeti genuinely SHEDS rather than
         /// merely presses into the ground — which is why, unlike a cast, anyone can bag it. It exists
         /// so the second win path isn't gated entirely behind Mara being alive and present.
         /// </summary>
@@ -24,7 +24,7 @@ namespace HollowPines.Game
         public readonly SyncVar<float> YawRad = new SyncVar<float>(0f);
         /// <summary>
         /// This print landed in ground soft and deep enough to take a plaster cast — the only kind
-        /// worth working. Bigfoot does not shed evidence; it leaves TRACKS, and a cast is something a
+        /// worth working. Yeti does not shed evidence; it leaves TRACKS, and a cast is something a
         /// person makes from one. Only Mara (analysis) has the kit and training to do it.
         /// Set by the server at spawn; a limited number are live at once (newer prints override older).
         /// </summary>
@@ -108,7 +108,7 @@ namespace HollowPines.Game
             }
             else
             {
-                // Hair caught where Bigfoot pushed through: a low broken stub with a dark tuft snagged
+                // Hair caught where Yeti pushed through: a low broken stub with a dark tuft snagged
                 // on it, held at chest height so it reads against the ground rather than lost in it.
                 var wood = MeshUtil.Lit(MeshUtil.Rgb(0x6a4a2c));
                 AddStick(root, new Vector3(0f, 0.42f, 0f), Quaternion.Euler(0f, 20f, 14f), 0.9f, wood);

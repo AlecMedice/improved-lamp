@@ -23,7 +23,7 @@ function launch(role: string, name: string, room?: Room) {
 // Solo: straight into the world (offline-friendly), role chosen here.
 startBtn.addEventListener("click", () => {
   const role = roleSel.value;
-  const name = nameInput.value.trim() || (role === "bigfoot" ? "Bigfoot" : "Searcher");
+  const name = nameInput.value.trim() || (role === "yeti" ? "Yeti" : "Searcher");
   launch(role, name);
 });
 

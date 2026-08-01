@@ -7,18 +7,18 @@ import {
 } from "../../../shared/sim";
 import { refillAllowance, gateStep, staminaCeiling, filmVisible } from "./antiCheat";
 
-// dev-role URL override (?devRole=bigfoot) is a test convenience — never trust it in production.
+// dev-role URL override (?devRole=yeti) is a test convenience — never trust it in production.
 // Honor it only when explicitly allowed, or outside a production build.
 const ALLOW_DEV_ROLE = process.env.ALLOW_DEV_ROLE === "1" || process.env.NODE_ENV !== "production";
 
 // --- Night / match structure ---
 // One night runs 8pm -> 8am in this many real seconds. Overridable via env for quick test matches.
 const NIGHT_SECONDS = Number(process.env.NIGHT_SECONDS) || 600;
-const TOTAL_NIGHTS = 3; // Bigfoot wins by surviving this many nights
+const TOTAL_NIGHTS = 3; // Yeti wins by surviving this many nights
 const WORLD_HALF = WORLD.size / 2; // ±400 on x/z
 
 // --- Clue (hint) framework tuning ---
-const STRIDE = 2.4; // metres Bigfoot travels between dropped footprints
+const STRIDE = 2.4; // metres Yeti travels between dropped footprints
 const BRANCH_CHANCE = 0.18; // chance a footstep also snaps a nearby branch
 const MAX_CLUES = 80; // hard cap on live clues
 
@@ -28,20 +28,20 @@ const MAX_PINGS = 12; // hard cap (one per hunter, but stay safe)
 const MAX_MARKS = 24; // hard cap on Wren's live trail markers (lifetime is TRACKING_MARK.lifetimeSec)
 
 // --- Filming (hunters win) tuning ---
-const FILM_RANGE = 38; // server sanity range a hunter can film Bigfoot from
-const FILM_AIM_COS = Math.cos(0.6); // hunter must be facing within ~34 deg of Bigfoot (generous vs the client's 18 deg 3D cone, since we only have yaw)
-const FILM_SECONDS = 3.0; // seconds of Bigfoot-in-frame = one solid video
+const FILM_RANGE = 38; // server sanity range a hunter can film Yeti from
+const FILM_AIM_COS = Math.cos(0.6); // hunter must be facing within ~34 deg of Yeti (generous vs the client's 18 deg 3D cone, since we only have yaw)
+const FILM_SECONDS = 3.0; // seconds of Yeti-in-frame = one solid video
 const FILM_DECAY = 0.5; // how fast an interrupted clip drains (fraction/sec)
 
-// --- Bigfoot offense (roar -> grab -> drag) tuning ---
-const ROAR_RADIUS = 25; // hunters within this of Bigfoot freeze in fear
+// --- Yeti offense (roar -> grab -> drag) tuning ---
+const ROAR_RADIUS = 25; // hunters within this of Yeti freeze in fear
 const ROAR_COOLDOWN = 25; // seconds between roars (night-1 baseline; scaled by escalation)
 const FREEZE_SECONDS = 30; // how long a roared hunter is frozen in place (baseline)
-const GRAB_RADIUS = 3.5; // how close Bigfoot must be to grab a frozen hunter
+const GRAB_RADIUS = 3.5; // how close Yeti must be to grab a frozen hunter
 const INCAP_SECONDS = 60; // how long a grabbed hunter is incapacitated (and draggable)
 const SLOW_SECONDS = 30; // movement-slow window after recovering from incapacitation
 
-// --- Bigfoot charge (a short forward burst to close distance) ---
+// --- Yeti charge (a short forward burst to close distance) ---
 const CHARGE_SPEED_MUL = 1.9; // burst multiplier over sprint speed during the window
 const CHARGE_DURATION = 1.2; // seconds the burst lasts
 const CHARGE_COOLDOWN = 6; // seconds after the burst ends before another charge
@@ -51,10 +51,10 @@ const REVIVE_RADIUS = 3.5; // how close an active hunter must stand to revive an
 const REVIVE_SECONDS = 4; // seconds of holding the revive before the teammate is freed
 const REVIVE_DECAY = 2; // progress bleeds off this many x real-time when nobody is reviving
 
-// --- Searcher defense (dazzle Bigfoot with a sustained flashlight beam) ---
+// --- Searcher defense (dazzle Yeti with a sustained flashlight beam) ---
 const DAZZLE_RANGE = 40; // max distance the beam deters from (< a flashlight's 60 m reach)
-const DAZZLE_AIM_COS = Math.cos(0.38); // beam must be centred within ~22 deg of Bigfoot
-const DAZZLE_FILL_SECONDS = 1.2; // sustained on-target time before Bigfoot is dazzled
+const DAZZLE_AIM_COS = Math.cos(0.38); // beam must be centred within ~22 deg of Yeti
+const DAZZLE_FILL_SECONDS = 1.2; // sustained on-target time before Yeti is dazzled
 const DAZZLE_SECONDS = 3; // how long the dazzle (sight-cut + roar/grab lock) lingers after the beam
 const DAZZLE_DECAY = 2; // fill bleeds off this many x real-time once the beam leaves
 
@@ -78,7 +78,7 @@ const PHASES: Array<[number, string]> = [
 ];
 
 /**
- * Cave entrances — Bigfoot spawns at one. Seed-derived from the shared sim so the server,
+ * Cave entrances — Yeti spawns at one. Seed-derived from the shared sim so the server,
  * every client, and the collision world all agree on the layout (previously each side
  * rolled its own Math.random() set, so caves silently disagreed everywhere).
  */
@@ -110,11 +110,11 @@ export class ForestRoom extends Room<GameState> {
 
   private clueSeq = 0;
   private clueAge = new Map<string, number>(); // clue id -> elapsed when created
-  private lastTrack = new Map<string, { x: number; z: number }>(); // bigfoot sid -> last footprint
+  private lastTrack = new Map<string, { x: number; z: number }>(); // yeti sid -> last footprint
   private filmFlags = new Map<string, FilmFlag>(); // hunter sid -> live recording flags
   private lastMoveMs = new Map<string, number>(); // sid -> Date.now() of last accepted move (speed gate)
   private moveAllowance = new Map<string, number>(); // sid -> distance token bucket (metres) for the speed gate
-  private caveReadyAt = new Map<string, number>(); // bigfoot sid -> elapsed when cave travel is ready
+  private caveReadyAt = new Map<string, number>(); // yeti sid -> elapsed when cave travel is ready
 
   private pingSeq = 0;
   private pingAge = new Map<string, number>(); // ping id -> elapsed when created
@@ -124,18 +124,18 @@ export class ForestRoom extends Room<GameState> {
   private markAge = new Map<string, number>(); // mark id -> elapsed when created (Wren's trail markers)
   private markReadyAt = new Map<string, number>(); // sid -> elapsed when the next mark is allowed (cooldown)
 
-  private roarReadyAt = new Map<string, number>(); // bigfoot sid -> elapsed when roar is ready
+  private roarReadyAt = new Map<string, number>(); // yeti sid -> elapsed when roar is ready
   private frozenUntil = new Map<string, number>(); // hunter sid -> elapsed when freeze ends
   private incapUntil = new Map<string, number>(); // hunter sid -> elapsed when incapacitation ends
   private slowUntil = new Map<string, number>(); // hunter sid -> elapsed when slow ends
-  private grabbedBy = new Map<string, string>(); // hunter sid -> bigfoot sid currently dragging
+  private grabbedBy = new Map<string, string>(); // hunter sid -> yeti sid currently dragging
   private reviveIntent = new Map<string, string>(); // reviver sid -> the incap teammate sid they're reviving
   private reviveProgress = new Map<string, number>(); // incap target sid -> seconds of revive accrued
-  private dazzleFill = new Map<string, number>(); // bigfoot sid -> seconds of sustained flashlight on it
-  private dazzledUntil = new Map<string, number>(); // bigfoot sid -> elapsed when the dazzle wears off
-  private chargingUntil = new Map<string, number>(); // bigfoot sid -> elapsed while a charge burst is active
-  private chargeReadyAt = new Map<string, number>(); // bigfoot sid -> elapsed when the next charge is ready
-  private devRoles = new Map<string, string>(); // sid -> "bigfoot"|"searcher" (dev URL param override)
+  private dazzleFill = new Map<string, number>(); // yeti sid -> seconds of sustained flashlight on it
+  private dazzledUntil = new Map<string, number>(); // yeti sid -> elapsed when the dazzle wears off
+  private chargingUntil = new Map<string, number>(); // yeti sid -> elapsed while a charge burst is active
+  private chargeReadyAt = new Map<string, number>(); // yeti sid -> elapsed when the next charge is ready
+  private devRoles = new Map<string, string>(); // sid -> "yeti"|"searcher" (dev URL param override)
   private devSpecialties = new Map<string, SpecialtyId>(); // sid -> forced specialty (dev ?devSpecialty override)
 
   onCreate() {
@@ -171,19 +171,19 @@ export class ForestRoom extends Room<GameState> {
       flag.recording = !!data.recording;
       flag.inView = !!data.inView;
       this.filmFlags.set(client.sessionId, flag);
-      p.filming = flag.recording && p.role !== "bigfoot";
+      p.filming = flag.recording && p.role !== "yeti";
 
       // Held-action revive intent (validated in updateRevives, like filming — no separate RPC).
       const reviveTarget = typeof data.reviveTarget === "string" ? data.reviveTarget : "";
-      if (data.reviving && reviveTarget && p.role !== "bigfoot") this.reviveIntent.set(client.sessionId, reviveTarget);
+      if (data.reviving && reviveTarget && p.role !== "yeti") this.reviveIntent.set(client.sessionId, reviveTarget);
       else this.reviveIntent.delete(client.sessionId);
     });
 
-    // Bigfoot fast-travels between cave mouths (validated server-side; replaces the old client self-teleport).
+    // Yeti fast-travels between cave mouths (validated server-side; replaces the old client self-teleport).
     this.onMessage("caveTravel", (client, data: any) => {
       if (this.state.matchPhase !== "playing") return;
       const p = this.state.players.get(client.sessionId);
-      if (!p || p.role !== "bigfoot" || p.status !== "active" || !data) return;
+      if (!p || p.role !== "yeti" || p.status !== "active" || !data) return;
       const dest = Number(data.index);
       if (!Number.isInteger(dest) || dest < 0 || dest >= CAVES.length) return;
       const here = nearestCaveIndex(CAVES, p.x, p.z); // must be standing in *some* mouth
@@ -201,7 +201,7 @@ export class ForestRoom extends Room<GameState> {
     // Hunters drop a stakeout ping (from the map or where they stand). One per hunter.
     this.onMessage("ping", (client, data: any) => {
       const p = this.state.players.get(client.sessionId);
-      if (!p || p.role === "bigfoot" || p.status !== "active" || !data) return;
+      if (!p || p.role === "yeti" || p.status !== "active" || !data) return;
       const x = clamp(num(data.x, 0), -WORLD_HALF, WORLD_HALF);
       const z = clamp(num(data.z, 0), -WORLD_HALF, WORLD_HALF);
       this.addPing(client.sessionId, x, z);
@@ -216,31 +216,31 @@ export class ForestRoom extends Room<GameState> {
       this.addMark(p.x, p.z);
     });
 
-    // Bigfoot roars: freezes every active hunter within ROAR_RADIUS for FREEZE_SECONDS.
+    // Yeti roars: freezes every active hunter within ROAR_RADIUS for FREEZE_SECONDS.
     this.onMessage("roar", (client) => {
       if (this.elapsed < (this.dazzledUntil.get(client.sessionId) ?? 0)) return; // blinded — can't roar
       const bf = this.state.players.get(client.sessionId);
-      if (!bf || bf.role !== "bigfoot") return;
+      if (!bf || bf.role !== "yeti") return;
       if (this.elapsed < (this.roarReadyAt.get(client.sessionId) ?? 0)) return;
       const e = this.esc();
       this.roarReadyAt.set(client.sessionId, this.elapsed + ROAR_COOLDOWN * e.roarCd);
       this.state.players.forEach((h, sid) => {
-        if (h.role === "bigfoot" || h.status !== "active") return;
+        if (h.role === "yeti" || h.status !== "active") return;
         if (withinRange(h, bf, ROAR_RADIUS)) {
           h.status = "frozen";
           this.frozenUntil.set(sid, this.elapsed + FREEZE_SECONDS * e.freeze);
         }
       });
-      // Diegetic: every client hears the roar from Bigfoot's real position (carries beyond
+      // Diegetic: every client hears the roar from Yeti's real position (carries beyond
       // the freeze radius). The roaring client suppresses its own echo locally.
       this.broadcast("roar", { x: bf.x, z: bf.z, by: client.sessionId });
     });
 
-    // Bigfoot grabs (left-click): grab the nearest frozen hunter, or drop the one being dragged.
+    // Yeti grabs (left-click): grab the nearest frozen hunter, or drop the one being dragged.
     this.onMessage("grab", (client) => {
       if (this.elapsed < (this.dazzledUntil.get(client.sessionId) ?? 0)) return; // blinded — can't grab
       const bf = this.state.players.get(client.sessionId);
-      if (!bf || bf.role !== "bigfoot") return;
+      if (!bf || bf.role !== "yeti") return;
 
       // Already dragging someone? This drops them (they stay incapacitated where left).
       let released = false;
@@ -275,45 +275,45 @@ export class ForestRoom extends Room<GameState> {
       this.state.videosCaptured = 0; // all the team's footage is erased
     });
 
-    // Bigfoot charges: opens a short speed-gate window so a forward burst isn't clamped as a speedhack.
+    // Yeti charges: opens a short speed-gate window so a forward burst isn't clamped as a speedhack.
     this.onMessage("charge", (client) => {
       const bf = this.state.players.get(client.sessionId);
-      if (!bf || bf.role !== "bigfoot" || bf.status !== "active") return;
+      if (!bf || bf.role !== "yeti" || bf.status !== "active") return;
       if (this.elapsed < (this.chargeReadyAt.get(client.sessionId) ?? 0)) return; // cooldown
       this.chargingUntil.set(client.sessionId, this.elapsed + CHARGE_DURATION);
       this.chargeReadyAt.set(client.sessionId, this.elapsed + CHARGE_DURATION + CHARGE_COOLDOWN);
     });
 
-    // Host starts the match: assign roles (one random Bigfoot if 2+), spawn, begin night 1.
+    // Host starts the match: assign roles (one random Yeti if 2+), spawn, begin night 1.
     this.onMessage("startMatch", (client) => {
       if (client.sessionId !== this.state.hostId || this.state.matchPhase !== "lobby") return;
       const sids = [...this.state.players.keys()];
-      // Start with a random Bigfoot (null = solo, everyone gets searcher).
-      let bigfootSid: string | null = sids.length >= 2 ? sids[Math.floor(Math.random() * sids.length)] : null;
+      // Start with a random Yeti (null = solo, everyone gets searcher).
+      let yetiSid: string | null = sids.length >= 2 ? sids[Math.floor(Math.random() * sids.length)] : null;
 
-      // Apply ?devRole overrides: first dev-bigfoot request wins; demote the random pick if needed.
+      // Apply ?devRole overrides: first dev-yeti request wins; demote the random pick if needed.
       for (const [sid, dr] of this.devRoles) {
         if (!this.state.players.has(sid)) continue;
-        if (dr === "bigfoot" && bigfootSid !== sid) {
-          bigfootSid = sid; // force this player to be Bigfoot
+        if (dr === "yeti" && yetiSid !== sid) {
+          yetiSid = sid; // force this player to be Yeti
           break;
         }
-        if (dr === "searcher" && bigfootSid === sid) {
-          // Pick any other player as Bigfoot instead.
+        if (dr === "searcher" && yetiSid === sid) {
+          // Pick any other player as Yeti instead.
           const other = sids.find((s) => s !== sid);
-          bigfootSid = other ?? null;
+          yetiSid = other ?? null;
           break;
         }
       }
 
       this.state.players.forEach((p, sid) => {
-        p.role = sid === bigfootSid ? "bigfoot" : "searcher";
+        p.role = sid === yetiSid ? "yeti" : "searcher";
         this.spawnPlayer(p);
       });
       this.resetMatchState();
       this.assignSpecialties(); // deal a random (distinct) character to each searcher
       this.state.matchPhase = "playing";
-      console.log(`Match started by ${client.sessionId}; Bigfoot = ${bigfootSid ?? "(solo)"}.`);
+      console.log(`Match started by ${client.sessionId}; Yeti = ${yetiSid ?? "(solo)"}.`);
     });
 
     // Host returns everyone to the lobby after a result.
@@ -328,7 +328,7 @@ export class ForestRoom extends Room<GameState> {
     this.onMessage("debugSetSpecialty", (client, data: any) => {
       if (!ALLOW_DEV_ROLE || this.state.matchPhase !== "playing") return;
       const p = this.state.players.get(client.sessionId);
-      if (!p || p.role === "bigfoot") return;
+      if (!p || p.role === "yeti") return;
       const id = data?.id;
       if (!isSpecialtyId(id)) return;
       p.specialty = id;
@@ -350,7 +350,7 @@ export class ForestRoom extends Room<GameState> {
     this.filmFlags.set(client.sessionId, { recording: false, inView: false });
     if (this.state.hostId === "") this.state.hostId = client.sessionId;
     const devRole = options?.devRole;
-    if (ALLOW_DEV_ROLE && (devRole === "bigfoot" || devRole === "searcher")) this.devRoles.set(client.sessionId, devRole);
+    if (ALLOW_DEV_ROLE && (devRole === "yeti" || devRole === "searcher")) this.devRoles.set(client.sessionId, devRole);
     const devSpecialty = options?.devSpecialty;
     if (ALLOW_DEV_ROLE && isSpecialtyId(devSpecialty)) this.devSpecialties.set(client.sessionId, devSpecialty);
     console.log(`${client.sessionId} joined the lobby (${this.clients.length}/${this.maxClients}).`);
@@ -397,7 +397,7 @@ export class ForestRoom extends Room<GameState> {
     this.caveReadyAt.delete(sid);
     this.devRoles.delete(sid);
     this.devSpecialties.delete(sid);
-    // If a leaving Bigfoot was dragging hunters, free them (they stay incapacitated in place).
+    // If a leaving Yeti was dragging hunters, free them (they stay incapacitated in place).
     for (const [hsid, bsid] of this.grabbedBy) if (bsid === sid) this.grabbedBy.delete(hsid);
     // Drop any revive intent aimed at the leaver (their target vanished).
     for (const [rsid, tsid] of this.reviveIntent) if (tsid === sid) this.reviveIntent.delete(rsid);
@@ -410,7 +410,7 @@ export class ForestRoom extends Room<GameState> {
 
   /** Place a player at their role's start point. */
   private spawnPlayer(p: Player) {
-    if (p.role === "bigfoot") {
+    if (p.role === "yeti") {
       const emerge = caveEmergePoint(CAVES[Math.floor(Math.random() * CAVES.length)]);
       p.x = emerge.x; // outside the boulder horseshoe (boulders extend ~3–4 m)
       p.z = emerge.z;
@@ -425,16 +425,16 @@ export class ForestRoom extends Room<GameState> {
     p.filmProgress = 0;
   }
 
-  /** Deal each searcher a random (distinct) character specialty; honour any ?devSpecialty forces. Bigfoot gets none. */
+  /** Deal each searcher a random (distinct) character specialty; honour any ?devSpecialty forces. Yeti gets none. */
   private assignSpecialties() {
     const searcherSids: string[] = [];
-    this.state.players.forEach((p, sid) => { if (p.role !== "bigfoot") searcherSids.push(sid); });
+    this.state.players.forEach((p, sid) => { if (p.role !== "yeti") searcherSids.push(sid); });
     const forced: Record<string, SpecialtyId | undefined> = {};
     for (const sid of searcherSids) forced[sid] = this.devSpecialties.get(sid);
     const deal = dealSpecialties(searcherSids, forced, Math.random);
     this.state.players.forEach((p, sid) => {
       const id = deal[sid];
-      if (p.role === "bigfoot" || !id) {
+      if (p.role === "yeti" || !id) {
         p.specialty = "";
         p.characterName = "";
       } else {
@@ -473,20 +473,20 @@ export class ForestRoom extends Room<GameState> {
     this.moveAllowance.set(sid, budget - gated.spent);
 
     // Push out of any tree / RV / cave boulder / tower the client tried to occupy. Climb-aware for
-    // Bigfoot only: at/above a climbable's top it isn't pushed out (standing on it, not through it).
+    // Yeti only: at/above a climbable's top it isn't pushed out (standing on it, not through it).
     // Hunters are always pushed out (2D), so a spoofed feet-y can't slip a hunter inside a structure.
     const claimedY = num(data.y, p.y);
-    const bigfoot = p.role === "bigfoot";
-    const resolved = bigfoot
+    const yeti = p.role === "yeti";
+    const resolved = yeti
       ? resolveCollision(this.world.colliders, rx, rz, PLAYER.radius, claimedY, this.world.getHeight)
       : resolveCollision(this.world.colliders, rx, rz, PLAYER.radius);
     p.x = resolved.x;
     p.z = resolved.z;
 
     // Feet sit on the terrain (allow a small jump arc above, a touch of sampling slop below).
-    // When Bigfoot is scaling/perched on a climbable, raise the accepted feet ceiling to its top.
+    // When Yeti is scaling/perched on a climbable, raise the accepted feet ceiling to its top.
     const groundY = this.world.getHeight(p.x, p.z);
-    const support = bigfoot
+    const support = yeti
       ? climbSupport(this.world.climbables, this.world.getHeight, p.x, p.z, PLAYER.radius, PLAYER.climbReach)
       : null;
     const floor = (support && support.over ? support.top : groundY) - Y_BELOW_TOL; // perched -> stand on top
@@ -496,7 +496,7 @@ export class ForestRoom extends Room<GameState> {
 
   /** Upper-bound movement speed for the gate (role + per-night escalation + charge burst; generous margin). */
   private maxSpeedFor(sid: string, p: Player): number {
-    const roleMul = p.role === "bigfoot" ? PLAYER.bigfootSpeedMul * this.state.bigfootSpeedMul : 1;
+    const roleMul = p.role === "yeti" ? PLAYER.yetiSpeedMul * this.state.yetiSpeedMul : 1;
     const chargeMul = this.elapsed < (this.chargingUntil.get(sid) ?? 0) ? CHARGE_SPEED_MUL : 1;
     return PLAYER.sprintSpeed * roleMul * chargeMul * SPEED_GATE_MARGIN;
   }
@@ -572,32 +572,32 @@ export class ForestRoom extends Room<GameState> {
 
     // Publish this night's escalation so clients apply the same multipliers we do.
     const e = this.esc();
-    this.state.bigfootSpeedMul = e.speed;
+    this.state.yetiSpeedMul = e.speed;
     this.state.batteryDrainMul = e.battery;
     this.state.staminaDrainMul = e.stamina;
     this.state.roarCooldownSec = ROAR_COOLDOWN * e.roarCd;
 
-    const bigfoots: Array<{ sid: string; p: Player }> = [];
+    const yetis: Array<{ sid: string; p: Player }> = [];
     const hunters: Array<{ sid: string; p: Player }> = [];
     this.state.players.forEach((p, sid) => {
-      if (p.role === "bigfoot") bigfoots.push({ sid, p });
+      if (p.role === "yeti") yetis.push({ sid, p });
       else hunters.push({ sid, p });
     });
 
-    this.dropClues(bigfoots);
+    this.dropClues(yetis);
     this.expireClues();
     this.expirePings();
     this.expireMarks();
     this.updateRevives(dt);
     this.updateStatuses();
-    this.updateDazzle(dt, hunters, bigfoots);
-    this.updateFilming(dt, hunters, bigfoots);
+    this.updateDazzle(dt, hunters, yetis);
+    this.updateFilming(dt, hunters, yetis);
     this.evaluateWin(hunters, nightsComplete);
   }
 
   /**
    * Accumulate revive progress from active hunters holding the revive on a downed teammate in range.
-   * On completion the target returns to `active` (post-incap slowed), interrupting Bigfoot's drag and
+   * On completion the target returns to `active` (post-incap slowed), interrupting Yeti's drag and
    * footage pressure. Progress decays when nobody is actively reviving; `beingRevived` is replicated.
    */
   private updateRevives(dt: number) {
@@ -606,7 +606,7 @@ export class ForestRoom extends Room<GameState> {
     for (const [reviverSid, targetSid] of this.reviveIntent) {
       const reviver = this.state.players.get(reviverSid);
       const target = this.state.players.get(targetSid);
-      if (!reviver || reviver.role === "bigfoot" || reviver.status !== "active") continue;
+      if (!reviver || reviver.role === "yeti" || reviver.status !== "active") continue;
       if (!target || target.status !== "incapacitated") continue;
       if (dist2(reviver, target) > REVIVE_RADIUS * REVIVE_RADIUS) continue;
 
@@ -637,12 +637,12 @@ export class ForestRoom extends Room<GameState> {
   }
 
   /**
-   * A searcher who keeps a lit flashlight trained on Bigfoot (range + cone + line-of-sight) charges a
-   * "dazzle": once sustained it blinds Bigfoot for a few seconds — its roar/grab are locked and its
+   * A searcher who keeps a lit flashlight trained on Yeti (range + cone + line-of-sight) charges a
+   * "dazzle": once sustained it blinds Yeti for a few seconds — its roar/grab are locked and its
    * client cuts the sight cone. A deterrent, not a stun-lock: it never frees an already-grabbed hunter.
    */
-  private updateDazzle(dt: number, hunters: Array<{ sid: string; p: Player }>, bigfoots: Array<{ sid: string; p: Player }>) {
-    for (const { sid: bfSid, p: bf } of bigfoots) {
+  private updateDazzle(dt: number, hunters: Array<{ sid: string; p: Player }>, yetis: Array<{ sid: string; p: Player }>) {
+    for (const { sid: bfSid, p: bf } of yetis) {
       let aimed = false;
       for (const { p: h } of hunters) {
         if (h.status !== "active" || !h.flashlightOn) continue;
@@ -652,7 +652,7 @@ export class ForestRoom extends Room<GameState> {
         if (dist > DAZZLE_RANGE || dist < 1e-3) continue;
         // Beam forward from the hunter's yaw (matches the sim's -sin/-cos convention).
         const dot = (dx / dist) * -Math.sin(h.ry) + (dz / dist) * -Math.cos(h.ry);
-        if (dot < DAZZLE_AIM_COS) continue; // Bigfoot isn't centred in the beam
+        if (dot < DAZZLE_AIM_COS) continue; // Yeti isn't centred in the beam
         if (lineBlocked(this.world.colliders, h, bf)) continue; // a tree/rock blocks the light
         aimed = true;
         break;
@@ -673,7 +673,7 @@ export class ForestRoom extends Room<GameState> {
   /** Tick freeze/incapacitation/slow timers and drag incapacitated hunters along. */
   private updateStatuses() {
     this.state.players.forEach((p, sid) => {
-      if (p.role === "bigfoot") return;
+      if (p.role === "yeti") return;
 
       if (p.status === "frozen") {
         if (this.elapsed >= (this.frozenUntil.get(sid) ?? 0)) {
@@ -714,16 +714,16 @@ export class ForestRoom extends Room<GameState> {
     if (this.state.videosCaptured >= this.state.videosRequired) {
       this.state.winner = "hunters";
     } else if (nightsComplete) {
-      this.state.winner = "bigfoot"; // survived all the nights without being filmed enough
+      this.state.winner = "yeti"; // survived all the nights without being filmed enough
     }
     if (this.state.winner) this.state.matchPhase = "results"; // freezes the clock; host can rematch
   }
 
   // --- Clues -----------------------------------------------------------------
 
-  /** Bigfoot leaves footprints (and the odd broken branch) as it walks. */
-  private dropClues(bigfoots: Array<{ sid: string; p: Player }>) {
-    for (const { sid, p } of bigfoots) {
+  /** Yeti leaves footprints (and the odd broken branch) as it walks. */
+  private dropClues(yetis: Array<{ sid: string; p: Player }>) {
+    for (const { sid, p } of yetis) {
       const last = this.lastTrack.get(sid);
       if (!last) {
         this.lastTrack.set(sid, { x: p.x, z: p.z });
@@ -858,16 +858,16 @@ export class ForestRoom extends Room<GameState> {
   // --- Filming ---------------------------------------------------------------
 
   /**
-   * Accrue footage while a hunter records Bigfoot in-frame and within range. The client's `inView` is
+   * Accrue footage while a hunter records Yeti in-frame and within range. The client's `inView` is
    * only a cheap early-out / HUD hint — the server independently recomputes visibility (range + aim cone
    * from the replicated yaw + line-of-sight), so a modified client can't bank footage through walls or
    * while facing away. This mirrors `updateDazzle`'s server-authoritative beam check.
    */
-  private updateFilming(dt: number, hunters: Array<{ sid: string; p: Player }>, bigfoots: Array<{ sid: string; p: Player }>) {
+  private updateFilming(dt: number, hunters: Array<{ sid: string; p: Player }>, yetis: Array<{ sid: string; p: Player }>) {
     for (const { sid, p } of hunters) {
       if (p.status !== "active") continue;
       const flag = this.filmFlags.get(sid);
-      const gaining = !!flag?.recording && bigfoots.some(({ p: b }) => this.canFilm(p, b));
+      const gaining = !!flag?.recording && yetis.some(({ p: b }) => this.canFilm(p, b));
 
       if (gaining) {
         p.filmProgress += (dt / FILM_SECONDS) * filmProgressMul(p.specialty); // Theo (Sound) banks faster

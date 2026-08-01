@@ -1,7 +1,7 @@
 # Hollow Pines
 
 > An asymmetric 1‑vs‑5 multiplayer hunt set in a dusk‑to‑dawn Pacific Northwest forest.
-> Five investigators search for evidence of Bigfoot. One player **is** Bigfoot.
+> Five investigators search for evidence of Yeti. One player **is** Yeti.
 
 **Working title:** *Hollow Pines* &nbsp;•&nbsp; **Repo:** `improved-lamp` (the flashlight is your lifeline — an *improved lamp*, if you will).
 
@@ -35,9 +35,9 @@ cd client
 npm install
 npm run dev        # open the printed http://localhost:5173
 ```
-Click the canvas to lock the mouse. `WASD` move, mouse look, `F` flashlight, **hold right‑mouse to film Bigfoot**, `M` map, `Q` ping.
+Click the canvas to lock the mouse. `WASD` move, mouse look, `F` flashlight, **hold right‑mouse to film Yeti**, `M` map, `Q` ping.
 
-**The hunt (3 nights, 8pm→8am each):** Searchers start at a campfire-and-RV base camp; **Bigfoot starts in a cave**. Bigfoot leaves a fading trail of **footprints and broken branches** — follow it. **Searchers win** by capturing **3 solid videos** of Bigfoot (light it up, hold it in frame ~3s; footage is pooled across the team and across nights). **Bigfoot wins** by **surviving all 3 nights**. Bigfoot fights back: **right-click to ROAR** (freezes nearby searchers ~30s), then **left-click to GRAB** a frozen searcher — dragging them and **erasing the team's footage** (they recover after a minute, briefly slowed). Press **`M`** for a top-down **map** (position, camp, caves; hunters also see teammates, stakeout pings, and the recent trail when in contact). Hunters press **`Q`** (or click the map) to drop a shared **stakeout ping**. Bigfoot opens the **map in a cave mouth and clicks a destination cave** to fast-travel. Open one tab as Bigfoot and another as a searcher to see it in action.
+**The hunt (3 nights, 8pm→8am each):** Searchers start at a campfire-and-RV base camp; **Yeti starts in a cave**. Yeti leaves a fading trail of **footprints and broken branches** — follow it. **Searchers win** by capturing **3 solid videos** of Yeti (light it up, hold it in frame ~3s; footage is pooled across the team and across nights). **Yeti wins** by **surviving all 3 nights**. Yeti fights back: **right-click to ROAR** (freezes nearby searchers ~30s), then **left-click to GRAB** a frozen searcher — dragging them and **erasing the team's footage** (they recover after a minute, briefly slowed). Press **`M`** for a top-down **map** (position, camp, caves; hunters also see teammates, stakeout pings, and the recent trail when in contact). Hunters press **`Q`** (or click the map) to drop a shared **stakeout ping**. Yeti opens the **map in a cave mouth and clicks a destination cave** to fast-travel. Open one tab as Yeti and another as a searcher to see it in action.
 
 **2. Server (optional, for multiplayer)**
 ```bash

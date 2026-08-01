@@ -296,7 +296,7 @@
       "exhausted": false
     }
   ],
-  "bigfootTrajectory": [
+  "yetiTrajectory": [
     {
       "i": 5,
       "x": 28.46010809780155,
@@ -438,7 +438,7 @@
         "footstepVolumeMul": 1
       },
       {
-        "id": "bigfoot",
+        "id": "yeti",
         "reviveMul": 1,
         "staminaMax": 100,
         "staminaDrainMul": 1,

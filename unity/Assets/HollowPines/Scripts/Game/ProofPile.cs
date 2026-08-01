@@ -1,4 +1,4 @@
-// A searcher's spilled pack — everything they were carrying when Bigfoot put them down.
+// A searcher's spilled pack — everything they were carrying when Yeti put them down.
 // The server spawns it at the grab (contents set before Spawn so they arrive with the payload) and
 // despawns it when it's recovered or when it goes cold. Client-side this is pure visuals: a burst
 // pack with its contents scattered around it, lit brightly enough to find in the dark, because a

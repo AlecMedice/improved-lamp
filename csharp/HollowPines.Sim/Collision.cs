@@ -64,7 +64,7 @@ namespace HollowPines.Sim
         }
 
         /// <summary>
-        /// The top of a climbable structure Bigfoot can scale here (clinging to the side, or over the
+        /// The top of a climbable structure Yeti can scale here (clinging to the side, or over the
         /// top), or null.
         /// </summary>
         public static ClimbSupportResult? ClimbSupport(
@@ -108,7 +108,7 @@ namespace HollowPines.Sim
         /// <summary>
         /// Push an (x,z) point out of every fallen log it overlaps — logs are SOLID to a grounded hunter.
         ///
-        /// Called only for grounded hunters: Bigfoot strides over logs untouched, and a hunter
+        /// Called only for grounded hunters: Yeti strides over logs untouched, and a hunter
         /// mid-vault is airborne, so the trunk passes harmlessly beneath. That is the whole mechanic —
         /// a log is a wall you go around or spend stamina to clear, not a patch of mud you wade through.
         /// </summary>

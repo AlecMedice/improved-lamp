@@ -26,7 +26,7 @@ export type World = {
   paths: readonly ForestPath[]; // logging trails out of camp (tree-free corridors)
   getHeight: HeightFn;
   colliders: Collider[];
-  climbables: Collider[]; // the subset of colliders with a `climbH` (structures Bigfoot can scale/perch on)
+  climbables: Collider[]; // the subset of colliders with a `climbH` (structures Yeti can scale/perch on)
   fallenLogs: FallenLog[];
 };
 

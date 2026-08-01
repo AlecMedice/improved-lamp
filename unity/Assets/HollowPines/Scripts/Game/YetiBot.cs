@@ -1,4 +1,4 @@
-// The CPU Bigfoot brain — the opponent in the offline single-player mode (and the fastest way to
+// The CPU Yeti brain — the opponent in the offline single-player mode (and the fastest way to
 // test solo). This is meant to be a LEGITIMATE opponent someone plays without internet, not just a
 // dev prop, so it plays the actual stealth game rather than tracking you through walls.
 //
@@ -28,10 +28,10 @@ using UnityEngine.AI;
 namespace HollowPines.Game
 {
     [RequireComponent(typeof(HPPlayer))]
-    public class BigfootBot : MonoBehaviour
+    public class YetiBot : MonoBehaviour
     {
         // --- perception (first-guess; editor-tune) ---------------------------------
-        /// <summary>Sees an unlit searcher this far, with clear line of sight (Bigfoot has night eyes).</summary>
+        /// <summary>Sees an unlit searcher this far, with clear line of sight (Yeti has night eyes).</summary>
         private const float SightRange = 34f;
         /// <summary>A lit flashlight is a beacon in the dark — seen this far, still needs line of sight.</summary>
         private const float TorchSightRange = 80f;
@@ -195,7 +195,7 @@ namespace HollowPines.Game
         {
             foreach (var p in HPPlayer.All)
             {
-                if (p == null || p.IsBigfoot) continue;
+                if (p == null || p.IsYeti) continue;
                 Vector3 now = p.transform.position;
                 if (_lastPos.TryGetValue(p, out Vector3 prev) && dt > 0f)
                 {
@@ -218,7 +218,7 @@ namespace HollowPines.Game
             float bestScore = 0f;
             foreach (var p in HPPlayer.All)
             {
-                if (p == null || p.IsBigfoot || p.Status.Value == HPPlayer.StatusIncap) continue;
+                if (p == null || p.IsYeti || p.Status.Value == HPPlayer.StatusIncap) continue;
                 float dist = Mathf.Sqrt(Flat2(p.transform.position, pos));
 
                 bool sensed = false;
@@ -270,7 +270,7 @@ namespace HollowPines.Game
             Vector3 pos = transform.position;
             foreach (var p in HPPlayer.All)
             {
-                if (p == null || p.IsBigfoot || p.Status.Value == HPPlayer.StatusIncap) continue;
+                if (p == null || p.IsYeti || p.Status.Value == HPPlayer.StatusIncap) continue;
                 float d2 = Flat2(p.transform.position, pos);
                 if (d2 < bestD2) { bestD2 = d2; best = p; }
             }
@@ -285,7 +285,7 @@ namespace HollowPines.Game
         {
             foreach (var p in HPPlayer.All)
             {
-                if (p == null || p.IsBigfoot || p.Status.Value != HPPlayer.StatusFrozen) continue;
+                if (p == null || p.IsYeti || p.Status.Value != HPPlayer.StatusFrozen) continue;
                 if (Flat2(p.transform.position, transform.position) <= GameManager.GrabRadius * GameManager.GrabRadius)
                 {
                     _self.ServerBotGrab();
@@ -296,7 +296,7 @@ namespace HollowPines.Game
             if (_self.RoarReadyIn.Value > 0f) return;
             foreach (var p in HPPlayer.All)
             {
-                if (p == null || p.IsBigfoot || p.Status.Value != HPPlayer.StatusActive) continue;
+                if (p == null || p.IsYeti || p.Status.Value != HPPlayer.StatusActive) continue;
                 if (Flat2(p.transform.position, transform.position) <= GameManager.RoarRadius * GameManager.RoarRadius)
                 {
                     _self.ServerBotRoar();

@@ -5,9 +5,9 @@
 // What each role sees (the web build's rules, verbatim):
 //   both      — self (position + heading), camp, cave mouths, landmarks, the 100 m grid
 //   searchers — teammates, stakeout pings, Wren's trail marks, and the recent clue trail ONLY
-//               while "in contact": Bigfoot within hearRange (Theo hears farther) or a fresh clue
+//               while "in contact": Yeti within hearRange (Theo hears farther) or a fresh clue
 //               within evidenceSight (Wren sees farther, and keeps tracks visible longer)
-//   Bigfoot   — standing in a cave mouth, clicking a DIFFERENT cave fast-travels there (the server
+//   Yeti   — standing in a cave mouth, clicking a DIFFERENT cave fast-travels there (the server
 //               re-validates everything; see GameManager.TryCaveTravel)
 // Clicking anywhere else on the map as a searcher drops a stakeout ping at that spot.
 using HollowPines.Sim;
@@ -26,7 +26,7 @@ namespace HollowPines.Game
         // Map readout tuning (client/src/config.ts MAP) — specialty multipliers scale these.
         // Public so the dusk briefing can quote each persona's REAL numbers instead of duplicating them.
         public const float ClueWindow = 15f;    // only tracks from the last N seconds show
-        public const float HearRange = 35f;     // Bigfoot this close counts as "heard nearby"
+        public const float HearRange = 35f;     // Yeti this close counts as "heard nearby"
         public const float EvidenceSight = 18f; // a clue this close counts as "sees recent evidence"
 
         private const int BgRes = 256; // baked background resolution
@@ -59,7 +59,7 @@ namespace HollowPines.Game
             if (!IsOpen && !HPHud.PauseOpen && HPKeybinds.Pressed(kb, HPAction.Ping))
             {
                 var me = HPPlayer.Local;
-                if (me != null && !me.IsBigfoot && Cursor.lockState == CursorLockMode.Locked)
+                if (me != null && !me.IsYeti && Cursor.lockState == CursorLockMode.Locked)
                     me.RequestPing(me.transform.position.x, me.transform.position.z);
             }
 #endif
@@ -107,7 +107,7 @@ namespace HollowPines.Game
             float side = Mathf.Min(Screen.width * 0.58f, avail);
             _frame = new Rect((Screen.width - side) / 2f, topReserve + (avail - side) / 2f, side, side);
             // Light scrim only: you can still walk with this open, so the world around the map has to
-            // stay legible enough to not blunder into Bigfoot while reading it.
+            // stay legible enough to not blunder into Yeti while reading it.
             Color old = GUI.color;
             GUI.color = new Color(0f, 0f, 0f, 0.32f);
             GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
@@ -120,7 +120,7 @@ namespace HollowPines.Game
             DrawGrid();
             DrawLandmarks(world);
 
-            bool searcher = !me.IsBigfoot;
+            bool searcher = !me.IsYeti;
             if (searcher)
             {
                 if (ClueVisionActive(me, world)) DrawClueTrail(me);
@@ -181,8 +181,8 @@ namespace HollowPines.Game
             float hear = HearRange * (float)Specialties.HearRangeMul(spec); // Theo hears farther
             foreach (var other in HPPlayer.All)
             {
-                if (other == null || !other.IsBigfoot) continue;
-                // "In contact" via hearing — so a crouching Bigfoot doesn't trip it, even Theo's.
+                if (other == null || !other.IsYeti) continue;
+                // "In contact" via hearing — so a crouching Yeti doesn't trip it, even Theo's.
                 // The evidence-sight half of the check below still works: it left tracks earlier.
                 if (other.Crouched.Value) continue;
                 float dx = other.transform.position.x - p.x, dz = other.transform.position.z - p.z;
@@ -303,7 +303,7 @@ namespace HollowPines.Game
         {
             foreach (var p in HPPlayer.All)
             {
-                if (p == null || p == me || p.IsBigfoot) continue;
+                if (p == null || p == me || p.IsYeti) continue;
                 Vector2 at = ToMap(p.transform.position);
                 bool down = p.Status.Value == HPPlayer.StatusIncap;
                 Color c = down ? new Color(1f, 0.45f, 0.4f) : MeshUtil.Rgb(0x7ad1ff);
@@ -315,19 +315,19 @@ namespace HollowPines.Game
         }
 
         /// <summary>
-        /// Cave mouths: Bigfoot's own fast-travel network, and for searchers only the mouths the team
+        /// Cave mouths: Yeti's own fast-travel network, and for searchers only the mouths the team
         /// has actually walked up to (GameManager.CavesFound). An undiscovered lair draws nothing at
         /// all — not a greyed-out marker, which would still tell you where to go.
         /// </summary>
         private void DrawCaves(GameWorld world, HPPlayer me, int currentCave)
         {
-            bool travelMode = me.IsBigfoot && me.Status.Value == HPPlayer.StatusActive &&
+            bool travelMode = me.IsYeti && me.Status.Value == HPPlayer.StatusActive &&
                               currentCave >= 0 && me.CaveReadyIn <= 0f;
             var gm = GameManager.Instance;
 
             for (int i = 0; i < world.Caves.Count; i++)
             {
-                if (!me.IsBigfoot && (gm == null || !gm.IsCaveFound(i))) continue; // not found yet
+                if (!me.IsYeti && (gm == null || !gm.IsCaveFound(i))) continue; // not found yet
                 Vector2 p = ToMap((float)world.Caves[i].X, (float)world.Caves[i].Z);
                 var r = new Rect(p.x - 11f, p.y - 11f, 22f, 22f);
                 bool isCurrent = i == currentCave;
@@ -379,7 +379,7 @@ namespace HollowPines.Game
         private void DrawLegend(HPPlayer me, int currentCave)
         {
             string hint;
-            if (me.IsBigfoot)
+            if (me.IsYeti)
             {
                 hint = currentCave < 0
                     ? "stand in a cave mouth to fast-travel"

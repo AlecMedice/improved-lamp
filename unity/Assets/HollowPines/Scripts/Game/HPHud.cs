@@ -29,7 +29,7 @@ namespace HollowPines.Game
         /// checks this so its click-to-recapture doesn't steal the mouse back out from under it.
         /// </summary>
         public static bool BriefingOpen;
-        private bool _wantsBigfoot;
+        private bool _wantsYeti;
         private bool _showHelp;
         private int _lastNight = 1;
         private float _nightFadeAt = -999f;
@@ -91,7 +91,7 @@ namespace HollowPines.Game
                         Perks = new[]
                         {
                             $"Your camera films from {filmRange:0} m — 25% farther than anyone's",
-                            $"[{flashKey}] fires the flash: it stuns Bigfoot on the spot (3 s)",
+                            $"[{flashKey}] fires the flash: it stuns Yeti on the spot (3 s)",
                             "...and paints you for it to find. One charge per night",
                         },
                     };
@@ -120,7 +120,7 @@ namespace HollowPines.Game
                                 "The parabolic mic hears what the dark is hiding long before your eyes do.",
                         Perks = new[]
                         {
-                            $"You hear Bigfoot from {hear:0} m — nearly twice as far",
+                            $"You hear Yeti from {hear:0} m — nearly twice as far",
                             "A roar paints its direction on your HUD for 10 s",
                             "Your recordings bank 15% faster than the team's",
                         },
@@ -151,7 +151,7 @@ namespace HollowPines.Game
             }
         }
 
-        /// <summary>Called via ObserversRpc when Bigfoot roars anywhere — flash a warning; Theo also gets a bearing.</summary>
+        /// <summary>Called via ObserversRpc when Yeti roars anywhere — flash a warning; Theo also gets a bearing.</summary>
         public static void NotifyRoar(Vector3 pos)
         {
             _roarFlashUntil = Time.time + 2.5f;
@@ -198,7 +198,7 @@ namespace HollowPines.Game
 
         // ------------------------------------------------------------------ lobby
 
-        /// <summary>Intended roster: one Bigfoot + five searchers. Display only — not hard-enforced.</summary>
+        /// <summary>Intended roster: one Yeti + five searchers. Display only — not hard-enforced.</summary>
         private const int MaxPlayers = 6;
 
         private GUIStyle _mutedLabel;
@@ -209,13 +209,13 @@ namespace HollowPines.Game
             return s;
         }
 
-        /// <summary>Who the deal will hand Bigfoot to, in words — mirrors GameManager.DoStartMatch.</summary>
-        private static string BigfootPickHint(int count, int wanters)
+        /// <summary>Who the deal will hand Yeti to, in words — mirrors GameManager.DoStartMatch.</summary>
+        private static string YetiPickHint(int count, int wanters)
         {
-            if (count < 2) return "Bigfoot: none until a second player joins";
-            if (wanters == 0) return "Bigfoot: chosen at random (nobody volunteered)";
-            if (wanters == 1) return "Bigfoot: the volunteer";
-            return "Bigfoot: random pick among the volunteers";
+            if (count < 2) return "Yeti: none until a second player joins";
+            if (wanters == 0) return "Yeti: chosen at random (nobody volunteered)";
+            if (wanters == 1) return "Yeti: the volunteer";
+            return "Yeti: random pick among the volunteers";
         }
 
         // The host's LAN address, resolved once and cached — a DNS lookup every OnGUI frame would be
@@ -250,7 +250,7 @@ namespace HollowPines.Game
             GUILayout.BeginArea(new Rect((Screen.width - lw) / 2f, 40f, lw, lh));
 
             int count = 0, wanters = 0;
-            foreach (var p in HPPlayer.All) { if (p == null) continue; count++; if (p.WantsBigfoot.Value) wanters++; }
+            foreach (var p in HPPlayer.All) { if (p == null) continue; count++; if (p.WantsYeti.Value) wanters++; }
 
             GUILayout.Box($"HOLLOW PINES — camp lobby   ({count}/{MaxPlayers})");
 
@@ -264,29 +264,29 @@ namespace HollowPines.Game
             foreach (var p in HPPlayer.All)
             {
                 if (p == null) continue;
-                string tag = p.WantsBigfoot.Value ? "  [wants Bigfoot]" : "";
+                string tag = p.WantsYeti.Value ? "  [wants Yeti]" : "";
                 string self = p == me ? "  (you)" : "";
                 GUILayout.Label($"• {p.PlayerName.Value}{tag}{self}");
             }
             GUILayout.Space(4f);
 
             // Say who the monster will be, since the deal is otherwise invisible until the match starts.
-            GUILayout.Label(BigfootPickHint(count, wanters), _mutedLabel ??= Muted());
+            GUILayout.Label(YetiPickHint(count, wanters), _mutedLabel ??= Muted());
             GUILayout.Space(6f);
 
             if (me != null)
             {
-                bool w = GUILayout.Toggle(_wantsBigfoot, " I want to play Bigfoot");
-                if (w != _wantsBigfoot)
+                bool w = GUILayout.Toggle(_wantsYeti, " I want to play Yeti");
+                if (w != _wantsYeti)
                 {
-                    _wantsBigfoot = w;
-                    me.ServerSetWantsBigfoot(w);
+                    _wantsYeti = w;
+                    me.ServerSetWantsYeti(w);
                 }
             }
 
             if (InstanceFinder.IsHostStarted)
             {
-                // Below 2 players a match has no Bigfoot (see GameManager.DoStartMatch), so a lone
+                // Below 2 players a match has no Yeti (see GameManager.DoStartMatch), so a lone
                 // host clicking START used to get a silent, broken, monster-less match. Gate it.
                 bool canStart = count >= 2;
                 GUI.enabled = canStart;
@@ -363,8 +363,8 @@ namespace HollowPines.Game
             // Crosshair.
             GUI.Box(new Rect(Screen.width / 2f - 2f, Screen.height / 2f - 2f, 5f, 5f), GUIContent.none);
 
-            if (!me.IsBigfoot) DrawSearcher(gm, me);
-            else DrawBigfoot(gm, me);
+            if (!me.IsYeti) DrawSearcher(gm, me);
+            else DrawYeti(gm, me);
 
             DrawRoarDirection(me);
             DrawStatusOverlay(me);
@@ -429,7 +429,7 @@ namespace HollowPines.Game
                     $"Casting the print…  {(int)(me.CollectProgress01.Value * 100)}%", new Color(0.9f, 0.82f, 0.55f));
             }
 
-            // Flash gave you away — Bigfoot can see exactly where you are.
+            // Flash gave you away — Yeti can see exactly where you are.
             if (me.RevealedFor.Value > 0f)
             {
                 Color oc = GUI.color;
@@ -450,7 +450,7 @@ namespace HollowPines.Game
             }
         }
 
-        private void DrawBigfoot(GameManager gm, HPPlayer me)
+        private void DrawYeti(GameManager gm, HPPlayer me)
         {
             float y = Screen.height - 98f; // taller stack: stamina + charge + leap + roar
             float stamMax = 100f;
@@ -460,13 +460,13 @@ namespace HollowPines.Game
                 GUI.color = Color.white;
                 GUI.Box(new Rect(Screen.width / 2f - 120f, Screen.height / 2f + 30f, 240f, 24f), "DAZZLED — roar and grab locked!");
             }
-            // Ability readouts, ported from the web build's Bigfoot HUD lines. Every ability states
+            // Ability readouts, ported from the web build's Yeti HUD lines. Every ability states
             // itself even when READY — a label that only appears during cooldown reads as "nothing
             // is happening" and made charge look broken.
             Color old = GUI.color;
             string sprintKey = HPKeybinds.Label(HPAction.Sprint), jumpKey = HPKeybinds.Label(HPAction.Jump);
 
-            // Sprint: Bigfoot's replacement for the old charge burst. It outruns a searcher outright,
+            // Sprint: Yeti's replacement for the old charge burst. It outruns a searcher outright,
             // but it spends the same stamina pool the leap does — so the chase is a resource decision.
             bool exhausted = me.OwnExhausted;
             GUI.color = exhausted ? new Color(1f, 0.45f, 0.4f)
@@ -475,7 +475,7 @@ namespace HollowPines.Game
                 exhausted ? "Winded — let it recover"
                     : me.OwnSprinting ? "RUNNING THEM DOWN" : $"Sprint ({sprintKey}) — faster than they are");
 
-            // Leap (Space): this is what actually SPENDS Bigfoot's stamina (30 per leap).
+            // Leap (Space): this is what actually SPENDS Yeti's stamina (30 per leap).
             bool canLeap = me.OwnStamina >= (float)Sim.Player.LeapStaminaCost;
             GUI.color = canLeap ? new Color(0.7f, 0.9f, 0.7f) : new Color(1f, 0.6f, 0.5f);
             GUI.Label(new Rect(16f, y + 42f, 300f, 22f),
@@ -526,7 +526,7 @@ namespace HollowPines.Game
         /// </summary>
         private void DrawRoarDirection(HPPlayer me)
         {
-            if (me.IsBigfoot || me.Specialty.Value != "sound") return;
+            if (me.IsYeti || me.Specialty.Value != "sound") return;
             float persist = (float)Sim.Specialties.RoarDirPersistSec(me.Specialty.Value);
             float age = Time.time - _roarAt;
             if (persist <= 0f || age < 0f || age > persist) return;
@@ -561,13 +561,13 @@ namespace HollowPines.Game
         }
 
         /// <summary>
-        /// Bigfoot's senses overlay (V) — predator vision: searchers pulse warm through the trees,
-        /// and Bigfoot's own recent scent trail glows green. Screen-space blobs (drawn regardless of
+        /// Yeti's senses overlay (V) — predator vision: searchers pulse warm through the trees,
+        /// and Yeti's own recent scent trail glows green. Screen-space blobs (drawn regardless of
         /// occlusion), client-only, exactly the web build's render-toggle idea.
         /// </summary>
         private void DrawSenses(HPPlayer me)
         {
-            if (!me.IsBigfoot || !HPPlayer.SensesOn) return;
+            if (!me.IsYeti || !HPPlayer.SensesOn) return;
             var cam = Camera.main;
             if (cam == null) return;
             EnsureBlobTex();
@@ -575,7 +575,7 @@ namespace HollowPines.Game
 
             foreach (var p in HPPlayer.All)
             {
-                if (p == null || p == me || p.IsBigfoot) continue;
+                if (p == null || p == me || p.IsYeti) continue;
                 float d = Vector3.Distance(p.transform.position, me.transform.position);
                 if (d > 140f) continue;
                 Vector3 sp = cam.WorldToScreenPoint(p.transform.position + Vector3.up * 1.2f);
@@ -602,13 +602,13 @@ namespace HollowPines.Game
         }
 
         /// <summary>
-        /// Bigfoot sees a flashed searcher blazing through the trees for RevealedFor seconds —
+        /// Yeti sees a flashed searcher blazing through the trees for RevealedFor seconds —
         /// the price Eli pays for the stun. Independent of the senses overlay (V): the reveal is
-        /// something the flash DID to Eli, not something Bigfoot chose to switch on.
+        /// something the flash DID to Eli, not something Yeti chose to switch on.
         /// </summary>
         private void DrawRevealed(HPPlayer me)
         {
-            if (!me.IsBigfoot) return;
+            if (!me.IsYeti) return;
             var cam = Camera.main;
             if (cam == null) return;
             EnsureBlobTex();
@@ -616,7 +616,7 @@ namespace HollowPines.Game
 
             foreach (var p in HPPlayer.All)
             {
-                if (p == null || p.IsBigfoot || p.RevealedFor.Value <= 0f) continue;
+                if (p == null || p.IsYeti || p.RevealedFor.Value <= 0f) continue;
                 Vector3 sp = cam.WorldToScreenPoint(p.transform.position + Vector3.up * 1.4f);
                 if (sp.z <= 0f) continue;
 
@@ -632,7 +632,7 @@ namespace HollowPines.Game
         }
 
         /// <summary>Called via ObserversRpc when a camera flash fires — a white bloom for everyone near it.</summary>
-        public static void NotifyFlash(Vector3 pos, bool hitBigfoot)
+        public static void NotifyFlash(Vector3 pos, bool hitYeti)
         {
             _flashAt = Time.time;
             _flashPos = pos;
@@ -703,10 +703,10 @@ namespace HollowPines.Game
             GUI.color = old;
         }
 
-        /// <summary>Searchers see teammate nametags (name + persona) — never Bigfoot's.</summary>
+        /// <summary>Searchers see teammate nametags (name + persona) — never Yeti's.</summary>
         private void DrawNametags(HPPlayer me)
         {
-            if (me.IsBigfoot) return;
+            if (me.IsYeti) return;
             var cam = Camera.main;
             if (cam == null) return;
             Color old = GUI.color;
@@ -714,7 +714,7 @@ namespace HollowPines.Game
 
             foreach (var p in HPPlayer.All)
             {
-                if (p == null || p == me || p.IsBigfoot) continue;
+                if (p == null || p == me || p.IsYeti) continue;
                 float d = Vector3.Distance(p.transform.position, me.transform.position);
                 if (d > 80f) continue;
                 Vector3 sp = cam.WorldToScreenPoint(p.transform.position + Vector3.up * 2.25f);
@@ -743,7 +743,7 @@ namespace HollowPines.Game
                 GUI.color = new Color(0f, 0f, 0f, 0.45f + 0.1f * Mathf.Sin(Time.time * 2.2f));
                 GUI.DrawTexture(full, Texture2D.whiteTexture);
             }
-            if (me.IsBigfoot && me.Dazzled.Value)
+            if (me.IsYeti && me.Dazzled.Value)
             {
                 GUI.color = new Color(1f, 1f, 1f, 0.5f);
                 GUI.DrawTexture(full, Texture2D.whiteTexture);
@@ -813,7 +813,7 @@ namespace HollowPines.Game
             // clamp to the screen, centre it, and scroll anything that still doesn't fit so no line
             // is ever unreachable. The GOT IT row lives OUTSIDE the scroll so it's always visible.
             float w = Mathf.Min(560f, Screen.width - 40f);
-            float h = Mathf.Min(me.IsBigfoot ? 250f : 400f, Screen.height - 60f);
+            float h = Mathf.Min(me.IsYeti ? 250f : 400f, Screen.height - 60f);
             var r = new Rect((Screen.width - w) / 2f, Mathf.Max(20f, (Screen.height - h) / 2f - 10f), w, h);
             GUI.Box(r, GUIContent.none);
             GUILayout.BeginArea(new Rect(r.x + 20f, r.y + 16f, w - 40f, h - 30f));
@@ -832,7 +832,7 @@ namespace HollowPines.Game
             var objective = new GUIStyle(GUI.skin.label) { fontSize = 13, wordWrap = true };
             objective.normal.textColor = new Color(0.95f, 0.85f, 0.7f);
 
-            if (me.IsBigfoot)
+            if (me.IsYeti)
             {
                 GUILayout.Label("YOU ARE THE ONE THEY'RE LOOKING FOR", title);
                 GUILayout.Space(4f);
@@ -949,12 +949,12 @@ namespace HollowPines.Game
         /// <summary>
         /// Standing at the duffel opens its manifest — the bag is a place you READ as well as deposit
         /// into. Shows exactly what the team has banked, broken down by kind, what you're about to add,
-        /// and how much is still missing. Searchers only: Bigfoot can't interact with the duffel at all,
+        /// and how much is still missing. Searchers only: Yeti can't interact with the duffel at all,
         /// and already sees the running total on the top bar.
         /// </summary>
         private void DrawDuffelManifest(GameManager gm, HPPlayer me)
         {
-            if (me.IsBigfoot || me.Status.Value != HPPlayer.StatusActive) return;
+            if (me.IsYeti || me.Status.Value != HPPlayer.StatusActive) return;
             if (!GameManager.AtDuffel(me.transform.position)) return;
 
             int film = gm.VideosCaptured.Value, casts = gm.EvidenceCollected.Value, hair = gm.HairCollected.Value;
@@ -1007,14 +1007,14 @@ namespace HollowPines.Game
             Vector3 pos = me.transform.position;
             string prompt = null;
 
-            if (me.IsBigfoot)
+            if (me.IsYeti)
             {
                 // Dragging someone already? The grab key drops them.
                 HPPlayer dragged = null, nearestFrozen = null;
                 float bestD = GrabPromptRange * GrabPromptRange;
                 foreach (var p in HPPlayer.All)
                 {
-                    if (p == null || p == me || p.IsBigfoot) continue;
+                    if (p == null || p == me || p.IsYeti) continue;
                     if (p.GrabberObjectId.Value == me.ObjectId) { dragged = p; break; }
                     if (p.Status.Value != HPPlayer.StatusFrozen) continue;
                     float d = (p.transform.position - pos).sqrMagnitude;
@@ -1094,7 +1094,7 @@ namespace HollowPines.Game
         {
             string text = gm.Winner.Value == GameManager.WinnerHunters
                 ? "THE FOOTAGE IS OUT THERE — the searchers win!"
-                : "THE FOREST KEEPS ITS SECRET — Bigfoot survives all three nights!";
+                : "THE FOREST KEEPS ITS SECRET — Yeti survives all three nights!";
             GUILayout.BeginArea(new Rect(Screen.width / 2f - 220f, Screen.height / 2f - 70f, 440f, 150f));
             var style = new GUIStyle(GUI.skin.box) { fontSize = 16, wordWrap = true };
             GUILayout.Box(text, style, GUILayout.Height(60f));
@@ -1105,7 +1105,7 @@ namespace HollowPines.Game
         }
 
         /// <summary>
-        /// The between-nights recap: who banked what, Bigfoot's tally, the team's progress toward the
+        /// The between-nights recap: who banked what, Yeti's tally, the team's progress toward the
         /// proof target, and a countdown to the next night. Reads live SyncVars — no snapshot needed,
         /// since gameplay is frozen while this is up.
         /// </summary>
@@ -1138,19 +1138,19 @@ namespace HollowPines.Game
             GUILayout.Space(10f);
 
             GUILayout.Label("SEARCHERS — proof banked", head);
-            HPPlayer bigfoot = null;
+            HPPlayer yeti = null;
             foreach (var p in HPPlayer.All)
             {
                 if (p == null) continue;
-                if (p.IsBigfoot) { bigfoot = p; continue; }
+                if (p.IsYeti) { yeti = p; continue; }
                 string carry = p.CarriedTotal > 0 ? $"   (+{p.CarriedTotal} carried, unbanked)" : "";
                 GUILayout.Label($"• {NameOf(p)} — {p.StatBanked.Value}{carry}", row);
             }
             GUILayout.Space(10f);
 
-            GUILayout.Label("BIGFOOT", head);
-            if (bigfoot != null)
-                GUILayout.Label($"• {NameOf(bigfoot)} — searchers taken: {bigfoot.StatIncaps.Value}   ·   " +
+            GUILayout.Label("YETI", head);
+            if (yeti != null)
+                GUILayout.Label($"• {NameOf(yeti)} — searchers taken: {yeti.StatIncaps.Value}   ·   " +
                                 $"{gm.TotalNights.Value - gm.NightNumber.Value} night(s) left to survive", row);
 
             GUILayout.EndArea();
@@ -1177,7 +1177,7 @@ namespace HollowPines.Game
             string senses = HPKeybinds.Label(HPAction.Senses);
             string map = HPKeybinds.Label(HPAction.Map), ping = HPKeybinds.Label(HPAction.Ping);
             string flashAbility = HPKeybinds.Label(HPAction.Flash);
-            string help = me.IsBigfoot
+            string help = me.IsYeti
                 ? $"WASD move · mouse look · {jump} leap / hold near a boulder-RV-tower to CLIMB\n" +
                   $"{sprint} SPRINT (faster than they are) · RMB ROAR (freeze) · LMB GRAB / drop\n" +
                   $"{senses} senses overlay · {map} map (cave fast-travel)\n" +
@@ -1185,7 +1185,7 @@ namespace HollowPines.Game
                   "a GRAB spills their pack — you can't destroy evidence, but you can stand\n" +
                   "over the spill until it goes cold · survive all 3 nights"
                 : $"WASD move · mouse look · {sprint} sprint · {jump} jump / VAULT a log\n" +
-                  $"{flash} flashlight (dazzles Bigfoot if held on it) · RMB hold = FILM Bigfoot\n" +
+                  $"{flash} flashlight (dazzles Yeti if held on it) · RMB hold = FILM Yeti\n" +
                   $"{revive} hold = STORE proof / revive / recover a spilled pack / bag hair / cast (Mara)\n" +
                   $"{crouch} crouch — half speed, but your footsteps go silent\n" +
                   $"{mark} trail mark (Wren) · {flashAbility} camera flash (Eli)\n" +

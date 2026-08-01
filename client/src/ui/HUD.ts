@@ -25,7 +25,7 @@ export class HUD {
     this.el("clock").textContent = clockTime(timeOfDay);
   }
 
-  /** Show the local searcher's assigned character (name + specialty). Pass empty to hide (Bigfoot/unassigned). */
+  /** Show the local searcher's assigned character (name + specialty). Pass empty to hide (Yeti/unassigned). */
   setPersona(characterName: string, specialty: string) {
     const pill = this.el("persona");
     if (characterName) {
@@ -47,13 +47,13 @@ export class HUD {
     this.el("roar-dir-arrow").style.transform = `rotate(${angleRad}rad)`;
   }
 
-  /** Show role-appropriate objective text and hide the filming UI for Bigfoot. */
+  /** Show role-appropriate objective text and hide the filming UI for Yeti. */
   setRole(role: string) {
-    const bigfoot = role === "bigfoot";
-    this.el("objective").textContent = bigfoot
+    const yeti = role === "yeti";
+    this.el("objective").textContent = yeti
       ? "Survive 3 nights. Right-click ROAR to freeze hunters, left-click GRAB a frozen one."
-      : "Film Bigfoot 3 times to win — track its footprints, and don't get caught.";
-    if (bigfoot) {
+      : "Film Yeti 3 times to win — track its footprints, and don't get caught.";
+    if (yeti) {
       this.el("film-pill").style.display = "none";
       this.el("revive-pill").style.display = "none";
     } else {
@@ -68,7 +68,7 @@ export class HUD {
     this.el("revive-fill").style.width = `${Math.round(p * 100)}%`;
   }
 
-  /** Bigfoot's ability readout (roar cooldown). Pass null to clear. */
+  /** Yeti's ability readout (roar cooldown). Pass null to clear. */
   setAbility(text: string | null) {
     const el = this.el("ability");
     if (text) {
@@ -79,12 +79,12 @@ export class HUD {
     }
   }
 
-  /** recording = RMB held; locked = Bigfoot is in frame (footage is building). */
+  /** recording = RMB held; locked = Yeti is in frame (footage is building). */
   setRecording(recording: boolean, locked: boolean) {
     this.el("viewfinder").style.display = recording ? "block" : "none";
     const rec = this.el("rec");
     rec.classList.toggle("locked", locked);
-    rec.textContent = locked ? "● REC — IN FRAME" : "● REC — find Bigfoot";
+    rec.textContent = locked ? "● REC — IN FRAME" : "● REC — find Yeti";
   }
   setFilmProgress(p: number) {
     const w = `${Math.round(p * 100)}%`;
@@ -95,10 +95,10 @@ export class HUD {
   setStatusBanner(status: string) {
     const el = this.el("status-banner");
     if (status === "frozen") {
-      el.textContent = "FROZEN — paralyzed by Bigfoot's roar. Can't move!";
+      el.textContent = "FROZEN — paralyzed by Yeti's roar. Can't move!";
       el.style.display = "block";
     } else if (status === "incapacitated") {
-      el.textContent = "INCAPACITATED — Bigfoot has you. Your footage is lost.";
+      el.textContent = "INCAPACITATED — Yeti has you. Your footage is lost.";
       el.style.display = "block";
     } else {
       el.style.display = "none";

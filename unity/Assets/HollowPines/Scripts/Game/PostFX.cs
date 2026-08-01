@@ -1,6 +1,6 @@
 // The web build's post-processing look, rebuilt on URP Volumes: bloom + vignette + film grain
 // + ACES tonemapping (the client's EffectComposer pass in core/Game.ts / config.POST). Also owns
-// the per-ROLE exposure: each client renders its own scene, so Bigfoot's brighter night vision is
+// the per-ROLE exposure: each client renders its own scene, so Yeti's brighter night vision is
 // purely local and never leaks to searcher screens — same trick as the web build.
 // Built entirely in code (WorldBuilder bootstraps it); values tuned by eye, like everything else.
 using UnityEngine;
@@ -18,7 +18,7 @@ namespace HollowPines.Game
         private Bloom _bloom;
         // Two independent reasons to lift exposure. Tracked separately and composed in ApplyExposure
         // so neither can clobber the other (the title screen ends exactly when a role is assigned).
-        private bool _bigfootVision;
+        private bool _yetiVision;
         private bool _titleMode;
         private bool _nightVision; // searcher glassing the forest through the tower binoculars
 
@@ -70,12 +70,12 @@ namespace HollowPines.Game
         }
 
         /// <summary>
-        /// Bigfoot sees the night brighter (predator eyes) — a local exposure lift, exactly like the
+        /// Yeti sees the night brighter (predator eyes) — a local exposure lift, exactly like the
         /// web build's per-role exposure. Called from HPPlayer when the local role changes.
         /// </summary>
-        public void SetBigfootVision(bool bigfoot)
+        public void SetYetiVision(bool yeti)
         {
-            _bigfootVision = bigfoot;
+            _yetiVision = yeti;
             ApplyExposure();
         }
 
@@ -106,7 +106,7 @@ namespace HollowPines.Game
         /// <summary>
         /// Binocular night vision (searcher on the lookout). A hard exposure lift plus a green cast and
         /// a squeeze of saturation — the classic image-intensifier look — so the top of the tower
-        /// genuinely reveals the treeline you can't otherwise see. Local only, like Bigfoot's vision.
+        /// genuinely reveals the treeline you can't otherwise see. Local only, like Yeti's vision.
         /// </summary>
         public void SetNightVision(bool on)
         {
@@ -119,7 +119,7 @@ namespace HollowPines.Game
             if (_colorAdjustments == null) return;
             float ev = 0f;
             if (_titleMode) ev += 1.15f;      // menu backdrop
-            if (_bigfootVision) ev += 0.9f;   // predator eyes
+            if (_yetiVision) ev += 0.9f;   // predator eyes
             if (_nightVision) ev += 2.0f;     // image intensifier — a big lift, it's the whole point
             _colorAdjustments.postExposure.Override(ev);
             // Green phosphor cast + desaturation while glassing; neutral otherwise.

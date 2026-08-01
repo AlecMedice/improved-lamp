@@ -26,11 +26,11 @@ export const WORLD_HALF = WORLD.size / 2; // 400
 export const SIM_DT = 1 / 20;
 
 export const PLAYER = {
-  eyeHeight: 1.7, // searcher; Bigfoot is taller (see LocalPlayer)
+  eyeHeight: 1.7, // searcher; Yeti is taller (see LocalPlayer)
   radius: 0.4, // collision radius
   walkSpeed: 5,
   sprintSpeed: 8.5,
-  bigfootSpeedMul: 1.22, // Bigfoot is faster
+  yetiSpeedMul: 1.22, // Yeti is faster
   mouseSensitivity: 0.0022,
   batteryDrainPerSec: 1.4, // while flashlight is on
   staminaDrainPerSec: 18, // while sprinting
@@ -48,13 +48,13 @@ export const PLAYER = {
   //                   the prompt has to reach from alongside — you can never stand inside one)
   vaultHopSpeed: 4.6, // upward velocity when a hunter vaults a fallen log (a clamber, < jumpSpeed)
   vaultStaminaCost: 12, // stamina spent to vault a log (the only way through one on foot)
-  climbSpeed: 3.6, // Bigfoot's vertical climb rate up a climbable structure (m/s)
+  climbSpeed: 3.6, // Yeti's vertical climb rate up a climbable structure (m/s)
   climbStaminaDrain: 22, // stamina/sec while climbing/clinging (regen is suspended while climbing)
-  climbReach: 0.7, // how far past a structure's edge Bigfoot can grab on to start a climb (m)
+  climbReach: 0.7, // how far past a structure's edge Yeti can grab on to start a climb (m)
   lakeHunterFactor: 0.28, // hunter speed multiplier while wading (heavy kit)
-  lakeBigfootFactor: 0.72, // Bigfoot speed multiplier while wading (strong, but water impedes)
+  lakeYetiFactor: 0.72, // Yeti speed multiplier while wading (strong, but water impedes)
   jumpSpeed: 5.2, // initial upward velocity on jump (m/s)
-  leapSpeed: 9.5, // Bigfoot's leap: initial upward velocity (m/s), well above a hunter's jump
+  leapSpeed: 9.5, // Yeti's leap: initial upward velocity (m/s), well above a hunter's jump
   leapStaminaCost: 30, // stamina spent per leap (gates spamming)
   gravity: 16, // downward acceleration while airborne (m/s^2)
   crouchFactor: 0.55, // eye-height multiplier while crouched
@@ -64,7 +64,7 @@ export const PLAYER = {
 
 /** Cave fast-travel rules — shared because the server validates `caveTravel` with them. */
 export const CAVE = {
-  triggerRadius: 6, // how close Bigfoot must be to a mouth to use it
+  triggerRadius: 6, // how close Yeti must be to a mouth to use it
   travelCooldown: 2.0, // seconds between cave jumps
   emergeOffset: 8, // metres toward map centre a traveller emerges (outside the boulder horseshoe)
 };

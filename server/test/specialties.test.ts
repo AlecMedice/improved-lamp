@@ -49,7 +49,7 @@ describe("specialty identity", () => {
 
   it("validates ids", () => {
     expect(isSpecialtyId("tracking")).toBe(true);
-    expect(isSpecialtyId("bigfoot")).toBe(false);
+    expect(isSpecialtyId("yeti")).toBe(false);
     expect(isSpecialtyId(undefined)).toBe(false);
   });
 });
@@ -66,8 +66,8 @@ describe("specialty getters (Standard tier + baseline defaults)", () => {
     expect(footstepVolumeMul("tracking")).toBe(0.5);
   });
 
-  it("falls back to the baseline for other/absent specialties (incl. Mara + Bigfoot)", () => {
-    for (const id of ["analysis", "", "bigfoot"]) {
+  it("falls back to the baseline for other/absent specialties (incl. Mara + Yeti)", () => {
+    for (const id of ["analysis", "", "yeti"]) {
       expect(reviveMul(id)).toBe(1);
       expect(staminaMax(id)).toBe(100);
       expect(staminaDrainMul(id)).toBe(1);

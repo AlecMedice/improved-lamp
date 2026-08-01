@@ -1,7 +1,7 @@
 # Hollow Pines — agent orientation
 
 Asymmetric 1‑vs‑5 multiplayer horror game. Five **searchers** hunt a Pacific‑NW forest
-for proof of **Bigfoot** (played by the 6th player). Browser game: **Three.js client +
+for proof of **Yeti** (played by the 6th player). Browser game: **Three.js client +
 Colyseus server, TypeScript everywhere**. Stylized low‑poly, smooth‑shaded, dusk‑to‑dawn.
 
 Read `docs/` for the full picture — every file there is current, nothing is a stale plan:
@@ -31,7 +31,7 @@ cd server && npm install && npm run dev    # Colyseus at ws://localhost:2567 (le
 ```
 The client runs **standalone** (offline solo) if the server is down — you just won't see
 other players, clues, pings, nights, or abilities. To test multiplayer, open one tab as
-Bigfoot and another as a searcher (`server/src/rooms` is authoritative).
+Yeti and another as a searcher (`server/src/rooms` is authoritative).
 
 ## Verify your work (do this before claiming done)
 ```bash
@@ -46,14 +46,14 @@ compile. Add a case here whenever you touch validation or the sim. For end-to-en
 (roar → grab → revive), a **headless smoke test** is still the fast way to prove behavior:
 write a throwaway `client/_smoke.mjs` using `colyseus.js` (already installed in `client/`),
 connect 1–2 clients, drive messages, assert on `room.state`, then delete it. Example
-pattern used during development: join a bigfoot + searcher, send `move`/`roar`/`grab`,
+pattern used during development: join a yeti + searcher, send `move`/`roar`/`grab`,
 read `room.state.players` / `videosCaptured`, `process.exit(ok?0:1)`. Run the server in
 the background first and wait with `curl --retry --retry-connrefused http://localhost:2567/health`.
 Don't commit smoke files or `client/dist/`.
 
 ## Architecture
 - **Per‑client Three.js scene.** Each browser renders its own scene, so per‑role visuals
-  (e.g. Bigfoot's brighter exposure/night‑vision) are just local and don't leak.
+  (e.g. Yeti's brighter exposure/night‑vision) are just local and don't leak.
 - **Server is authoritative** for match state: night clock, clues, pings, roar/grab/
   incapacitation, footage tally, win/loss. The simulation runs at 20 Hz in
   `ForestRoom.update()`.
@@ -91,53 +91,53 @@ Client → server (`Network.send*`):
   `inView`/`battery`/`stamina` are **hints the server re‑validates or bounds** (see anti‑cheat above),
   not trusted values; `x,z,y` are corrected by `applyMove`; only `ry` (camera aim) is taken as sent.
 - `ping` `{x,z}` — hunters only (stakeout marker).
-- `roar` — Bigfoot: AoE freeze *(rejected while dazzled)*. `Space` = leap (stamina-gated bound).
-- `grab` — Bigfoot: grab nearest frozen hunter / drop the dragged one *(rejected while dazzled)*.
-- `charge` — Bigfoot (`Shift`): opens a server-tracked speed-gate window (cooldown) so a forward burst
+- `roar` — Yeti: AoE freeze *(rejected while dazzled)*. `Space` = leap (stamina-gated bound).
+- `grab` — Yeti: grab nearest frozen hunter / drop the dragged one *(rejected while dazzled)*.
+- `charge` — Yeti (`Shift`): opens a server-tracked speed-gate window (cooldown) so a forward burst
   dash isn't clamped as a speedhack. No move-payload field; the burst is client-predicted via `chargeMul`.
-- `caveTravel` `{index}` — Bigfoot: validated cave fast‑travel (must stand in a mouth; cooldown).
+- `caveTravel` `{index}` — Yeti: validated cave fast‑travel (must stand in a mouth; cooldown).
 - `startMatch` / `returnToLobby` — host only (lobby lifecycle).
 - *(no RPC)* **surface-climb** (`Space` vs a structure) rides the existing `move` feet-y; **senses overlay**
-  (`V`) is a client-only Bigfoot render toggle. Neither adds a message.
+  (`V`) is a client-only Yeti render toggle. Neither adds a message.
 
 Server → client (broadcast, not state):
 - `roar` `{x, z, by}` — fired on every roar so all clients can play it as **positional audio**
-  from Bigfoot's real position (carries beyond the freeze radius). Clients skip their own (`by`).
+  from Yeti's real position (carries beyond the freeze radius). Clients skip their own (`by`).
 
 Server state (`GameState`, replicated):
 - `players: Map<sid, Player>` — `{role, name, x,y,z,ry, flashlightOn, battery, stamina,
   status, slowed, filming, filmProgress, connected, beingRevived, dazzled}`.
   `status ∈ "active" | "frozen" | "incapacitated"`; `beingRevived` = a teammate is reviving this
-  downed hunter; `dazzled` (Bigfoot only) = a searcher's flashlight is blinding it.
-- `clues: Clue[]` `{id, ctype("footprint"|"branch"), x, z, ry}` — Bigfoot's trail.
+  downed hunter; `dazzled` (Yeti only) = a searcher's flashlight is blinding it.
+- `clues: Clue[]` `{id, ctype("footprint"|"branch"), x, z, ry}` — Yeti's trail.
 - `pings: Ping[]` `{id, x, z}` — hunter stakeout markers (1 per hunter).
 - `matchPhase ("lobby"|"playing"|"results"), hostId` — lifecycle; the clock only runs while playing.
 - `phase, timeOfDay (0..1 of the night), nightNumber, totalNights`,
-  `videosRequired, videosCaptured (team total), winner ("" | "hunters" | "bigfoot")`.
+  `videosRequired, videosCaptured (team total), winner ("" | "hunters" | "yeti")`.
 - **Per‑night escalation** (server sets each tick from the `ESCALATION` table):
-  `bigfootSpeedMul, batteryDrainMul, staminaDrainMul, roarCooldownSec`. The client applies these
+  `yetiSpeedMul, batteryDrainMul, staminaDrainMul, roarCooldownSec`. The client applies these
   (movement/drain are client‑side in v1); freeze duration + clue lifetime are escalated
   server‑side only. Single source of truth — don't mirror the table on the client.
 
 ## Rules (current)
 - **3 nights**, each 8pm→8am (daylight skipped, fade between nights).
-- **Hunters win:** capture **3 solid videos** (hold RMB with Bigfoot in frame/range/LOS
+- **Hunters win:** capture **3 solid videos** (hold RMB with Yeti in frame/range/LOS
   ~3s; pooled across the team and across nights).
-- **Bigfoot wins:** **survive all 3 nights**.
-- **Bigfoot offense:** RMB **roar** freezes hunters within ~25m for 30s → LMB **grab** a
+- **Yeti wins:** **survive all 3 nights**.
+- **Yeti offense:** RMB **roar** freezes hunters within ~25m for 30s → LMB **grab** a
   frozen hunter → incapacitate 60s (fade out, drag them, **erase the team's footage**) →
   they recover, 25% slower for 30s. Not permanent elimination. `Space` = **leap** (stamina-gated bound).
-- **Bigfoot mobility/senses:** `Shift` = **charge** (a short forward burst dash on a cooldown, past the
+- **Yeti mobility/senses:** `Shift` = **charge** (a short forward burst dash on a cooldown, past the
   normal speed gate); `Space` against the **tower / RV / cave boulders** = **surface-climb** (scale the
   side, stamina-gated, and stand on top; step off to drop); `V` = **senses overlay** (predator vision —
-  hunters and Bigfoot's own recent scent trail glow through the forest).
+  hunters and Yeti's own recent scent trail glow through the forest).
 - **Searcher counterplay:** hold `E` near a downed teammate to **revive** them (~4s) before the incap
-  expires; keep a **flashlight** trained on Bigfoot (~1.2s, range+cone+LOS) to **dazzle** it — its
+  expires; keep a **flashlight** trained on Yeti (~1.2s, range+cone+LOS) to **dazzle** it — its
   roar/grab lock and its sight cone cuts for ~3s (a deterrent, doesn't free a grabbed hunter); `Space`
   to **vault** a fallen log (stamina-gated hop that negates the log slow).
 - **Map (`M`):** both roles see self/camp/caves; hunters also see teammates, pings, and the
-  *recent* clue trail **only while in contact** (Bigfoot heard nearby or recent evidence in
-  sight). Bigfoot in a cave mouth clicks a cave on the map to fast‑travel.
+  *recent* clue trail **only while in contact** (Yeti heard nearby or recent evidence in
+  sight). Yeti in a cave mouth clicks a cave on the map to fast‑travel.
 
 ## Where things live
 Client (`client/src/`):
@@ -154,7 +154,7 @@ Client (`client/src/`):
 - `entities/LocalPlayer.ts` — presentation for the local player (camera, look, head‑bob, footsteps,
   flashlight visuals) around the shared `stepPlayer` sim; `externalSpeedMul` (slow), per‑night
   `nightSpeedMul`/`batteryDrainMul`/`staminaDrainMul` (composed into `StepModifiers`), `teleportTo`.
-- `entities/RemotePlayer.ts` — avatars, Bigfoot eye‑shine, rec light, frozen/incap status icon,
+- `entities/RemotePlayer.ts` — avatars, Yeti eye‑shine, rec light, frozen/incap status icon,
   positional footsteps (from interpolation deltas).
 - `world/Environment.ts` — terrain/forest/sky/lights/RV/caves; `getHeight`, `resolveCollision`,
   `lineBlocked`, `setTimeOfDay` (day‑night lerp), `colliders[]`.
@@ -207,7 +207,7 @@ Shared (`shared/sim/`) — dependency‑free deterministic sim, imported by both
 Rigged/animated models + art/perf pass (Phase 6); deploy (Phase 7); full input‑replay movement
 prediction (Phase 2.3 stretch — server authority + correction already shipped). (Done: audio —
 procedural + diegetic; per‑night escalation; lobby/lifecycle + reconnection; **server‑authoritative
-movement + reconciliation + shared deterministic world**; **Phase 3 asymmetry complete — Bigfoot
+movement + reconciliation + shared deterministic world**; **Phase 3 asymmetry complete — Yeti
 leap/charge/surface‑climb + limited‑range vision + senses overlay, searcher revive/dazzle/vault**;
 **Phase 5 complete — post‑processing, settings menu (brightness/gamma, volume, sensitivity),
 key rebinding, dusk‑briefing tutorial**.)

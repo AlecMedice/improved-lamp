@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { PLAYER, BIGFOOT_VISION } from "../config";
+import { PLAYER, YETI_VISION } from "../config";
 import { Input } from "../core/Input";
 import { Environment } from "../world/Environment";
 import { AudioEngine } from "../core/AudioEngine";
@@ -13,17 +13,17 @@ import { stepPlayer, type PlayerSimState, type MoveInput, type StepResult, type 
 export class LocalPlayer {
   readonly camera: THREE.PerspectiveCamera;
   readonly flashlight: THREE.SpotLight;
-  /** Bigfoot's dim short-range night sight (rides the camera; undefined for hunters). */
+  /** Yeti's dim short-range night sight (rides the camera; undefined for hunters). */
   readonly visionLight?: THREE.SpotLight;
   readonly position = new THREE.Vector3(); // eye position (derived from sim each frame)
-  readonly isBigfoot: boolean;
+  readonly isYeti: boolean;
   externalSpeedMul = 1; // set by Game (e.g. 0.75 while slowed after incapacitation)
   sensitivityMul = 1; // mouse-look sensitivity multiplier (from the settings menu)
 
-  chargeMul = 1; // Bigfoot charge burst (1 = not charging; set by Game while a charge window is open)
+  chargeMul = 1; // Yeti charge burst (1 = not charging; set by Game while a charge window is open)
 
   // Per-night escalation (set by Game from server-replicated multipliers; 1 = night-1 baseline).
-  nightSpeedMul = 1; // Bigfoot grows faster on later nights (hunters stay 1)
+  nightSpeedMul = 1; // Yeti grows faster on later nights (hunters stay 1)
   batteryDrainMul = 1; // flashlight drains faster on later nights
   staminaDrainMul = 1; // sprinting tires you faster on later nights (× Sam's Endurance reduction)
   staminaMax = 100; // per-player stamina ceiling (Sam's Endurance raises it to 150)
@@ -44,8 +44,8 @@ export class LocalPlayer {
     this.env = env;
     this.world = env.simWorld;
     this.audio = audio;
-    this.isBigfoot = role === "bigfoot";
-    const eyeHeight = this.isBigfoot ? 2.3 : PLAYER.eyeHeight;
+    this.isYeti = role === "yeti";
+    const eyeHeight = this.isYeti ? 2.3 : PLAYER.eyeHeight;
     const gy = env.getHeight(spawn.x, spawn.z);
 
     this.sim = {
@@ -61,7 +61,7 @@ export class LocalPlayer {
       battery: 100,
       curEye: eyeHeight,
       flashlightOn: false,
-      isBigfoot: this.isBigfoot,
+      isYeti: this.isYeti,
       eyeHeight,
     };
     this.position.set(spawn.x, gy + eyeHeight, spawn.z);
@@ -72,10 +72,10 @@ export class LocalPlayer {
     this.flashlight.target.position.set(0, 0, -1);
     camera.add(this.flashlight, this.flashlight.target);
 
-    // Bigfoot has no flashlight; instead a dim, short-range sight cone rides the camera so it can
+    // Yeti has no flashlight; instead a dim, short-range sight cone rides the camera so it can
     // see a near bubble but loses the far scene to darkness (weaker/shorter than a flashlight).
-    if (this.isBigfoot) {
-      const v = BIGFOOT_VISION;
+    if (this.isYeti) {
+      const v = YETI_VISION;
       this.visionLight = new THREE.SpotLight(0xcfe0ff, v.intensity, v.range, v.angle, v.penumbra, 1.2);
       this.visionLight.position.set(0, 0, 0);
       this.visionLight.target.position.set(0, 0, -1);
@@ -103,7 +103,7 @@ export class LocalPlayer {
   }
 
   toggleFlashlight() {
-    if (this.isBigfoot) return; // Bigfoot has no flashlight
+    if (this.isYeti) return; // Yeti has no flashlight
     if (this.sim.battery <= 0 && !this.sim.flashlightOn) return;
     this.sim.flashlightOn = !this.sim.flashlightOn;
     this.flashlight.intensity = this.sim.flashlightOn ? 140 : 0;
@@ -131,7 +131,7 @@ export class LocalPlayer {
     this.camera.position.y += this.bobY;
   }
 
-  /** Instantly move to a new (x,z) — used by Bigfoot's cave fast-travel. */
+  /** Instantly move to a new (x,z) — used by Yeti's cave fast-travel. */
   teleportTo(x: number, z: number, yaw?: number) {
     const gy = this.env.getHeight(x, z);
     this.sim.x = x;
@@ -154,13 +154,13 @@ export class LocalPlayer {
       a: input.isActionDown("left"),
       d: input.isActionDown("right"),
       yaw: this.sim.yaw,
-      // The jump key is a leap for Bigfoot (stamina-gated bound) and a normal jump for hunters; for
-      // hunters it also engages a vault on a fallen log, and for Bigfoot a climb against a climbable
+      // The jump key is a leap for Yeti (stamina-gated bound) and a normal jump for hunters; for
+      // hunters it also engages a vault on a fallen log, and for Yeti a climb against a climbable
       // structure (the sim picks vault/climb over jump/leap by context).
-      jump: !this.isBigfoot && jumpKey,
-      leap: this.isBigfoot && jumpKey,
-      climb: this.isBigfoot && jumpKey,
-      vault: !this.isBigfoot && jumpKey,
+      jump: !this.isYeti && jumpKey,
+      leap: this.isYeti && jumpKey,
+      climb: this.isYeti && jumpKey,
+      vault: !this.isYeti && jumpKey,
       sprint: input.isActionDown("sprint"),
       crouch: input.isActionDown("crouch"),
       dt,
@@ -203,7 +203,7 @@ export class LocalPlayer {
       if (res.moving && this.sim.grounded) {
         this.stepTimer -= dt;
         if (this.stepTimer <= 0) {
-          this.audio.playFootstep(res.sprinting, this.isBigfoot);
+          this.audio.playFootstep(res.sprinting, this.isYeti);
           this.stepTimer = res.sprinting
             ? PLAYER.stepIntervalSprint
             : PLAYER.stepIntervalWalk * (cmd.crouch ? 1.6 : 1);

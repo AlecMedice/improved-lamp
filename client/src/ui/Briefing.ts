@@ -9,14 +9,14 @@ export class Briefing {
   isOpen = false;
   private overlay = document.getElementById("briefing-overlay") as HTMLElement;
 
-  show(isBigfoot: boolean, keybinds: Keybinds, input: Input, onDismiss: () => void) {
+  show(isYeti: boolean, keybinds: Keybinds, input: Input, onDismiss: () => void) {
     const k = (a: Parameters<Keybinds["code"]>[0]) => codeLabel(keybinds.code(a));
     const move = `${k("forward")} ${k("left")} ${k("back")} ${k("right")}`;
-    const title = isBigfoot ? "You are Bigfoot" : "Searcher briefing";
-    const objective = isBigfoot
+    const title = isYeti ? "You are Yeti" : "Searcher briefing";
+    const objective = isYeti
       ? "Survive three nights. Hunt the searchers, drag them off, and erase their footage — just don't get filmed."
-      : "Capture three solid videos of Bigfoot before the third dawn. Track its footprints and broken branches — and don't get caught alone.";
-    const rows: [string, string][] = isBigfoot
+      : "Capture three solid videos of Yeti before the third dawn. Track its footprints and broken branches — and don't get caught alone.";
+    const rows: [string, string][] = isYeti
       ? [
           ["Move / look", `${move} · Mouse`],
           ["Roar (freeze) · Grab", "Right-click · Left-click"],
@@ -28,8 +28,8 @@ export class Briefing {
       : [
           ["Move / look", `${move} · Mouse`],
           ["Sprint · crouch", `${k("sprint")} · ${k("crouch")}`],
-          ["Flashlight (dazzles Bigfoot)", k("flashlight")],
-          ["Film Bigfoot", "Hold Right-click"],
+          ["Flashlight (dazzles Yeti)", k("flashlight")],
+          ["Film Yeti", "Hold Right-click"],
           ["Revive a teammate", `Hold ${k("interact")}`],
           ["Map · stakeout ping", `${k("map")} · ${k("ping")}`],
         ];

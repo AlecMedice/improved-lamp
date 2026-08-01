@@ -16,7 +16,7 @@ export type SelfInfo = { status: string; filmProgress: number; role: string; slo
 
 /** Per-night escalation multipliers, server-authoritative (see GameState). */
 export type EscalationInfo = {
-  bigfootSpeedMul: number;
+  yetiSpeedMul: number;
   batteryDrainMul: number;
   staminaDrainMul: number;
   roarCooldownSec: number;
@@ -36,7 +36,7 @@ export class Network {
   private reconnectionToken?: string;
   private intentionalLeave = false;
   private remotes = new Map<string, RemotePlayer>();
-  private bigfoot?: RemotePlayer;
+  private yeti?: RemotePlayer;
   connected = false;
 
   onStatus: (msg: string) => void = () => {};
@@ -88,7 +88,7 @@ export class Network {
   private clearRemotes() {
     for (const rp of this.remotes.values()) rp.dispose();
     this.remotes.clear();
-    this.bigfoot = undefined;
+    this.yeti = undefined;
   }
 
   /** Lost the connection mid-match: retry with the saved token for ~20s (server holds the slot). */
@@ -132,7 +132,7 @@ export class Network {
       }
       const rp = new RemotePlayer(this.scene, player.role, this.audio);
       this.remotes.set(key, rp);
-      if (player.role === "bigfoot") this.bigfoot = rp;
+      if (player.role === "yeti") this.yeti = rp;
       const apply = () => {
         rp.setTarget(player.x, player.y, player.z, player.ry, player.flashlightOn);
         rp.setFilming(player.filming);
@@ -146,7 +146,7 @@ export class Network {
 
     state.players.onRemove((_player: any, key: string) => {
       const rp = this.remotes.get(key);
-      if (rp && rp === this.bigfoot) this.bigfoot = undefined;
+      if (rp && rp === this.yeti) this.yeti = undefined;
       rp?.dispose();
       this.remotes.delete(key);
     });
@@ -168,7 +168,7 @@ export class Network {
       this.onNight(s.nightNumber, s.totalNights);
       this.onFootage(s.videosCaptured, s.videosRequired);
       this.onEscalation({
-        bigfootSpeedMul: s.bigfootSpeedMul ?? 1,
+        yetiSpeedMul: s.yetiSpeedMul ?? 1,
         batteryDrainMul: s.batteryDrainMul ?? 1,
         staminaDrainMul: s.staminaDrainMul ?? 1,
         roarCooldownSec: s.roarCooldownSec ?? 25,
@@ -189,7 +189,7 @@ export class Network {
     );
   }
 
-  /** This player's authoritative position (used to follow Bigfoot's drag while incapacitated). */
+  /** This player's authoritative position (used to follow Yeti's drag while incapacitated). */
   getSelfPosition(): { x: number; z: number } | null {
     const p = (this.room?.state as any)?.players?.get(this.room?.sessionId);
     return p ? { x: p.x, z: p.z } : null;
@@ -203,7 +203,7 @@ export class Network {
     let best: { sid: string; x: number; z: number } | null = null;
     let bestD = radius * radius;
     players.forEach((p: any, sid: string) => {
-      if (sid === selfSid || p.role === "bigfoot" || p.status !== "incapacitated") return;
+      if (sid === selfSid || p.role === "yeti" || p.status !== "incapacitated") return;
       const dx = p.x - x;
       const dz = p.z - z;
       const d = dx * dx + dz * dz;
@@ -215,19 +215,19 @@ export class Network {
     return best;
   }
 
-  /** World position of the (remote) Bigfoot, or null if none / Bigfoot is local. */
-  getBigfootPosition(): THREE.Vector3 | null {
-    return this.bigfoot ? this.bigfoot.group.position.clone() : null;
+  /** World position of the (remote) Yeti, or null if none / Yeti is local. */
+  getYetiPosition(): THREE.Vector3 | null {
+    return this.yeti ? this.yeti.group.position.clone() : null;
   }
 
   /**
-   * Bigfoot senses overlay: reveal each hunter's silhouette when within `range` of (ox,oz).
-   * `on=false` clears them all. No-op unless the local player is Bigfoot (only Bigfoot calls it).
+   * Yeti senses overlay: reveal each hunter's silhouette when within `range` of (ox,oz).
+   * `on=false` clears them all. No-op unless the local player is Yeti (only Yeti calls it).
    */
   refreshSenses(on: boolean, ox: number, oz: number, range: number) {
     const r2 = range * range;
     for (const rp of this.remotes.values()) {
-      if (rp.isBigfoot) continue;
+      if (rp.isYeti) continue;
       const inRange = range <= 0 || (rp.group.position.x - ox) ** 2 + (rp.group.position.z - oz) ** 2 <= r2;
       rp.setSensed(on && inRange);
     }
@@ -237,7 +237,7 @@ export class Network {
   getRemoteSearchers(): Array<{ x: number; z: number }> {
     const out: Array<{ x: number; z: number }> = [];
     for (const rp of this.remotes.values()) {
-      if (!rp.isBigfoot) out.push({ x: rp.group.position.x, z: rp.group.position.z });
+      if (!rp.isYeti) out.push({ x: rp.group.position.x, z: rp.group.position.z });
     }
     return out;
   }
@@ -268,7 +268,7 @@ export class Network {
     this.room?.send("ping", { x, z });
   }
 
-  /** Bigfoot abilities. */
+  /** Yeti abilities. */
   sendRoar() {
     this.room?.send("roar");
   }
@@ -283,7 +283,7 @@ export class Network {
     this.room?.send("move", p);
   }
 
-  /** Bigfoot asks the server to fast-travel to cave `index` (server validates + is authoritative). */
+  /** Yeti asks the server to fast-travel to cave `index` (server validates + is authoritative). */
   /** Debug only: hot-swap the local searcher's persona (server rejects unless ALLOW_DEV_ROLE). */
   sendDebugSetSpecialty(id: string) {
     this.room?.send("debugSetSpecialty", { id });

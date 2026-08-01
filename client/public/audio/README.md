@@ -26,17 +26,17 @@ generated as live audio graphs, not one-shot buffers — they're not override ta
 
 | Cue | When it plays |
 |-----|---------------|
-| `roar` | Bigfoot roars (heard positionally by everyone) |
-| `footstep_soft` / `footstep_heavy` | Searcher / Bigfoot footsteps (own + remote, positional) |
-| `branch_snap` | A branch breaks where Bigfoot stepped |
+| `roar` | Yeti roars (heard positionally by everyone) |
+| `footstep_soft` / `footstep_heavy` | Searcher / Yeti footsteps (own + remote, positional) |
+| `branch_snap` | A branch breaks where Yeti stepped |
 | `flashlight_click` | Searcher toggles the flashlight |
 | `ping_drop` | Searcher drops a stakeout ping |
 | `video_captured` | A solid video is banked |
 | `freeze_sting` | You are frozen by a roar |
-| `grab_impact` | You are grabbed / incapacitated (also Bigfoot's grab swing) |
-| `cave_whoosh` | Bigfoot cave fast-travel |
+| `grab_impact` | You are grabbed / incapacitated (also Yeti's grab swing) |
+| `cave_whoosh` | Yeti cave fast-travel |
 | `night_sting` | A new night begins |
 | `victory` / `defeat` | Match end |
-| `heartbeat` | Searcher proximity-dread bed (rises as Bigfoot nears) |
+| `heartbeat` | Searcher proximity-dread bed (rises as Yeti nears) |
 
 > The procedural fallback is always there, so overrides are an enhancement, never a requirement.

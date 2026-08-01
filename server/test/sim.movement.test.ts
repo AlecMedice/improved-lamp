@@ -10,7 +10,7 @@ function makeState(over: Partial<PlayerSimState> = {}): PlayerSimState {
   return {
     x: 0, z: 0, feetY: groundY, groundY, vy: 0, grounded: true, yaw: 0,
     stamina: 100, exhausted: false, battery: 100, curEye: PLAYER.eyeHeight,
-    flashlightOn: false, isBigfoot: false, eyeHeight: PLAYER.eyeHeight, ...over,
+    flashlightOn: false, isYeti: false, eyeHeight: PLAYER.eyeHeight, ...over,
   };
 }
 
@@ -67,9 +67,9 @@ describe("per-player stamina ceiling (Sam's Endurance)", () => {
   });
 });
 
-describe("Bigfoot leap", () => {
+describe("Yeti leap", () => {
   it("launches at leapSpeed, spends stamina, and peaks near the analytic apex", () => {
-    const st = makeState({ isBigfoot: true });
+    const st = makeState({ isYeti: true });
     const groundY = st.groundY;
 
     stepPlayer(st, makeInput({ leap: true }), world, MODS);
@@ -91,7 +91,7 @@ describe("Bigfoot leap", () => {
   });
 
   it("won't leap without enough stamina", () => {
-    const st = makeState({ isBigfoot: true, stamina: PLAYER.leapStaminaCost - 1 });
+    const st = makeState({ isYeti: true, stamina: PLAYER.leapStaminaCost - 1 });
     stepPlayer(st, makeInput({ leap: true }), world, MODS);
     expect(st.grounded).toBe(true); // stayed on the ground
   });

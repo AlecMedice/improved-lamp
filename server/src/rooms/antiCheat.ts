@@ -42,7 +42,7 @@ export function staminaCeiling(prev: number, regenPerSec: number, dtSec: number,
 }
 
 /**
- * Server-authoritative filming visibility, independent of the client's `inView`: Bigfoot must be within
+ * Server-authoritative filming visibility, independent of the client's `inView`: Yeti must be within
  * `range`, roughly in front of the hunter (aim cone from the replicated yaw, `dot >= aimCos`), and not
  * hidden behind a collider (line-of-sight). Mirrors the dazzle beam check — the pattern the room already
  * trusts. This is the hunter *win condition*, so it must not be forgeable.

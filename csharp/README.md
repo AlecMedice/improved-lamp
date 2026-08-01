@@ -49,12 +49,12 @@ dotnet run --project csharp/Parity
 Two layers:
 1. **Golden cross-check** — reconstructs the TS golden scenarios in C# and asserts against
    `parity/golden.json` (dumped from the real TS sim): RNG stream, value noise, terrain, caves +
-   emerge points + `nearestCaveIndex`, colliders, world summary, hunter/Bigfoot trajectories, and the
+   emerge points + `nearestCaveIndex`, colliders, world summary, hunter/Yeti trajectories, and the
    specialty identity/getters/deals.
 2. **Mirrored property tests** — the behavioural invariants the maintained vitest suite pins
    (`server/test/sim.determinism.test.ts`, `sim.movement.test.ts`, `caves.test.ts`,
    `specialties.test.ts`), re-expressed in C#: world determinism, stamina exhaustion gate, battery
-   drain, the Endurance stamina ceiling, Bigfoot leap arc, NaN-safety at the edge, cave spacing, and
+   drain, the Endurance stamina ceiling, Yeti leap arc, NaN-safety at the edge, cave spacing, and
    the specialty deal.
 
 Integer / pure-arithmetic paths are checked **exactly**; `sin`/`cos`/`sqrt` paths use a 1e-9 epsilon

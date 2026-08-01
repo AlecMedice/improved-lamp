@@ -111,7 +111,7 @@ export class AudioEngine {
 
   // --- convenience wrappers (match the call sites in LocalPlayer / Game) ------
 
-  /** Local player's own footstep (quiet; heavy = Bigfoot). */
+  /** Local player's own footstep (quiet; heavy = Yeti). */
   playFootstep(sprinting: boolean, heavy = false) {
     this.playOnce(heavy ? "footstep_heavy" : "footstep_soft", { volume: heavy ? 0.3 : sprinting ? 0.22 : 0.15 });
   }
@@ -124,7 +124,7 @@ export class AudioEngine {
     this.listener.setMasterVolume(Math.max(0, Math.min(1, v)));
   }
 
-  /** Hunters' tension bed: 0 = silent (Bigfoot far), rising to ~1 (Bigfoot on top of you). */
+  /** Hunters' tension bed: 0 = silent (Yeti far), rising to ~1 (Yeti on top of you). */
   setHeartbeat(intensity: number) {
     this.hbIntensity = clamp01(intensity);
   }
@@ -248,7 +248,7 @@ export class AudioEngine {
   }
 
   private buildCues() {
-    // Bigfoot's signature: a descending growl — sawtooth + amplitude-modulated lowpassed noise.
+    // Yeti's signature: a descending growl — sawtooth + amplitude-modulated lowpassed noise.
     this.buffers.set(
       "roar",
       this.synth(1.6, (d, sr) => {
@@ -266,7 +266,7 @@ export class AudioEngine {
       })
     );
 
-    // Footsteps: short lowpassed-noise thuds; heavier = lower cutoff, longer, louder (Bigfoot).
+    // Footsteps: short lowpassed-noise thuds; heavier = lower cutoff, longer, louder (Yeti).
     const step = (dur: number, cut: number, gain: number) =>
       this.synth(dur, (d, sr) => {
         let lp = 0;

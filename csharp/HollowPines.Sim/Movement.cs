@@ -15,7 +15,7 @@ namespace HollowPines.Sim
         public double Battery;
         public double CurEye;   // eased eye height (lerps toward standing/crouched)
         public bool FlashlightOn;
-        public bool IsBigfoot;
+        public bool IsYeti;
         public double EyeHeight; // standing eye height for this role
     }
 
@@ -28,8 +28,8 @@ namespace HollowPines.Sim
         public bool D;
         public double Yaw;
         public bool Jump;
-        public bool Leap;   // Bigfoot-only: stamina-gated vertical bound
-        public bool Climb;  // Bigfoot-only: scale a climbable structure
+        public bool Leap;   // Yeti-only: stamina-gated vertical bound
+        public bool Climb;  // Yeti-only: scale a climbable structure
         public bool Vault;  // searcher-only: hop over a fallen log
         public bool Sprint;
         public bool Crouch;
@@ -50,7 +50,7 @@ namespace HollowPines.Sim
     /// </summary>
     public struct StepModifiers
     {
-        public double SpeedMul;        // slow factor * per-night Bigfoot speed escalation (1 = baseline)
+        public double SpeedMul;        // slow factor * per-night Yeti speed escalation (1 = baseline)
         public double BatteryDrainMul; // per-night flashlight drain escalation
         public double StaminaDrainMul; // per-night sprint drain escalation (× the Endurance specialty's reduction)
         public double? StaminaMax;     // per-player stamina ceiling (Sam's Endurance raises it; null => 100)
@@ -87,14 +87,14 @@ namespace HollowPines.Sim
             bool moving = wx * wx + wz * wz > 0;
             bool sprinting = moving && input.Sprint && !st.Exhausted && !crouching;
             double speed = (sprinting ? Player.SprintSpeed : Player.WalkSpeed)
-                           * (st.IsBigfoot ? Player.BigfootSpeedMul : 1) * mods.SpeedMul;
+                           * (st.IsYeti ? Player.YetiSpeedMul : 1) * mods.SpeedMul;
             if (crouching) speed *= Player.CrouchSpeedMul;
 
             // Terrain obstacles: fallen logs BLOCK hunters (see the push-out below); the lake slows
             // everyone. The only way through a log on foot is a VAULT — a stamina-gated hop over it.
             // Reach is measured with a padded radius because the push-out means a grounded hunter can
             // never actually stand inside a log: the prompt has to fire from alongside it, not on top.
-            if (!st.IsBigfoot && st.Grounded && input.Vault && st.Stamina >= Player.VaultStaminaCost)
+            if (!st.IsYeti && st.Grounded && input.Vault && st.Stamina >= Player.VaultStaminaCost)
             {
                 if (Collision.LogOverlap(world.FallenLogs, st.X, st.Z, Player.Radius + Player.VaultReach) > 0)
                 {
@@ -106,7 +106,7 @@ namespace HollowPines.Sim
             double lakeDep = Collision.LakeDepth(st.X, st.Z);
             if (lakeDep > 0)
             {
-                speed *= SimMath.Lerp(1, st.IsBigfoot ? Player.LakeBigfootFactor : Player.LakeHunterFactor, lakeDep);
+                speed *= SimMath.Lerp(1, st.IsYeti ? Player.LakeYetiFactor : Player.LakeHunterFactor, lakeDep);
             }
 
             if (moving)
@@ -124,7 +124,7 @@ namespace HollowPines.Sim
             st.Z = SimMath.Clamp(st.Z, -half, half);
             // Logs first, so the position the tree pass and the auto-step both work from is already
             // log-legal — otherwise auto-step could hand the player back a spot inside a trunk.
-            if (!st.IsBigfoot && st.Grounded)
+            if (!st.IsYeti && st.Grounded)
             {
                 var cleared = Collision.ResolveLogs(world.FallenLogs, st.X, st.Z, Player.Radius);
                 st.X = cleared.X;
@@ -133,7 +133,7 @@ namespace HollowPines.Sim
             // Save intended position (post-clamp) so the step check can compare it.
             double ix = st.X;
             double iz = st.Z;
-            // Collision is climb-aware: a Bigfoot at/above a climbable's top isn't pushed out.
+            // Collision is climb-aware: a Yeti at/above a climbable's top isn't pushed out.
             var resolved = Collision.ResolveCollision(world.Colliders, ix, iz, Player.Radius, st.FeetY, world.GetHeight);
             bool wasPushed = (resolved.X - ix) * (resolved.X - ix) + (resolved.Z - iz) * (resolved.Z - iz) > 1e-4;
             st.X = resolved.X;
@@ -155,15 +155,15 @@ namespace HollowPines.Sim
                 }
             }
 
-            // Vertical: climb (Bigfoot scales a structure) takes precedence, then leap, then jump + gravity.
+            // Vertical: climb (Yeti scales a structure) takes precedence, then leap, then jump + gravity.
             // FeetY is the true feet height; >= GroundY while airborne or perched on a structure.
-            ClimbSupportResult? climb = st.IsBigfoot && input.Climb && !crouching
+            ClimbSupportResult? climb = st.IsYeti && input.Climb && !crouching
                 ? Collision.ClimbSupport(world.Climbables, world.GetHeight, st.X, st.Z, Player.Radius, Player.ClimbReach)
                 : null;
             if (climb.HasValue && st.Stamina > 0)
             {
                 // Scale the surface: rise toward its top (capped), clinging to the side (XZ pinned by
-                // the push-out) and draining stamina so Bigfoot can't hang forever.
+                // the push-out) and draining stamina so Yeti can't hang forever.
                 st.FeetY = System.Math.Min(climb.Value.Top, st.FeetY + Player.ClimbSpeed * dt);
                 st.Vy = 0;
                 st.Grounded = false;
@@ -171,8 +171,8 @@ namespace HollowPines.Sim
             }
             else
             {
-                // Leap is a taller, stamina-gated bound; it takes precedence over a normal jump for Bigfoot.
-                if (st.Grounded && !crouching && st.IsBigfoot && input.Leap && st.Stamina >= Player.LeapStaminaCost)
+                // Leap is a taller, stamina-gated bound; it takes precedence over a normal jump for Yeti.
+                if (st.Grounded && !crouching && st.IsYeti && input.Leap && st.Stamina >= Player.LeapStaminaCost)
                 {
                     st.Vy = Player.LeapSpeed;
                     st.Grounded = false;

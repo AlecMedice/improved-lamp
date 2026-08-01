@@ -127,14 +127,14 @@ namespace HollowPines.Game
             src.Play();
         }
 
-        /// <summary>The local player's own footstep (heavy = Bigfoot; Wren treads quietly).</summary>
+        /// <summary>The local player's own footstep (heavy = Yeti; Wren treads quietly).</summary>
         public void PlayFootstep(bool sprinting, bool heavy, float volumeMul = 1f)
         {
             PlayOnce(heavy ? FootstepHeavy : FootstepSoft,
                 (heavy ? 0.3f : sprinting ? 0.22f : 0.15f) * volumeMul);
         }
 
-        /// <summary>Hunters' dread bed: 0 = Bigfoot far away, 1 = right on top of you.</summary>
+        /// <summary>Hunters' dread bed: 0 = Yeti far away, 1 = right on top of you.</summary>
         public void SetHeartbeat(float intensity)
         {
             _hbIntensity = Mathf.Clamp01(intensity);
@@ -236,14 +236,14 @@ namespace HollowPines.Game
             UpdateHeartbeat();
         }
 
-        /// <summary>Retriggered heartbeat: beats quicken and swell as Bigfoot closes on a searcher.</summary>
+        /// <summary>Retriggered heartbeat: beats quicken and swell as Yeti closes on a searcher.</summary>
         private void UpdateHeartbeat()
         {
             var me = HPPlayer.Local;
             var gm = GameManager.Instance;
             bool playing = gm != null && gm.MatchPhase.Value == GameManager.PhasePlaying;
 
-            if (me == null || me.IsBigfoot || !playing)
+            if (me == null || me.IsYeti || !playing)
             {
                 _hbIntensity = 0f;
             }
@@ -254,8 +254,8 @@ namespace HollowPines.Game
                 float intensity = 0f;
                 foreach (var p in HPPlayer.All)
                 {
-                    if (p == null || !p.IsBigfoot) continue;
-                    // A crouching Bigfoot can't be heard — no dread beat gives it away either.
+                    if (p == null || !p.IsYeti) continue;
+                    // A crouching Yeti can't be heard — no dread beat gives it away either.
                     if (p.Crouched.Value) continue;
                     float dx = p.transform.position.x - me.transform.position.x;
                     float dz = p.transform.position.z - me.transform.position.z;
@@ -294,7 +294,7 @@ namespace HollowPines.Game
 
         private void BuildCues()
         {
-            // Bigfoot's signature: a descending growl — sawtooth + amplitude-modulated lowpassed noise.
+            // Yeti's signature: a descending growl — sawtooth + amplitude-modulated lowpassed noise.
             _clips[Roar] = Synth(Roar, 1.6f, (d, sr) =>
             {
                 double lp = 0, ph = 0;
@@ -312,7 +312,7 @@ namespace HollowPines.Game
                 }
             });
 
-            // Footsteps: short lowpassed-noise thuds; heavier = lower cutoff, longer, louder (Bigfoot).
+            // Footsteps: short lowpassed-noise thuds; heavier = lower cutoff, longer, louder (Yeti).
             _clips[FootstepSoft] = Step(FootstepSoft, 0.16f, 0.05, 0.5);
             _clips[FootstepHeavy] = Step(FootstepHeavy, 0.24f, 0.03, 0.95);
 

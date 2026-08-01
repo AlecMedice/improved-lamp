@@ -11,7 +11,7 @@ namespace HollowPines.Sim
         public Vec2(double x, double z) { X = x; Z = z; }
     }
 
-    /// <summary>A cave entrance — Bigfoot's lair and a node of its fast-travel network.</summary>
+    /// <summary>A cave entrance — Yeti's lair and a node of its fast-travel network.</summary>
     public struct Cave
     {
         public double X;
@@ -57,7 +57,7 @@ namespace HollowPines.Sim
         public double HalfWidth;
     }
 
-    /// <summary>A fallen-log obstacle (solid to hunters on foot, not to Bigfoot). A capsule in the XZ plane.</summary>
+    /// <summary>A fallen-log obstacle (solid to hunters on foot, not to Yeti). A capsule in the XZ plane.</summary>
     public struct FallenLog
     {
         public double Cx;

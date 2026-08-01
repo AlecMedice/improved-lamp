@@ -17,7 +17,7 @@ export type PlayerSimState = {
   battery: number;
   curEye: number; // eased eye height (lerps toward standing/crouched)
   flashlightOn: boolean;
-  isBigfoot: boolean;
+  isYeti: boolean;
   eyeHeight: number; // standing eye height for this role
 };
 
@@ -29,8 +29,8 @@ export type MoveInput = {
   d: boolean;
   yaw: number;
   jump: boolean;
-  leap: boolean; // Bigfoot-only: stamina-gated vertical bound (client sets it only for Bigfoot)
-  climb: boolean; // Bigfoot-only: scale a climbable structure (client sets it only for Bigfoot)
+  leap: boolean; // Yeti-only: stamina-gated vertical bound (client sets it only for Yeti)
+  climb: boolean; // Yeti-only: scale a climbable structure (client sets it only for Yeti)
   vault: boolean; // searcher-only: hop over a fallen log (client sets it only for hunters)
   sprint: boolean;
   crouch: boolean;
@@ -46,7 +46,7 @@ export type StepResult = { moving: boolean; sprinting: boolean };
  * compose these from it (plus the post-incapacitation slow) and pass them in.
  */
 export type StepModifiers = {
-  speedMul: number; // slow factor * per-night Bigfoot speed escalation (1 = baseline)
+  speedMul: number; // slow factor * per-night Yeti speed escalation (1 = baseline)
   batteryDrainMul: number; // per-night flashlight drain escalation
   staminaDrainMul: number; // per-night sprint drain escalation (× the Endurance specialty's reduction)
   staminaMax?: number; // per-player stamina ceiling (Sam's Endurance raises it; defaults to 100)
@@ -76,14 +76,14 @@ export function stepPlayer(st: PlayerSimState, input: MoveInput, world: World, m
   const crouching = input.crouch;
   const moving = wx * wx + wz * wz > 0;
   const sprinting = moving && input.sprint && !st.exhausted && !crouching;
-  let speed = (sprinting ? PLAYER.sprintSpeed : PLAYER.walkSpeed) * (st.isBigfoot ? PLAYER.bigfootSpeedMul : 1) * mods.speedMul;
+  let speed = (sprinting ? PLAYER.sprintSpeed : PLAYER.walkSpeed) * (st.isYeti ? PLAYER.yetiSpeedMul : 1) * mods.speedMul;
   if (crouching) speed *= PLAYER.crouchSpeedMul;
 
   // Terrain obstacles: fallen logs BLOCK hunters (see the push-out below); the lake slows everyone.
   // The only way through a log on foot is a VAULT — a stamina-gated hop that carries you over it.
   // Reach is measured with a padded radius because the push-out means a grounded hunter can never
   // actually stand inside a log: the prompt has to fire from alongside it, not on top of it.
-  if (!st.isBigfoot && st.grounded && input.vault && st.stamina >= PLAYER.vaultStaminaCost) {
+  if (!st.isYeti && st.grounded && input.vault && st.stamina >= PLAYER.vaultStaminaCost) {
     if (logOverlap(world.fallenLogs, st.x, st.z, PLAYER.radius + PLAYER.vaultReach) > 0) {
       st.vy = PLAYER.vaultHopSpeed;
       st.grounded = false;
@@ -92,7 +92,7 @@ export function stepPlayer(st: PlayerSimState, input: MoveInput, world: World, m
   }
   const lakeDep = lakeDepth(st.x, st.z);
   if (lakeDep > 0) {
-    speed *= lerp(1, st.isBigfoot ? PLAYER.lakeBigfootFactor : PLAYER.lakeHunterFactor, lakeDep);
+    speed *= lerp(1, st.isYeti ? PLAYER.lakeYetiFactor : PLAYER.lakeHunterFactor, lakeDep);
   }
 
   if (moving) {
@@ -109,7 +109,7 @@ export function stepPlayer(st: PlayerSimState, input: MoveInput, world: World, m
   st.z = clamp(st.z, -half, half);
   // Logs first, so the position the tree pass and the auto-step both work from is already
   // log-legal — otherwise auto-step could hand the player back a spot inside a trunk.
-  if (!st.isBigfoot && st.grounded) {
+  if (!st.isYeti && st.grounded) {
     const cleared = resolveLogs(world.fallenLogs, st.x, st.z, PLAYER.radius);
     st.x = cleared.x;
     st.z = cleared.z;
@@ -117,7 +117,7 @@ export function stepPlayer(st: PlayerSimState, input: MoveInput, world: World, m
   // Save intended position (post-clamp) so the step check can compare it.
   const ix = st.x;
   const iz = st.z;
-  // Collision is climb-aware: a Bigfoot at/above a climbable's top isn't pushed out (it walks on top).
+  // Collision is climb-aware: a Yeti at/above a climbable's top isn't pushed out (it walks on top).
   const resolved = resolveCollision(world.colliders, ix, iz, PLAYER.radius, st.feetY, world.getHeight);
   const wasPushed = (resolved.x - ix) ** 2 + (resolved.z - iz) ** 2 > 1e-4;
   st.x = resolved.x;
@@ -137,21 +137,21 @@ export function stepPlayer(st: PlayerSimState, input: MoveInput, world: World, m
     }
   }
 
-  // Vertical: climb (Bigfoot scales a structure) takes precedence, then leap, then jump + gravity.
+  // Vertical: climb (Yeti scales a structure) takes precedence, then leap, then jump + gravity.
   // feetY is the true feet height; >= groundY while airborne or perched on a structure.
-  const climb = st.isBigfoot && input.climb && !crouching
+  const climb = st.isYeti && input.climb && !crouching
     ? climbSupport(world.climbables, world.getHeight, st.x, st.z, PLAYER.radius, PLAYER.climbReach)
     : null;
   if (climb && st.stamina > 0) {
     // Scale the surface: rise toward its top (capped), clinging to the side (XZ pinned by the pushout)
-    // and draining stamina so Bigfoot can't hang forever. Push forward at the top to mount it.
+    // and draining stamina so Yeti can't hang forever. Push forward at the top to mount it.
     st.feetY = Math.min(climb.top, st.feetY + PLAYER.climbSpeed * dt);
     st.vy = 0;
     st.grounded = false;
     st.stamina = Math.max(0, st.stamina - PLAYER.climbStaminaDrain * dt);
   } else {
-    // Leap is a taller, stamina-gated bound; it takes precedence over a normal jump for Bigfoot.
-    if (st.grounded && !crouching && st.isBigfoot && input.leap && st.stamina >= PLAYER.leapStaminaCost) {
+    // Leap is a taller, stamina-gated bound; it takes precedence over a normal jump for Yeti.
+    if (st.grounded && !crouching && st.isYeti && input.leap && st.stamina >= PLAYER.leapStaminaCost) {
       st.vy = PLAYER.leapSpeed;
       st.grounded = false;
       st.stamina -= PLAYER.leapStaminaCost;

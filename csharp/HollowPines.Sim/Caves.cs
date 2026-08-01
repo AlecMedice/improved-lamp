@@ -6,7 +6,7 @@ namespace HollowPines.Sim
     public static class Caves
     {
         /// <summary>
-        /// Cave entrances — Bigfoot's lairs and the nodes of its fast-travel network. Seed-derived
+        /// Cave entrances — Yeti's lairs and the nodes of its fast-travel network. Seed-derived
         /// so the client and the host generate the IDENTICAL set. Five caves spread across the
         /// outer ring (150..340 m from centre), >=120 m apart. Ported from shared/sim/caves.ts.
         /// </summary>

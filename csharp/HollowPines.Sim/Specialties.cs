@@ -7,7 +7,7 @@ namespace HollowPines.Sim
     /// Searcher character specialties — pure data, shared by client + host. Ported from
     /// shared/sim/specialties.ts. Enabling layer: identity (ids + names), the tunables, the random
     /// deal, and typed getters. Ids are plain strings (as in TS) so the getters accept "", unknown
-    /// ids, and "bigfoot" and fall back to the baseline.
+    /// ids, and "yeti" and fall back to the baseline.
     /// </summary>
     public static class Specialties
     {

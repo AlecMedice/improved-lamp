@@ -33,7 +33,7 @@ namespace HollowPines.Sim
         }
 
         /// <summary>
-        /// Fallen-log obstacles (slow hunters, not Bigfoot). [cx, cz, angle(rad), length(m)].
+        /// Fallen-log obstacles (slow hunters, not Yeti). [cx, cz, angle(rad), length(m)].
         /// After the trunk is laid flat and turned by `angle`, its long axis in world XZ is
         /// (cos(angle), -sin(angle)); trunk radius is 0.38.
         /// </summary>
@@ -130,7 +130,7 @@ namespace HollowPines.Sim
             }
 
             // Caves — horseshoe of boulders; side + back solid, the mouth (toward centre) open.
-            // The boulders are climbable — Bigfoot can perch on them above its lair.
+            // The boulders are climbable — Yeti can perch on them above its lair.
             foreach (var cave in caves)
             {
                 double dl = SimMath.Hypot(cave.X, cave.Z);

@@ -14,7 +14,7 @@ namespace HollowPines.Sim
         public IReadOnlyList<ForestPath> Paths; // logging trails out of camp (tree-free corridors)
         public HeightFn GetHeight;
         public List<Collider> Colliders;
-        public List<Collider> Climbables; // subset of colliders with a ClimbH (structures Bigfoot can scale/perch on)
+        public List<Collider> Climbables; // subset of colliders with a ClimbH (structures Yeti can scale/perch on)
         public List<FallenLog> FallenLogs;
 
         /// <summary>Build the full deterministic world for a seed (terrain + caves + colliders + logs).</summary>

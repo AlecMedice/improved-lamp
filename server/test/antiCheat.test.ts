@@ -6,7 +6,7 @@ import type { Collider } from "../../shared/sim";
 // its resource claims, or its position. Each function is the exact logic ForestRoom runs per move.
 
 describe("filmVisible (A1 — server-authoritative filming)", () => {
-  // Hunter at origin looking down -z (yaw 0 → forward = (0,-1)); Bigfoot 10 m in front.
+  // Hunter at origin looking down -z (yaw 0 → forward = (0,-1)); Yeti 10 m in front.
   const HRY = 0;
   const bf = { x: 0, z: -10 };
   const range = 38;
@@ -17,7 +17,7 @@ describe("filmVisible (A1 — server-authoritative filming)", () => {
   });
 
   it("rejects filming through a collider (the wall-hack the old client-trusted check allowed)", () => {
-    const wall: Collider[] = [{ x: 0, z: -5, r: 1 }]; // squarely between hunter and Bigfoot
+    const wall: Collider[] = [{ x: 0, z: -5, r: 1 }]; // squarely between hunter and Yeti
     expect(filmVisible(wall, 0, 0, HRY, bf.x, bf.z, range, aimCos)).toBe(false);
   });
 

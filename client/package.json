@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Three.js browser client for Hollow Pines (1v5 Bigfoot hunt).",
+  "description": "Three.js browser client for Hollow Pines (1v5 Yeti hunt).",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
