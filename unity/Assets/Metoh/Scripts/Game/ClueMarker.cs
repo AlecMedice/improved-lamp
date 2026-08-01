@@ -67,10 +67,13 @@ namespace Metoh.Game
                 // A big two-pad print pressed into the ground, faintly luminous. A CASTABLE print sits
                 // deeper in softer ground: bigger, darker, ringed with displaced earth, and marked with
                 // a pale glint so it reads as workable from a distance.
+                // Snow prints read by their SHADOW, not their colour: a hollow pressed into white
+                // pack is blue where the sky doesn't reach it. Hence dark blue bodies against the
+                // pale ground rather than the old pale-on-dark forest treatment.
                 bool deep = Castable.Value;
                 var mat = deep
-                    ? MeshUtil.Emissive(MeshUtil.Rgb(0x120e08), MeshUtil.Rgb(0xc8b88a), 0.5f)
-                    : MeshUtil.Emissive(MeshUtil.Rgb(0x1c1710), MeshUtil.Rgb(0x33bb77), 0.35f);
+                    ? MeshUtil.Emissive(MeshUtil.Rgb(0x1b3450), MeshUtil.Rgb(0x9fc4e8), 0.5f)
+                    : MeshUtil.Emissive(MeshUtil.Rgb(0x24405c), MeshUtil.Rgb(0x6fb8d8), 0.35f);
                 float s = deep ? 1.25f : 1f;
                 AddPad(root, new Vector3(0f, 0.03f, 0.10f), new Vector3(0.34f * s, 0.02f, 0.52f * s), mat); // sole
                 AddPad(root, new Vector3(0f, 0.03f, 0.48f * s), new Vector3(0.26f * s, 0.02f, 0.18f * s), mat); // toes
@@ -82,7 +85,7 @@ namespace Metoh.Game
                     rim.transform.SetParent(root, false);
                     rim.transform.localPosition = new Vector3(0f, 0.012f, 0.16f);
                     rim.AddComponent<MeshFilter>().sharedMesh = MeshUtil.EllipseDisc(0.46f, 0.62f, 16);
-                    rim.AddComponent<MeshRenderer>().sharedMaterial = MeshUtil.Lit(MeshUtil.Rgb(0x2b2115));
+                    rim.AddComponent<MeshRenderer>().sharedMaterial = MeshUtil.Lit(MeshUtil.Rgb(0xe4eef5));
 
                     var glint = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                     Destroy(glint.GetComponent<Collider>());
@@ -97,23 +100,27 @@ namespace Metoh.Game
             }
             else if (CType.Value == TypeBranch)
             {
-                // A snapped branch — audible from a distance, which is how a searcher finds the trail.
+                // Crust broken through where something heavy went past — audible from a distance,
+                // which is how a searcher finds the trail. Same role the snapped branch had.
                 if (HPAudio.Instance != null)
-                    HPAudio.Instance.PlayAt(HPAudio.BranchSnap, transform.position, 0.5f, 14f);
+                    HPAudio.Instance.PlayAt(HPAudio.BranchSnap, transform.position, 0.5f, 14f); // renamed to IceCrack in the audio pass
 
-                // Two crossed sticks with pale broken ends.
-                var wood = MeshUtil.Lit(MeshUtil.Rgb(0x6a4a2c));
-                AddStick(root, new Vector3(-0.15f, 0.06f, 0f), Quaternion.Euler(0f, 15f, 80f), 0.8f, wood);
-                AddStick(root, new Vector3(0.18f, 0.05f, 0.08f), Quaternion.Euler(0f, -40f, 95f), 0.6f, wood);
+                // A cracked slab: three tilted plates shoved out of the surface at angles, so the
+                // silhouette breaks the flat ground the way the crossed sticks used to.
+                var ice = MeshUtil.Emissive(MeshUtil.Rgb(0x7fa8c4), MeshUtil.Rgb(0xbfe0f0), 0.30f);
+                AddSlab(root, new Vector3(-0.14f, 0.07f, 0f), Quaternion.Euler(18f, 15f, 6f), new Vector3(0.44f, 0.05f, 0.34f), ice);
+                AddSlab(root, new Vector3(0.16f, 0.06f, 0.09f), Quaternion.Euler(-13f, -34f, -9f), new Vector3(0.36f, 0.05f, 0.30f), ice);
+                AddSlab(root, new Vector3(0.02f, 0.10f, -0.16f), Quaternion.Euler(26f, 62f, 4f), new Vector3(0.26f, 0.04f, 0.22f), ice);
             }
             else
             {
                 // Hair caught where Yeti pushed through: a low broken stub with a dark tuft snagged
                 // on it, held at chest height so it reads against the ground rather than lost in it.
-                var wood = MeshUtil.Lit(MeshUtil.Rgb(0x6a4a2c));
+                var wood = MeshUtil.Lit(MeshUtil.Rgb(0x4a443c));
                 AddStick(root, new Vector3(0f, 0.42f, 0f), Quaternion.Euler(0f, 20f, 14f), 0.9f, wood);
 
-                var fur = MeshUtil.Emissive(MeshUtil.Rgb(0x241c14), MeshUtil.Rgb(0x9a7f5a), 0.55f);
+                // Pale coarse hair against dark bark — the Yeti's coat, not Bigfoot's.
+                var fur = MeshUtil.Emissive(MeshUtil.Rgb(0x6e6a60), MeshUtil.Rgb(0xd8d2c4), 0.55f);
                 for (int i = 0; i < 4; i++)
                 {
                     var strand = new GameObject("Strand");
@@ -150,7 +157,7 @@ namespace Metoh.Game
         /// <summary>Fraction of the lifetime a clue stays at full strength before it starts fading.</summary>
         private const float HoldFraction = 0.5f;
         /// <summary>Colour a cold trail sinks toward — the forest floor swallowing it.</summary>
-        private static readonly Color ColdCol = MeshUtil.Rgb(0x1a160f);
+        private static readonly Color ColdCol = MeshUtil.Rgb(0x2a3a48);
 
         /// <summary>Cache each renderer's own material instance so this clue can fade independently.</summary>
         private void CacheMaterials(Transform root)
@@ -201,6 +208,18 @@ namespace Metoh.Game
             Destroy(go.GetComponent<Collider>());
             go.transform.SetParent(parent, false);
             go.transform.localPosition = pos;
+            go.transform.localScale = size;
+            go.GetComponent<MeshRenderer>().sharedMaterial = mat;
+        }
+
+        /// <summary>A tilted plate — like AddPad but rotatable, for broken crust shards.</summary>
+        private static void AddSlab(Transform parent, Vector3 pos, Quaternion rot, Vector3 size, Material mat)
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            Destroy(go.GetComponent<Collider>());
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = pos;
+            go.transform.localRotation = rot;
             go.transform.localScale = size;
             go.GetComponent<MeshRenderer>().sharedMaterial = mat;
         }

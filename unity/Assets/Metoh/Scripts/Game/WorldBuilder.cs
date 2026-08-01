@@ -46,17 +46,34 @@ namespace Metoh.Game
         private const float TitleFogMul = 0.35f;
         private const float TitleSkyBoost = 1.7f;
 
-        // Palette (hex values lifted from the web build's Environment.ts).
-        private static readonly Color TrunkCol = MeshUtil.Rgb(0x4a3828);
-        private static readonly Color CrownDark = MeshUtil.Rgb(0x3a6028);
-        private static readonly Color CrownLight = MeshUtil.Rgb(0x4a7835);
-        private static readonly Color RockCol = MeshUtil.Rgb(0x585860);
-        private static readonly Color LogCol = MeshUtil.Rgb(0x5a4030);
-        private static readonly Color GroundCol = MeshUtil.Rgb(0x2e4023);
-        private static readonly Color LakeCol = MeshUtil.Rgb(0x2a5a6a);
-        private static readonly Color FernCol = MeshUtil.Rgb(0x35521f);  // undergrowth, a shade under the crowns
-        private static readonly Color BushCol = MeshUtil.Rgb(0x2b4a26);
-        private static readonly Color TrailCol = MeshUtil.Rgb(0x51452f); // packed dirt, warmer than the ground
+        // Palette — the Himalayan re-theme. The web build's Environment.ts is NO LONGER the source
+        // of these: it keeps its forest colours deliberately (the web visuals are abandoned), so the
+        // two palettes have diverged on purpose and are not worth re-syncing.
+        private static readonly Color TrunkCol = MeshUtil.Rgb(0x3b3129);
+        private static readonly Color CrownDark = MeshUtil.Rgb(0x2c4437);  // blue-green conifer
+        private static readonly Color CrownLight = MeshUtil.Rgb(0x8fa3ad); // snow-laden bough
+        private static readonly Color RockCol = MeshUtil.Rgb(0x6b7078);    // granite
+        private static readonly Color LogCol = MeshUtil.Rgb(0x4a3c30);
+        private static readonly Color GroundCol = MeshUtil.Rgb(0xc9d6e2);  // moonlit snowpack
+        private static readonly Color LakeCol = MeshUtil.Rgb(0x9fc4d8);    // frozen tarn
+        private static readonly Color DriftCol = MeshUtil.Rgb(0xdde7ee);   // undergrowth: wind-piled snow
+        private static readonly Color ScreeCol = MeshUtil.Rgb(0x565c66);   // undergrowth: shattered rock
+        // Packed snow. Must stay clearly lighter than GroundCol: in Commit 5 the trail network stops
+        // being decoration and becomes the surface that is NOT knee-deep, so a player has to be able
+        // to see where it ends.
+        private static readonly Color TrailCol = MeshUtil.Rgb(0xaebac4);
+
+        /// <summary>
+        /// Terrain height above which trees read as snow-caked: all-light crowns, and the top cone
+        /// dropped so they look stunted by altitude.
+        ///
+        /// NOT a fraction of <c>World.HillHeight</c>, which is the noise AMPLITUDE (14) rather than a
+        /// reachable height — on the shipping seed the terrain actually spans about -10.2 to +7.8, so
+        /// the "60% of HillHeight" rule this re-theme was drafted with sits above the highest ground
+        /// on the map and would have snow-caked nothing at all. Measured against a 400x400 sample
+        /// grid, 3.0 is roughly the 85th percentile: the ridges go white, the valleys stay green.
+        /// </summary>
+        private const float SnowlineHeight = 3.0f;
 
         /// <summary>
         /// The evidence duffel beside the RV — the only place proof becomes permanent, and the one
@@ -200,7 +217,7 @@ namespace Metoh.Game
             BuildTrails();
             BuildLogs();
             BuildLake();
-            BuildRv();
+            BuildBasecamp();
             BuildDuffel();
             BuildCaves();
             BuildTower();
@@ -305,10 +322,17 @@ namespace Metoh.Game
 
                 int cell = CellOf(x, z);
                 trunkC[cell].Add(CI(trunk, pos, rotQ, scale));
-                var crowns = (treeIndex % 2 == 0) ? crownDarkC : crownLightC;
+                // Snowline. Above it every crown is the pale snow-laden material and the top cone is
+                // dropped, so high ground reads as stunted and white; below, crowns alternate as
+                // before. Both are pure material/mesh CHOICES driven by the already-computed height —
+                // no rand() call is added, moved or skipped, so the tree stream stays in lockstep
+                // with WorldData.BuildColliders (UNITY_PORT_NOTES 3c). The treeIndex % 2 alternation
+                // was never an RNG draw either, which is why it is safe to override here.
+                bool aboveSnowline = y >= SnowlineHeight;
+                var crowns = (aboveSnowline || treeIndex % 2 != 0) ? crownLightC : crownDarkC;
                 crowns[cell].Add(CI(cone1, pos + Vector3.up * (2.2f * (float)s), rotQ, scale));
                 crowns[cell].Add(CI(cone2, pos + Vector3.up * (4.0f * (float)s), rotQ, scale));
-                crowns[cell].Add(CI(cone3, pos + Vector3.up * (5.6f * (float)s), rotQ, scale));
+                if (!aboveSnowline) crowns[cell].Add(CI(cone3, pos + Vector3.up * (5.6f * (float)s), rotQ, scale));
                 treeIndex++;
             }
 
@@ -357,8 +381,13 @@ namespace Metoh.Game
         // --- Undergrowth + trails -------------------------------------------------
 
         /// <summary>
-        /// Ferns, bushes and mossy rocks — the layer that makes 2,400 trunks read as a *forest*
-        /// floor rather than a mown field with poles in it.
+        /// Snow drifts, scree and prayer-flag poles — the layer that makes 2,400 trunks read as a
+        /// mountainside rather than a mown field with poles in it.
+        ///
+        /// The flag poles are not decoration. In a palette this close to monochrome a player has
+        /// almost nothing to navigate by, so ~3% of the clutter is a strung pole in saturated
+        /// primaries: the only strong colour out in the open, and therefore the thing you steer by
+        /// and call out to a teammate.
         ///
         /// Deliberately RENDER-ONLY, and deliberately low (knee-to-waist). Undergrowth is not in the
         /// shared sim at all: it has no collider, so it never blocks a searcher, and it is short
@@ -375,13 +404,16 @@ namespace Metoh.Game
             double half = Sim.World.Size / 2 - 6;
             int cells = ForestGrid * ForestGrid;
 
-            Mesh fern = MeshUtil.Cone(0.55f, 0.75f, 5);
-            Mesh bush = MeshUtil.Cone(0.9f, 1.15f, 6);
-            Mesh rock = MeshUtil.TaperedCylinder(0.5f, 0.34f, 0.42f, 5);
+            Mesh drift = MeshUtil.Cone(0.95f, 0.42f, 7);                        // wind-piled snow mound
+            Mesh scree = MeshUtil.TaperedCylinder(0.5f, 0.34f, 0.42f, 5);       // shattered rock
+            Mesh pole = MeshUtil.TaperedCylinder(0.055f, 0.045f, 2.3f, 5);
+            Mesh flag = MeshUtil.UnitCube();
 
-            var fernC = NewCombineBuckets(cells);
-            var bushC = NewCombineBuckets(cells);
-            var rockC = NewCombineBuckets(cells);
+            var driftC = NewCombineBuckets(cells);
+            var screeC = NewCombineBuckets(cells);
+            var poleC = NewCombineBuckets(cells);
+            var flagC = new List<CombineInstance>[FlagCols.Length][];
+            for (int f = 0; f < FlagCols.Length; f++) flagC[f] = NewCombineBuckets(cells);
 
             for (int i = 0; i < UndergrowthCount; i++)
             {
@@ -392,7 +424,7 @@ namespace Metoh.Game
                 double rot = rand() * System.Math.PI * 2;
 
                 // Keep the camp clearing, the water and the trails themselves clear. Trails get only
-                // the tree margin, so scrub creeps to the edge of a lane without closing it.
+                // the tree margin, so clutter creeps to the edge of a lane without closing it.
                 if (System.Math.Sqrt(x * x + z * z) < Sim.World.BaseCampRadius + 2) continue;
                 if (InLake(x, z, 1)) continue;
                 if (Paths.PathDepth(World.Paths, x, z) > 0) continue;
@@ -403,21 +435,51 @@ namespace Metoh.Game
                 var scale = Vector3.one * (float)s;
                 int cell = CellOf(x, z);
 
-                if (kind < 0.5) fernC[cell].Add(CI(fern, pos, rotQ, scale));
-                else if (kind < 0.85) bushC[cell].Add(CI(bush, pos, rotQ, scale));
-                else rockC[cell].Add(CI(rock, pos - Vector3.up * 0.05f, rotQ, scale));
+                // Same five draws in the same order as before (x, z, kind, s, rot) — the stream is
+                // private to undergrowth, but keeping the shape means a reseed puts clutter in the
+                // same places as the forest build it is meant to dress.
+                //
+                // Altitude only BIASES the drift/scree split rather than hard-splitting it, so the
+                // boundary reads as a gradient of exposure instead of a contour line. It is a pure
+                // branch on an already-drawn number: no extra rand() call on either side.
+                if (kind >= 1.0 - FlagShare)
+                {
+                    poleC[cell].Add(CI(pole, pos, rotQ, scale));
+                    for (int f = 0; f < FlagCols.Length; f++)
+                    {
+                        float t = 0.45f + f * 0.14f; // strung up the top half of the pole
+                        var fpos = pos + Vector3.up * (2.3f * (float)s * t);
+                        flagC[f][cell].Add(CI(flag, fpos, rotQ, new Vector3(0.13f, 0.10f, 0.02f) * (float)s));
+                    }
+                }
+                else if (kind < (y >= ScreeBiasHeight ? 0.35 : 0.75)) driftC[cell].Add(CI(drift, pos - Vector3.up * 0.06f, rotQ, scale));
+                else screeC[cell].Add(CI(scree, pos - Vector3.up * 0.05f, rotQ, scale));
             }
 
-            var fernMat = MeshUtil.Lit(FernCol);
-            var bushMat = MeshUtil.Lit(BushCol);
-            var rockMat = MeshUtil.Lit(RockCol);
+            var driftMat = MeshUtil.Lit(DriftCol);
+            var screeMat = MeshUtil.Lit(ScreeCol);
+            var poleMat = MeshUtil.Lit(MeshUtil.Rgb(0x6b5b47));
+            var flagMats = new Material[FlagCols.Length];
+            for (int f = 0; f < FlagCols.Length; f++) flagMats[f] = MeshUtil.Lit(MeshUtil.Rgb(FlagCols[f]));
+
             for (int c = 0; c < cells; c++)
             {
-                TrackUndergrowth(NewCombinedGo($"Ferns{c}", fernC[c], fernMat));
-                TrackUndergrowth(NewCombinedGo($"Bushes{c}", bushC[c], bushMat));
-                TrackUndergrowth(NewCombinedGo($"Rocks{c}", rockC[c], rockMat));
+                TrackUndergrowth(NewCombinedGo($"Drifts{c}", driftC[c], driftMat));
+                TrackUndergrowth(NewCombinedGo($"Scree{c}", screeC[c], screeMat));
+                TrackUndergrowth(NewCombinedGo($"FlagPoles{c}", poleC[c], poleMat));
+                for (int f = 0; f < FlagCols.Length; f++)
+                    TrackUndergrowth(NewCombinedGo($"Flags{f}_{c}", flagC[f][c], flagMats[f]));
             }
         }
+
+        /// <summary>Lung-ta colours, in the traditional order (sky, air, fire, water, earth).</summary>
+        private static readonly int[] FlagCols = { 0x2980b9, 0xecf0f1, 0xc0392b, 0x27ae60, 0xf1c40f };
+
+        /// <summary>Share of undergrowth candidates that become a prayer-flag pole.</summary>
+        private const double FlagShare = 0.03;
+
+        /// <summary>Above this terrain height clutter skews to scree; below it, to snow drifts.</summary>
+        private const float ScreeBiasHeight = 0.5f;
 
         private void TrackUndergrowth(GameObject go)
         {
@@ -556,7 +618,45 @@ namespace Metoh.Game
             mesh.triangles = tris.ToArray();
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
-            NewMeshGo("Lake", mesh, MeshUtil.Emissive(LakeCol, MeshUtil.Rgb(0x0a2a3a), 0.6f));
+            NewMeshGo("Tarn", mesh, MeshUtil.Emissive(LakeCol, MeshUtil.Rgb(0x1c4258), 0.9f));
+            BuildPressureRidges(cx, cz, rx, rz);
+        }
+
+        /// <summary>
+        /// Pressure ridges buckled up out of the tarn ice. Render-only garnish, but it earns its
+        /// place: without it a frozen lake is a flat pale ellipse that reads as a hole in the
+        /// terrain, and the ridges are what say "this is a surface" — which matters because the
+        /// sim still slows you here (<c>Collision.LakeDepth</c>), now as slush and breaking crust
+        /// rather than water.
+        ///
+        /// Its own RNG stream, like the undergrowth: nothing here may perturb the tree/collider
+        /// lockstep (UNITY_PORT_NOTES 3c).
+        /// </summary>
+        private void BuildPressureRidges(float cx, float cz, float rx, float rz)
+        {
+            var rand = Rng.Mulberry32(World.Seed ^ 0x1ce_c01du);
+            var mat = MeshUtil.Lit(MeshUtil.Rgb(0xbcd8e6), 0.25f);
+            int count = 4 + (int)(rand() * 3); // 4..6
+            for (int i = 0; i < count; i++)
+            {
+                double a = rand() * System.Math.PI * 2;
+                double t = 0.25 + rand() * 0.55;           // keep them off the rim
+                float x = cx + (float)(System.Math.Cos(a) * rx * t);
+                float z = cz + (float)(System.Math.Sin(a) * rz * t);
+                float len = 6f + (float)rand() * 14f;
+                float yaw = (float)(rand() * 360.0);
+
+                var go = new GameObject("PressureRidge");
+                go.transform.parent = transform;
+                go.transform.SetPositionAndRotation(
+                    new Vector3(x, (float)World.GetHeight(x, z) + 0.10f, z),
+                    Quaternion.Euler(0f, yaw, 0f));
+                var mf = go.AddComponent<MeshFilter>();
+                mf.sharedMesh = MeshUtil.TaperedCylinder(0.55f, 0.12f, len, 3); // a low triangular spine
+                go.AddComponent<MeshRenderer>().sharedMaterial = mat;
+                // Lay the spine along the ground rather than standing it on end.
+                go.transform.Rotate(90f, 0f, 0f, Space.Self);
+            }
         }
 
         /// <summary>Water height at a point: just over the ground, feathering to nothing at the rim.</summary>
@@ -565,18 +665,48 @@ namespace Metoh.Game
             return (float)World.GetHeight(x, z) + Mathf.Lerp(0.16f, 0.02f, t);
         }
 
-        private void BuildRv()
+        /// <summary>
+        /// The expedition basecamp — a plank hut and canvas tents where the RV used to be.
+        ///
+        /// Built on the SAME seeded transform (<c>WorldData.Rv</c>, whose sim-side field name is
+        /// deliberately left alone) and the hut body deliberately fills the RV's old 6.6 x 2.5 x 2.3
+        /// footprint, because that box is a real collider in the parity-locked sim. Change the body's
+        /// size and players start colliding with a shape that isn't drawn.
+        ///
+        /// The lit window and porch lamp survive the re-theme unchanged: in a night game where the
+        /// duffel is the only place proof becomes permanent, that warm glow is the one fixed beacon
+        /// on the whole map, and the thing searchers navigate home by.
+        /// </summary>
+        private void BuildBasecamp()
         {
-            var root = new GameObject("RV");
+            var root = new GameObject("Basecamp");
             root.transform.SetPositionAndRotation(
                 new Vector3((float)WorldData.Rv.X, (float)World.GetHeight(WorldData.Rv.X, WorldData.Rv.Z), (float)WorldData.Rv.Z),
                 Quaternion.Euler(0f, (float)(WorldData.Rv.Ry * Mathf.Rad2Deg), 0f));
             root.transform.parent = transform;
 
-            AddBox(root, "Body", new Vector3(0, 1.5f, 0), new Vector3(6.6f, 2.5f, 2.3f), MeshUtil.Rgb(0xd9d3c2));
-            AddBox(root, "Stripe", new Vector3(0, 1.0f, 0), new Vector3(6.65f, 0.4f, 2.32f), MeshUtil.Rgb(0x7a8a6a));
+            // Hut body — must stay within the collider box the sim owns.
+            AddBox(root, "Hut", new Vector3(0, 1.5f, 0), new Vector3(6.6f, 2.5f, 2.3f), MeshUtil.Rgb(0x8a7a62));
+            AddBox(root, "Sill", new Vector3(0, 1.0f, 0), new Vector3(6.65f, 0.35f, 2.32f), MeshUtil.Rgb(0x5f513f));
+            AddBox(root, "SnowCap", new Vector3(0, 2.82f, 0), new Vector3(6.7f, 0.28f, 2.5f), MeshUtil.Rgb(0xe8f0f5));
             AddBox(root, "Window", new Vector3(1.6f, 1.9f, 0), new Vector3(1.6f, 0.7f, 2.34f), MeshUtil.Rgb(0xffd98a), emissive: MeshUtil.Rgb(0xffb24d), glow: 1.4f);
-            var lamp = new GameObject("RvLamp").AddComponent<Light>();
+
+            // Two A-frame tents in expedition orange, pitched clear of the hut's collider box.
+            for (int i = -1; i <= 1; i += 2)
+            {
+                var tent = new GameObject("Tent");
+                tent.transform.parent = root.transform;
+                tent.transform.localPosition = new Vector3(i * 4.9f, 0f, i * 1.4f);
+                tent.transform.localRotation = Quaternion.Euler(0f, i * 24f, 0f);
+                var mf = tent.AddComponent<MeshFilter>();
+                mf.sharedMesh = MeshUtil.Cone(1.5f, 1.9f, 4); // 4 segments = a pitched A-frame
+                tent.AddComponent<MeshRenderer>().sharedMaterial = MeshUtil.Lit(MeshUtil.Rgb(0xc7563c));
+            }
+
+            AddBox(root, "Crate1", new Vector3(-2.4f, 0.35f, 1.9f), new Vector3(0.9f, 0.7f, 0.9f), MeshUtil.Rgb(0x6f6250));
+            AddBox(root, "Crate2", new Vector3(-1.4f, 0.28f, 2.1f), new Vector3(0.7f, 0.55f, 0.7f), MeshUtil.Rgb(0x7d6f5b));
+
+            var lamp = new GameObject("PorchLamp").AddComponent<Light>();
             lamp.transform.parent = root.transform;
             lamp.transform.localPosition = new Vector3(0, 2.2f, 1.6f);
             lamp.type = LightType.Point;
@@ -592,7 +722,7 @@ namespace Metoh.Game
         /// because Yeti's whole fast-travel network hangs off recognising these.
         /// </summary>
         /// <summary>
-        /// The evidence duffel: a canvas holdall on a tarp beside the RV, lit by its own lamp so it
+        /// The evidence duffel: a canvas haul bag on a tarp beside the basecamp, lit by its own lamp so it
         /// reads as a destination from across the clearing. Purely a landmark — the deposit rule is
         /// server-side (GameManager.TryDeposit) and Yeti can do nothing to it.
         /// </summary>
@@ -608,7 +738,7 @@ namespace Metoh.Game
             tarp.transform.SetParent(root.transform, false);
             tarp.transform.localPosition = new Vector3(0f, 0.03f, 0f);
             tarp.AddComponent<MeshFilter>().sharedMesh = MeshUtil.EllipseDisc(1.5f, 1.2f, 14);
-            tarp.AddComponent<MeshRenderer>().sharedMaterial = MeshUtil.Lit(MeshUtil.Rgb(0x2f3a30));
+            tarp.AddComponent<MeshRenderer>().sharedMaterial = MeshUtil.Lit(MeshUtil.Rgb(0x3a4650));
 
             // The bag: a rounded body with end caps and a strap.
             var body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
@@ -618,7 +748,7 @@ namespace Metoh.Game
             body.transform.localPosition = new Vector3(0f, 0.34f, 0f);
             body.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
             body.transform.localScale = new Vector3(0.62f, 0.72f, 0.62f);
-            body.GetComponent<MeshRenderer>().sharedMaterial = MeshUtil.Lit(MeshUtil.Rgb(0x6b5a3a));
+            body.GetComponent<MeshRenderer>().sharedMaterial = MeshUtil.Lit(MeshUtil.Rgb(0xb8552f));
 
             var strap = GameObject.CreatePrimitive(PrimitiveType.Cube);
             Object.Destroy(strap.GetComponent<UnityEngine.Collider>());
@@ -649,10 +779,13 @@ namespace Metoh.Game
 
         private void BuildCaves()
         {
-            var rock = MeshUtil.Lit(RockCol);
-            var darkRock = MeshUtil.Lit(MeshUtil.Rgb(0x3c3c44));
+            // Glacier ice, not granite: the network is now a system of crevasses cut into the
+            // icefall. Only the materials and the display names change — the sim's Caves API, the
+            // seeded positions and the whole fast-travel rule are untouched.
+            var rock = MeshUtil.Lit(MeshUtil.Rgb(0x8fb6c9));
+            var darkRock = MeshUtil.Lit(MeshUtil.Rgb(0x4a6a80));
             // Near-black, unlit-looking interior so the opening reads as depth rather than a surface.
-            var voidMat = MeshUtil.Lit(MeshUtil.Rgb(0x05060a));
+            var voidMat = MeshUtil.Lit(MeshUtil.Rgb(0x06121c));
 
             foreach (var cave in World.Caves)
             {
@@ -664,7 +797,7 @@ namespace Metoh.Game
                 var centre = new Vector3((float)cave.X, baseY, (float)cave.Z);
                 var faceRot = Quaternion.LookRotation(new Vector3((float)dx, 0f, (float)dz), Vector3.up);
 
-                var root = new GameObject("Cave");
+                var root = new GameObject("Crevasse");
                 root.transform.parent = transform;
                 root.transform.SetPositionAndRotation(centre, faceRot);
 
@@ -704,11 +837,11 @@ namespace Metoh.Game
                 Boulder(darkRock, cave.X + dx * 2.9 - px * 2.0, cave.Z + dz * 2.9 - pz * 2.0, 0.6);
 
                 // Cold light bleeding out of the throat, so it's findable at night.
-                var glow = new GameObject("CaveGlow").AddComponent<Light>();
+                var glow = new GameObject("CrevasseGlow").AddComponent<Light>();
                 glow.transform.parent = root.transform;
                 glow.transform.localPosition = new Vector3(0f, 1.4f, 1.6f);
                 glow.type = LightType.Point;
-                glow.color = MeshUtil.Rgb(0x4a6ab0);
+                glow.color = MeshUtil.Rgb(0x7fc0e8);
                 glow.range = 14f;
                 glow.intensity = 1.8f;
             }
@@ -753,7 +886,7 @@ namespace Metoh.Game
             var towerXZ = new Vector2((float)WorldData.Lookout.X, (float)WorldData.Lookout.Z);
             root.transform.position = new Vector3(towerXZ.x, baseY, towerXZ.y);
             root.transform.parent = transform;
-            var wood = MeshUtil.Lit(MeshUtil.Rgb(0x6a4a2c));
+            var wood = MeshUtil.Lit(MeshUtil.Rgb(0x5a5148)); // grey-weathered timber
             Mesh post = MeshUtil.TaperedCylinder(0.22f, 0.18f, 10f, 5);
             foreach (var off in new[] { new Vector2(-1.4f, -1.4f), new Vector2(1.4f, -1.4f), new Vector2(-1.4f, 1.4f), new Vector2(1.4f, 1.4f) })
             {
@@ -953,8 +1086,8 @@ namespace Metoh.Game
             moonGo.transform.rotation = Quaternion.LookRotation(-_moonDir, Vector3.up);
             _moon = moonGo.AddComponent<Light>();
             _moon.type = LightType.Directional;
-            _moon.color = MeshUtil.Rgb(0x9fb6ff);
-            _moon.intensity = 0.35f;
+            _moon.color = MeshUtil.Rgb(0xb4c6ff);
+            _moon.intensity = 0.40f; // snowpack throws moonlight back; the forest floor ate it
             // Hard shadows: soft shadows cost real time on integrated GPUs and the forest is so
             // fogged and dark that the difference barely reads. Revisit in the R5 art pass.
             _moon.shadows = LightShadows.Hard;
@@ -1015,11 +1148,15 @@ namespace Metoh.Game
 
         private static readonly SkyKey[] SkyKeys =
         {
-            new SkyKey(0.00f, 0x3a3550, 0x453a4a, 0x40384a, 0.0075f, 0.30f, 0.05f), // dusk
-            new SkyKey(0.25f, 0x141a2e, 0x18202e, 0x1c2434, 0.0100f, 0.38f, 0.65f), // nightfall
-            new SkyKey(0.60f, 0x0a0e1c, 0x0c1220, 0x121a28, 0.0125f, 0.42f, 1.00f), // deep night
-            new SkyKey(0.88f, 0x141a2e, 0x1a2030, 0x1c2434, 0.0105f, 0.36f, 0.70f), // pre-dawn
-            new SkyKey(1.00f, 0x4a4258, 0x584a52, 0x4a4456, 0.0080f, 0.26f, 0.05f), // dawn
+            // Re-themed for altitude: every key shifted blue, ambient up ~20% and fog density down
+            // ~10% because snowpack bounces moonlight instead of swallowing it like forest floor,
+            // and stars lifted at dusk/dawn since thin cold air holds far less haze than the valley
+            // did. NightSky.shader needs no edit — it is driven entirely from these keys.
+            new SkyKey(0.00f, 0x354060, 0x3e4257, 0x4d4359, 0.00675f, 0.30f, 0.18f), // dusk
+            new SkyKey(0.25f, 0x121c33, 0x162336, 0x222b3e, 0.00900f, 0.38f, 0.72f), // nightfall
+            new SkyKey(0.60f, 0x0a1220, 0x0b1526, 0x161f30, 0.01125f, 0.42f, 1.00f), // deep night
+            new SkyKey(0.88f, 0x121c33, 0x172438, 0x222b3e, 0.00945f, 0.36f, 0.76f), // pre-dawn
+            new SkyKey(1.00f, 0x445068, 0x4e5566, 0x595267, 0.00720f, 0.26f, 0.18f), // dawn
         };
 
         /// <summary>

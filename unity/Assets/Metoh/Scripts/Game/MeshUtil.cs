@@ -72,6 +72,28 @@ namespace Metoh.Game
             return mesh;
         }
 
+        /// <summary>
+        /// Unit cube centred on the origin. The one deliberately FLAT-shaded mesh here: it exists for
+        /// the prayer-flag squares, which are 12 cm across and would turn to mush with the smooth
+        /// normals the rest of the style uses.
+        ///
+        /// Borrowed from Unity's built-in primitive rather than hand-rolled — the temporary
+        /// GameObject is destroyed immediately, but <c>sharedMesh</c> points at a built-in asset that
+        /// outlives it, so the cached mesh stays valid. Cached because the undergrowth pass asks for
+        /// it once per world rebuild.
+        /// </summary>
+        private static Mesh _unitCube;
+        public static Mesh UnitCube()
+        {
+            if (_unitCube == null)
+            {
+                var probe = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                _unitCube = probe.GetComponent<MeshFilter>().sharedMesh;
+                Object.Destroy(probe);
+            }
+            return _unitCube;
+        }
+
         /// <summary>URP Lit material with a flat base colour (the whole art style for now).</summary>
         public static Material Lit(Color color, float smoothness = 0.05f)
         {

@@ -158,18 +158,22 @@ namespace Metoh.Game
         {
             // The lake ellipse and camp clearing are baked into the background; these are the labels
             // plus the glyphs that make the map navigable (matches the web build's LANDMARKS).
-            Blob(ToMap(0f, 0f), 16f, new Color(1f, 0.6f, 0.25f, 0.55f));
-            Label(ToMap(0f, 0f) + new Vector2(0f, -16f), "CAMP", new Color(1f, 0.85f, 0.6f));
-            Label(ToMap((float)WorldData.Lookout.X, (float)WorldData.Lookout.Z), "TOWER", new Color(0.85f, 0.78f, 0.55f));
-            Label(ToMap((float)WorldData.Lake.X, (float)WorldData.Lake.Z), "LAKE", new Color(0.6f, 0.8f, 0.95f));
-            Dot(ToMap((float)WorldData.Rv.X, (float)WorldData.Rv.Z), 4f, MeshUtil.Rgb(0xd9d3c2));
+            // Every marker below is DARK. The old set was pale warm ink chosen to glow against a
+            // dark green forest map; the snow palette inverts the background, and pale-on-pale is
+            // an unreadable map. Hues are kept (amber camp, blue water, warm duffel) so the map
+            // still colour-codes the same way — only the luminance flips.
+            Blob(ToMap(0f, 0f), 16f, new Color(0.55f, 0.28f, 0.05f, 0.35f));
+            Label(ToMap(0f, 0f) + new Vector2(0f, -16f), "CAMP", MeshUtil.Rgb(0x6b3f10));
+            Label(ToMap((float)WorldData.Lookout.X, (float)WorldData.Lookout.Z), "TOWER", MeshUtil.Rgb(0x4f4326));
+            Label(ToMap((float)WorldData.Lake.X, (float)WorldData.Lake.Z), "TARN", MeshUtil.Rgb(0x1d4e6b));
+            Dot(ToMap((float)WorldData.Rv.X, (float)WorldData.Rv.Z), 4f, MeshUtil.Rgb(0x4a3f2c));
 
             // The duffel — where proof becomes permanent. Every searcher's destination, so it's
             // labelled rather than left as scenery.
             Vector2 duffel = ToMap(WorldBuilder.DuffelPosition());
-            Blob(duffel, 12f, new Color(1f, 0.85f, 0.5f, 0.35f));
-            Dot(duffel, 4f, new Color(1f, 0.88f, 0.6f));
-            Label(duffel + new Vector2(0f, 13f), "DUFFEL", new Color(1f, 0.9f, 0.65f));
+            Blob(duffel, 12f, new Color(0.71f, 0.4f, 0.11f, 0.30f));
+            Dot(duffel, 4f, MeshUtil.Rgb(0xb5651d));
+            Label(duffel + new Vector2(0f, 13f), "DUFFEL", MeshUtil.Rgb(0x7a4408));
         }
 
         /// <summary>The clue trail is gated on "contact" — this mirrors Game.ts's clueVisionActive().</summary>
@@ -276,7 +280,7 @@ namespace Metoh.Game
                 Matrix4x4 mat = GUI.matrix;
                 GUIUtility.RotateAroundPivot(45f, p);
                 Color old = GUI.color;
-                GUI.color = MeshUtil.Rgb(0xffb347);
+                GUI.color = MeshUtil.Rgb(0xc2610c);
                 GUI.DrawTexture(new Rect(p.x - 3.5f, p.y - 3.5f, 7f, 7f), Texture2D.whiteTexture);
                 GUI.color = old;
                 GUI.matrix = mat;
@@ -292,10 +296,10 @@ namespace Metoh.Game
                 Vector2 p = ToMap(pg.transform.position);
                 float r = 7f + pulse * 3.5f;
                 Color old = GUI.color;
-                GUI.color = new Color(1f, 0.89f, 0.29f, 0.45f + 0.4f * pulse);
+                GUI.color = new Color(0.72f, 0.5f, 0.02f, 0.45f + 0.4f * pulse);
                 GUI.DrawTexture(new Rect(p.x - r, p.y - r, r * 2f, r * 2f), _ring);
                 GUI.color = old;
-                Dot(p, 2.5f, MeshUtil.Rgb(0xffe24a));
+                Dot(p, 2.5f, MeshUtil.Rgb(0x9a6b00));
             }
         }
 
@@ -306,11 +310,11 @@ namespace Metoh.Game
                 if (p == null || p == me || p.IsYeti) continue;
                 Vector2 at = ToMap(p.transform.position);
                 bool down = p.Status.Value == HPPlayer.StatusIncap;
-                Color c = down ? new Color(1f, 0.45f, 0.4f) : MeshUtil.Rgb(0x7ad1ff);
-                Blob(at, 13f, new Color(c.r, c.g, c.b, 0.45f));
+                Color c = down ? MeshUtil.Rgb(0xc62828) : MeshUtil.Rgb(0x1565a0);
+                Blob(at, 13f, new Color(c.r, c.g, c.b, 0.40f));
                 Dot(at, 3f, c);
                 if (p.CharacterName.Value != "")
-                    Label(at + new Vector2(0f, 11f), ShortName(p.CharacterName.Value), new Color(0.8f, 0.9f, 1f));
+                    Label(at + new Vector2(0f, 11f), ShortName(p.CharacterName.Value), MeshUtil.Rgb(0x123a5c));
             }
         }
 
@@ -517,8 +521,11 @@ namespace Metoh.Game
 
             var tex = new Texture2D(BgRes, BgRes, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear };
             var px = new Color[BgRes * BgRes];
-            Color low = MeshUtil.Rgb(0x1e2a18), high = MeshUtil.Rgb(0x3c5228);
-            Color lake = MeshUtil.Rgb(0x2a5a7a), camp = MeshUtil.Rgb(0x466030);
+            // Baked map colours must track WorldBuilder's palette — a map that still draws a green
+            // forest under a white world is the "internally consistent, quietly wrong" failure the
+            // port notes warn about.
+            Color low = MeshUtil.Rgb(0x8fa6b8), high = MeshUtil.Rgb(0xdce8f0);
+            Color lake = MeshUtil.Rgb(0x9fc4d8), camp = MeshUtil.Rgb(0xaebac4);
             float span = Mathf.Max(0.001f, max - min);
             float campR = (float)Sim.World.BaseCampRadius;
 
