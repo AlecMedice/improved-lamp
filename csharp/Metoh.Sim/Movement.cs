@@ -61,6 +61,58 @@ namespace Metoh.Sim
         // Movement clamps just inside the world edge (matches the old LocalPlayer `half = 398`).
         private const double PlayerWorldHalf = 398;
 
+        /// <summary>Squared radius of the trampled camp clearing — no drifts and no prints inside it.</summary>
+        private static readonly double CampClear2 = (World.BaseCampRadius + 2) * (World.BaseCampRadius + 2);
+
+        /// <summary>
+        /// How packed the ground is at (x,z): 0 = untouched, 1 = a trail beaten flat.
+        ///
+        /// PathDepth returns 0 at the corridor EDGE and 1 only on the exact centreline, so using it
+        /// directly as a speed factor would make a trail feel fast only down its middle. Feathering
+        /// just the outer TrailPacked of the half-width means the usable width of a lane is genuinely
+        /// packed and only its fringe blends into the snow.
+        /// </summary>
+        private static double PackedAt(GameWorld world, double x, double z)
+        {
+            double d = Paths.PathDepth(world.Paths, x, z);
+            if (d <= 0) return 0;
+            return SimMath.Clamp(d / Player.TrailPacked, 0, 1);
+        }
+
+        /// <summary>
+        /// Depth of unbroken snow underfoot: 0 = wind-scoured crust, 1 = full knee-deep drift.
+        ///
+        /// Snow lies everywhere up here, but only the low ground HOLDS it — ridges are scoured back
+        /// to crust by the wind, and the valley floors are where it piles deep enough to wade. That
+        /// is what makes this a routing decision rather than a blanket tax. Camp is trampled flat
+        /// and the tarn is ice, so both are exempt.
+        ///
+        /// Mirrors deepSnowDepth in shared/sim/movement.ts — parity-locked, change both together.
+        /// </summary>
+        public static double DeepSnowDepth(GameWorld world, double x, double z)
+        {
+            if (x * x + z * z <= CampClear2) return 0;
+            if (Collision.LakeDepth(x, z) > 0) return 0;
+            double basin = SimMath.Clamp((Player.DriftHeight - world.GetHeight(x, z)) / Player.DriftDepth, 0, 1);
+            if (basin <= 0) return 0;
+            return basin * (1 - PackedAt(world, x, z));
+        }
+
+        /// <summary>
+        /// Does a searcher standing here press a track into unbroken snow?
+        ///
+        /// Deliberately WIDER than DeepSnowDepth: snow records a footfall anywhere it lies, not just
+        /// where it is deep enough to slow you. The slow zone is a strict subset of this one.
+        ///
+        /// Mirrors leavesSnowPrints in shared/sim/movement.ts — parity-locked, change both together.
+        /// </summary>
+        public static bool LeavesSnowPrints(GameWorld world, double x, double z)
+        {
+            if (x * x + z * z <= CampClear2) return false;
+            if (Collision.LakeDepth(x, z) > 0) return false;
+            return Paths.PathDepth(world.Paths, x, z) <= 0;
+        }
+
         /// <summary>
         /// Advance one player by a single input. Pure w.r.t. (state, input, world, mods); mutates
         /// <paramref name="st"/> in place (callers clone when they need history). Ported line-for-line
@@ -107,6 +159,14 @@ namespace Metoh.Sim
             if (lakeDep > 0)
             {
                 speed *= SimMath.Lerp(1, st.IsYeti ? Player.LakeYetiFactor : Player.LakeHunterFactor, lakeDep);
+            }
+
+            // Deep snow. Searchers wade the drifts in the low ground; the Yeti is built for this and
+            // crosses them at full stride. Airborne players are exempt — you are not wading mid-leap.
+            if (!st.IsYeti && st.Grounded)
+            {
+                double drift = DeepSnowDepth(world, st.X, st.Z);
+                if (drift > 0) speed *= SimMath.Lerp(1, Player.DeepSnowFactor, drift);
             }
 
             if (moving)

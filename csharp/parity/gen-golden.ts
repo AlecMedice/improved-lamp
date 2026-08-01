@@ -22,6 +22,8 @@ import {
   caveEmergePoint,
   generatePaths,
   pathDepth,
+  deepSnowDepth,
+  leavesSnowPrints,
   buildColliders,
   makeWorld,
   stepPlayer,
@@ -157,6 +159,40 @@ for (let i = 0; i < 30; i++) {
   }
 }
 
+// 7b) deep snow — the drift-basin slow and the wider print zone.
+// These get their own probes because the hunter trajectory above CANNOT exercise them: it starts at
+// the origin, which is inside the camp clearing, and 40 sprint steps only carry it ~17 m, so it never
+// leaves the exempt zone. Regenerating after the mechanic landed produced a byte-identical file —
+// which looks like "no behaviour changed" and is really "the fixture never tested it".
+const deepSnowProbes = [
+  { label: "deep basin", x: -390, z: -390 },
+  { label: "feathered basin edge", x: -390, z: -360 },
+  { label: "scoured ridge — prints, no slow", x: -390, z: 132 },
+  { label: "trail corridor", x: -258, z: 390 },
+  { label: "tarn ice", x: -177, z: -123 },
+  { label: "camp clearing", x: 4, z: 4 },
+].map((p) => ({
+  ...p,
+  h: world.getHeight(p.x, p.z),
+  depth: deepSnowDepth(world, p.x, p.z),
+  prints: leavesSnowPrints(world, p.x, p.z),
+}));
+
+// A hunter sprinting through a drift basin, so the slow shows up in real trajectory values.
+const dh = world.getHeight(-180, 106);
+const drifted: PlayerSimState = {
+  x: -180, z: 106, feetY: dh, groundY: dh, vy: 0, grounded: true,
+  yaw: 0, stamina: 100, exhausted: false, battery: 100, curEye: 1.7,
+  flashlightOn: false, isYeti: false, eyeHeight: 1.7,
+};
+const driftTrajectory: any[] = [];
+for (let i = 0; i < 40; i++) {
+  stepPlayer(drifted, inputWalk, world, mods);
+  if (i % 10 === 9) {
+    driftTrajectory.push({ i, x: drifted.x, z: drifted.z, feetY: drifted.feetY, stamina: drifted.stamina });
+  }
+}
+
 // 8) specialties — identity, getter table, and two DETERMINISTIC deals (seeded rng) the C# port reproduces.
 const specialtyIds = [...SPECIALTY_IDS];
 const characterNames = specialtyIds.map((id) => CHARACTER_NAME[id]);
@@ -174,6 +210,7 @@ const dealForced = dealSpecialties(dealSids, { c: "photo" }, mulberry32(999));
 const golden = {
   seed: SEED, rngStream, noiseSamples, terrainSamples, caves, caveEmerge, nearestProbes,
   pathSummary, colliderSummary, worldSummary, hunterTrajectory, yetiTrajectory,
+  deepSnowProbes, driftTrajectory,
   specialties: { specialtyIds, characterNames, getterProbe, dealSids, dealPlain, dealForced },
 };
 

@@ -57,6 +57,14 @@ namespace Metoh.Sim
         public const double ClimbReach = 0.7;         // how far past a structure's edge Yeti can grab on (m)
         public const double LakeHunterFactor = 0.28;  // hunter speed multiplier while wading
         public const double LakeYetiFactor = 0.72; // Yeti speed multiplier while wading
+        // --- Deep snow (see Movement.DeepSnowDepth) ---------------------------------
+        // Searchers wade unbroken drifts; the Yeti strides over the crust untouched. The slow is
+        // deliberately NOT applied everywhere off-trail: that would be ~96% of the map and a flat
+        // searcher nerf rather than a routing choice. It lives in the low ground only.
+        public const double DeepSnowFactor = 0.78; // searcher speed multiplier at full drift depth
+        public const double DriftHeight = -2.0;    // at/above this terrain height, no slow
+        public const double DriftDepth = 1.5;      // metres below DriftHeight to reach full depth
+        public const double TrailPacked = 0.35;    // outer fraction of a corridor that feathers
         public const double JumpSpeed = 5.2;          // initial upward velocity on jump (m/s)
         public const double LeapSpeed = 9.5;          // Yeti's leap: initial upward velocity (m/s)
         public const double LeapStaminaCost = 30;     // stamina spent per leap

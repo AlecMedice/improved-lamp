@@ -53,6 +53,14 @@ export const PLAYER = {
   climbReach: 0.7, // how far past a structure's edge Yeti can grab on to start a climb (m)
   lakeHunterFactor: 0.28, // hunter speed multiplier while wading (heavy kit)
   lakeYetiFactor: 0.72, // Yeti speed multiplier while wading (strong, but water impedes)
+  // --- Deep snow (see `deepSnowDepth` in movement.ts) --------------------------------
+  // Searchers wade unbroken drifts; the Yeti strides over the crust untouched. The slow is
+  // deliberately NOT applied everywhere off-trail: that would be ~96% of the map and a flat
+  // searcher nerf rather than a routing choice. It lives in the low ground only.
+  deepSnowFactor: 0.78, // searcher speed multiplier at full drift depth
+  driftHeight: -2.0, // at/above this terrain height the wind scours the crust bare — no slow
+  driftDepth: 1.5, // metres below driftHeight at which a drift reaches full depth
+  trailPacked: 0.35, // outer fraction of a corridor's half-width that feathers; the core is packed
   jumpSpeed: 5.2, // initial upward velocity on jump (m/s)
   leapSpeed: 9.5, // Yeti's leap: initial upward velocity (m/s), well above a hunter's jump
   leapStaminaCost: 30, // stamina spent per leap (gates spamming)

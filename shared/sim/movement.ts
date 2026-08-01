@@ -1,7 +1,58 @@
-import { PLAYER } from "./constants";
+import { PLAYER, WORLD } from "./constants";
 import { clamp, lerp } from "./math";
 import { resolveCollision, resolveLogs, logOverlap, lakeDepth, groundHeightAt, climbSupport } from "./collision";
+import { pathDepth } from "./paths";
 import type { World } from "./index";
+
+/** Squared radius of the trampled camp clearing — no drifts and no prints inside it. */
+const CAMP_CLEAR2 = (WORLD.baseCampRadius + 2) ** 2;
+
+/**
+ * How packed the ground is at (x,z): 0 = untouched, 1 = a trail beaten flat.
+ *
+ * `pathDepth` returns 0 at the corridor EDGE and 1 only on the exact centreline, so using it
+ * directly as a speed factor would make a trail feel fast only down its middle. Feathering just
+ * the outer `trailPacked` of the half-width means the usable width of a lane is genuinely packed
+ * and only its fringe blends into the snow — which is how a trail reads when you look at one.
+ */
+function packedAt(world: World, x: number, z: number): number {
+  const d = pathDepth(world.paths, x, z);
+  if (d <= 0) return 0;
+  return clamp(d / PLAYER.trailPacked, 0, 1);
+}
+
+/**
+ * Depth of unbroken snow underfoot: 0 = wind-scoured crust, 1 = full knee-deep drift.
+ *
+ * Snow lies everywhere up here, but only the low ground HOLDS it — ridges are scoured back to
+ * crust by the wind, and the valley floors are where it piles up deep enough to wade. That is
+ * what makes this a routing decision rather than a blanket tax: a searcher can see the high
+ * ground and choose it. Camp is trampled flat and the tarn is ice, so both are exempt.
+ *
+ * Pure and seed-derived, so nothing about deep snow is replicated — client, server and Unity host
+ * all derive the same zones from the same world.
+ */
+export function deepSnowDepth(world: World, x: number, z: number): number {
+  if (x * x + z * z <= CAMP_CLEAR2) return 0;
+  if (lakeDepth(x, z) > 0) return 0;
+  const basin = clamp((PLAYER.driftHeight - world.getHeight(x, z)) / PLAYER.driftDepth, 0, 1);
+  if (basin <= 0) return 0;
+  return basin * (1 - packedAt(world, x, z));
+}
+
+/**
+ * Does a searcher standing here press a track into unbroken snow?
+ *
+ * Deliberately WIDER than `deepSnowDepth`: snow records a footfall anywhere it lies, not just
+ * where it is deep enough to slow you. Keeping the print zone broad is what makes the Yeti's
+ * tracking signal dense enough to hunt by, while the slow stays narrow enough to route around.
+ * The slow zone is a strict subset of this one.
+ */
+export function leavesSnowPrints(world: World, x: number, z: number): boolean {
+  if (x * x + z * z <= CAMP_CLEAR2) return false;
+  if (lakeDepth(x, z) > 0) return false;
+  return pathDepth(world.paths, x, z) <= 0;
+}
 
 /** Per-player physics state the sim owns. Presentation (bob, audio, light) lives in LocalPlayer. */
 export type PlayerSimState = {
@@ -93,6 +144,13 @@ export function stepPlayer(st: PlayerSimState, input: MoveInput, world: World, m
   const lakeDep = lakeDepth(st.x, st.z);
   if (lakeDep > 0) {
     speed *= lerp(1, st.isYeti ? PLAYER.lakeYetiFactor : PLAYER.lakeHunterFactor, lakeDep);
+  }
+
+  // Deep snow. Searchers wade the drifts in the low ground; the Yeti is built for this and
+  // crosses them at full stride. Airborne players are exempt — you are not wading mid-leap.
+  if (!st.isYeti && st.grounded) {
+    const drift = deepSnowDepth(world, st.x, st.z);
+    if (drift > 0) speed *= lerp(1, PLAYER.deepSnowFactor, drift);
   }
 
   if (moving) {

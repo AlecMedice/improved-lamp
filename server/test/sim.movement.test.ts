@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { makeWorld, stepPlayer, PLAYER, WORLD } from "../../shared/sim";
+import { makeWorld, stepPlayer, deepSnowDepth, leavesSnowPrints, PLAYER, WORLD } from "../../shared/sim";
 import type { PlayerSimState, MoveInput, StepModifiers } from "../../shared/sim";
 
 const world = makeWorld(WORLD.seed);
@@ -104,5 +104,43 @@ describe("purity / robustness", () => {
     expect(Number.isFinite(st.x) && Number.isFinite(st.z) && Number.isFinite(st.feetY)).toBe(true);
     expect(Math.abs(st.x)).toBeLessThanOrEqual(400);
     expect(Math.abs(st.z)).toBeLessThanOrEqual(400);
+  });
+});
+
+describe("deep snow", () => {
+  // Two reference points on WORLD.seed: (-180,106) sits at full drift depth, (-390,132) is a
+  // wind-scoured ridge at depth 0. Both are off-trail, outside camp and off the tarn.
+  const BASIN: [number, number] = [-180, 106];
+  const RIDGE: [number, number] = [-390, 132];
+
+  function distanceWalked([x0, z0]: [number, number], isYeti: boolean): number {
+    const groundY = world.getHeight(x0, z0);
+    const st = makeState({ x: x0, z: z0, feetY: groundY, groundY, isYeti });
+    for (let i = 0; i < 20; i++) stepPlayer(st, makeInput({ w: true, yaw: 0.6 }), world, MODS);
+    return Math.hypot(st.x - x0, st.z - z0);
+  }
+
+  it("a searcher covers less ground in a drift basin than on scoured crust", () => {
+    expect(distanceWalked(BASIN, false)).toBeLessThan(distanceWalked(RIDGE, false) * 0.95);
+  });
+
+  it("the yeti covers the same ground in both", () => {
+    expect(distanceWalked(BASIN, true)).toBeCloseTo(distanceWalked(RIDGE, true), 2);
+  });
+
+  it("the print zone is wider than the slow zone", () => {
+    // The whole point of the split: a scoured ridge still records tracks, it just doesn't wade.
+    expect(deepSnowDepth(world, ...RIDGE)).toBe(0);
+    expect(leavesSnowPrints(world, ...RIDGE)).toBe(true);
+    expect(deepSnowDepth(world, ...BASIN)).toBeGreaterThan(0);
+    expect(leavesSnowPrints(world, ...BASIN)).toBe(true);
+  });
+
+  it("camp, trails and the tarn are exempt from both", () => {
+    for (const [x, z] of [[4, 4], [-258, 390], [-177, -123]] as [number, number][]) {
+      expect(leavesSnowPrints(world, x, z)).toBe(false);
+    }
+    expect(deepSnowDepth(world, 4, 4)).toBe(0);
+    expect(deepSnowDepth(world, -177, -123)).toBe(0);
   });
 });
