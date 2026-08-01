@@ -754,11 +754,11 @@ export class Game {
     const youWon = winner === (this.isYeti ? "yeti" : "hunters");
     this.audio.setHeartbeat(0);
     this.audio.playOnce(youWon ? "victory" : "defeat", { volume: 0.7 });
-    const title = winner === "hunters" ? "The footage is secured" : "The forest keeps its secret";
+    const title = winner === "hunters" ? "The footage is secured" : "The mountain keeps its secret";
     const body =
       winner === "hunters"
-        ? "Enough solid video. The expedition makes it out with proof Yeti is real."
-        : "Yeti outlasted three nights. The expedition goes home with nothing.";
+        ? "Enough solid video. The expedition walks out with proof the Yeti is real."
+        : "The Yeti outlasted three nights. The expedition goes home with nothing.";
     this.hud.showEnd(youWon ? "VICTORY" : "DEFEAT", `${title}. ${body}`);
     // The host can send everyone back to the lobby for another match.
     if (this.net.isHost()) this.hud.showHostRematch(() => this.net.sendReturnToLobby());

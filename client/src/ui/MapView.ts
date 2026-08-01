@@ -24,7 +24,7 @@ export type MapData = {
 const TRAILHEAD_Z = -21; // -(baseCampRadius 16 + 5); matches Environment.buildTrailhead
 const LANDMARKS = [
   { x: 220, z: -230, kind: "tower" as const, label: "TOWER" },
-  { x: LAKE.x, z: LAKE.z, kind: "lake" as const, label: "LAKE" },
+  { x: LAKE.x, z: LAKE.z, kind: "lake" as const, label: "TARN" },
   // The RV + trailhead sit inside the camp clearing — draw their glyphs but let the CAMP label
   // speak for the cluster (stacked text here is unreadable at map scale).
   { x: RV.x, z: RV.z, kind: "rv" as const, label: "" },
@@ -110,10 +110,10 @@ export class MapView {
       b.disabled = !selectable;
     });
     this.hint.textContent = d.travelMode
-      ? "Click a cave to emerge there"
+      ? "Click a crevasse to emerge there"
       : d.currentCave >= 0
-        ? "Cave system on cooldown…"
-        : "Yeti: stand in a cave mouth to fast-travel";
+        ? "Crevasse route on cooldown…"
+        : "Yeti: stand in a crevasse mouth to fast-travel";
 
     const ctx = this.ctx;
     ctx.clearRect(0, 0, S, S);

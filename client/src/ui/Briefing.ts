@@ -27,13 +27,13 @@ export class Briefing {
           ["Leap / climb a structure", k("jump")],
           ["Charge (burst dash)", k("sprint")],
           ["Senses overlay", k("senses")],
-          ["Map · cave fast-travel", k("map")],
+          ["Map · crevasse fast-travel", k("map")],
         ]
       : [
           ["Move / look", `${move} · Mouse`],
           ["Sprint · crouch", `${k("sprint")} · ${k("crouch")}`],
-          ["Flashlight (dazzles Yeti)", k("flashlight")],
-          ["Film Yeti", "Hold Right-click"],
+          ["Flashlight (dazzles the Yeti)", k("flashlight")],
+          ["Film the Yeti", "Hold Right-click"],
           ["Revive a teammate", `Hold ${k("interact")}`],
           ["Map · stakeout ping", `${k("map")} · ${k("ping")}`],
         ];

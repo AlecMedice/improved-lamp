@@ -408,10 +408,10 @@ namespace Metoh.Game
             if (me.IsYeti)
             {
                 hint = currentCave < 0
-                    ? "stand in a cave mouth to fast-travel"
+                    ? "stand in a crevasse mouth to fast-travel"
                     : me.CaveReadyIn > 0f
-                        ? $"cave system on cooldown ({me.CaveReadyIn:0.0}s)"
-                        : "click a cave to emerge there";
+                        ? $"crevasse route on cooldown ({me.CaveReadyIn:0.0}s)"
+                        : "click a crevasse to emerge there";
             }
             else
             {
@@ -422,9 +422,9 @@ namespace Metoh.Game
                 int found = 0;
                 for (int i = 0; i < total; i++) if (gm != null && gm.IsCaveFound(i)) found++;
                 hint = found < total
-                    ? $"caves found {found}/{total} — walk up to a mouth to map it  ·  " +
+                    ? $"crevasses found {found}/{total} — walk up to a mouth to map it  ·  " +
                       $"click the map to drop a stakeout ping"
-                    : "every cave mapped  ·  click the map to drop a stakeout ping  ·  " +
+                    : "every crevasse mapped  ·  click the map to drop a stakeout ping  ·  " +
                       $"[{HPKeybinds.Label(HPAction.Ping)}] pings where you stand";
             }
             var style = new GUIStyle(GUI.skin.label) { fontSize = 13, alignment = TextAnchor.MiddleCenter };

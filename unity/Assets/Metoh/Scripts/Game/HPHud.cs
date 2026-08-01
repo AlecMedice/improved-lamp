@@ -100,7 +100,7 @@ namespace Metoh.Game
                     return new PersonaCard
                     {
                         Role = "Park Ranger & Tracker",
-                        Story = "You know these woods better than the maps do. You lost a friend to\n" +
+                        Story = "You know this valley better than the maps do. You lost a client to\n" +
                                 "them once, and you have never once said so out loud.",
                         Perks = new[]
                         {
@@ -354,7 +354,7 @@ namespace Metoh.Game
             {
                 var style = new GUIStyle(GUI.skin.box) { fontSize = 22 };
                 GUI.color = new Color(1f, 0.35f, 0.25f);
-                GUI.Box(new Rect(Screen.width / 2f - 160f, 44f, 320f, 34f), "A ROAR ECHOES THROUGH THE PINES", style);
+                GUI.Box(new Rect(Screen.width / 2f - 160f, 44f, 320f, 34f), "A ROAR ROLLS DOWN THE VALLEY", style);
                 GUI.color = Color.white;
             }
 
@@ -712,8 +712,8 @@ namespace Metoh.Game
         {
             _toastAt = Time.time;
             _toast = string.IsNullOrEmpty(by)
-                ? $"CAVE {number} MAPPED — one of its lairs is on the map now"
-                : $"CAVE {number} MAPPED — {by} found a lair";
+                ? $"CREVASSE {number} MAPPED — one of its lairs is on the map now"
+                : $"CREVASSE {number} MAPPED — {by} found a lair";
             _toastGood = true;
         }
 
@@ -901,13 +901,13 @@ namespace Metoh.Game
                 GUILayout.Space(8f);
 
                 GUILayout.Label("THE JOB", header);
-                GUILayout.Label($"• Store {gm.VideosRequired.Value} pieces of proof in the duffel by the RV, in {gm.TotalNights.Value} nights\n" +
+                GUILayout.Label($"• Store {gm.VideosRequired.Value} pieces of proof in the duffel at basecamp, in {gm.TotalNights.Value} nights\n" +
                                 "• FILM it (hold RMB in range) — fast, but you have to get close\n" +
                                 "• Or CAST its deepest tracks (Mara's kit) — safe, but slow\n" +
                                 "• Or bag the HAIR it leaves on the trees — anyone can, if you spot it\n" +
                                 "• What you carry is worth NOTHING until it's in the bag\n" +
                                 "• Caught carrying, you drop it where you fall — go back for it\n" +
-                                "• Its caves aren't on your map. Find one and the whole team sees it.\n" +
+                                "• Its crevasses aren't on your map. Find one and the whole team sees it.\n" +
                                 "• The valleys lie deep — DEEP SNOW means you're wading. The ridges are faster.\n" +
                                 "• The duffel is the one thing out here it cannot touch. Walk it home.", objective);
             }
@@ -1022,7 +1022,7 @@ namespace Metoh.Game
 
             var note = new GUIStyle(GUI.skin.label) { fontSize = 12, wordWrap = true };
             note.normal.textColor = new Color(0.7f, 0.75f, 0.72f);
-            if (stored >= need) GUILayout.Label("That's the case. Get out of the woods.", note);
+            if (stored >= need) GUILayout.Label("That's the case. Get off the mountain.", note);
             else GUILayout.Label($"{need - stored} more piece{(need - stored == 1 ? "" : "s")} needed.", note);
 
             if (me.CarriedTotal > 0)
@@ -1068,8 +1068,8 @@ namespace Metoh.Game
                     if (cave >= 0)
                     {
                         prompt = me.CaveReadyIn > 0f
-                            ? $"cave system recharging ({me.CaveReadyIn:0.0}s)"
-                            : $"[{HPKeybinds.Label(HPAction.Map)}] — travel to another cave";
+                            ? $"crevasse route recharging ({me.CaveReadyIn:0.0}s)"
+                            : $"[{HPKeybinds.Label(HPAction.Map)}] — travel to another crevasse";
                     }
                     else
                     {
@@ -1130,7 +1130,7 @@ namespace Metoh.Game
         {
             string text = gm.Winner.Value == GameManager.WinnerHunters
                 ? "THE FOOTAGE IS OUT THERE — the searchers win!"
-                : "THE FOREST KEEPS ITS SECRET — Yeti survives all three nights!";
+                : "THE MOUNTAIN KEEPS ITS SECRET — the Yeti survives all three nights!";
             GUILayout.BeginArea(new Rect(Screen.width / 2f - 220f, Screen.height / 2f - 70f, 440f, 150f));
             var style = new GUIStyle(GUI.skin.box) { fontSize = 16, wordWrap = true };
             GUILayout.Box(text, style, GUILayout.Height(60f));
@@ -1214,9 +1214,9 @@ namespace Metoh.Game
             string map = HPKeybinds.Label(HPAction.Map), ping = HPKeybinds.Label(HPAction.Ping);
             string flashAbility = HPKeybinds.Label(HPAction.Flash);
             string help = me.IsYeti
-                ? $"WASD move · mouse look · {jump} leap / hold near a boulder-RV-tower to CLIMB\n" +
+                ? $"WASD move · mouse look · {jump} leap / hold near a boulder-hut-tower to CLIMB\n" +
                   $"{sprint} SPRINT (faster than they are) · RMB ROAR (freeze) · LMB GRAB / drop\n" +
-                  $"{senses} senses overlay · {map} map (cave fast-travel)\n" +
+                  $"{senses} senses overlay · {map} map (crevasse fast-travel)\n" +
                   $"{crouch} CROUCH — half speed, but no tracks and no sound at all\n" +
                   "a GRAB spills their pack — you can't destroy evidence, but you can stand\n" +
                   "over the spill until it goes cold · survive all 3 nights"

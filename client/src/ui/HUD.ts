@@ -52,7 +52,7 @@ export class HUD {
     const yeti = role === "yeti";
     this.el("objective").textContent = yeti
       ? "Survive 3 nights. Right-click ROAR to freeze hunters, left-click GRAB a frozen one."
-      : "Film Yeti 3 times to win — track its footprints, and don't get caught.";
+      : "Film the Yeti 3 times to win — track its prints, and don't get caught.";
     if (yeti) {
       this.el("film-pill").style.display = "none";
       this.el("revive-pill").style.display = "none";
@@ -68,7 +68,6 @@ export class HUD {
     this.el("revive-fill").style.width = `${Math.round(p * 100)}%`;
   }
 
-  /** Yeti's ability readout (roar cooldown). Pass null to clear. */
   /**
    * "DEEP SNOW" while the local searcher is wading a drift.
    *
@@ -80,6 +79,7 @@ export class HUD {
     this.el("deepsnow-pill").style.display = on ? "" : "none";
   }
 
+  /** The Yeti's ability readout (roar cooldown). Pass null to clear. */
   setAbility(text: string | null) {
     const el = this.el("ability");
     if (text) {
@@ -95,7 +95,7 @@ export class HUD {
     this.el("viewfinder").style.display = recording ? "block" : "none";
     const rec = this.el("rec");
     rec.classList.toggle("locked", locked);
-    rec.textContent = locked ? "● REC — IN FRAME" : "● REC — find Yeti";
+    rec.textContent = locked ? "● REC — IN FRAME" : "● REC — find the Yeti";
   }
   setFilmProgress(p: number) {
     const w = `${Math.round(p * 100)}%`;
@@ -106,10 +106,10 @@ export class HUD {
   setStatusBanner(status: string) {
     const el = this.el("status-banner");
     if (status === "frozen") {
-      el.textContent = "FROZEN — paralyzed by Yeti's roar. Can't move!";
+      el.textContent = "FROZEN — paralyzed by the Yeti's roar. Can't move!";
       el.style.display = "block";
     } else if (status === "incapacitated") {
-      el.textContent = "INCAPACITATED — Yeti has you. Your footage is lost.";
+      el.textContent = "INCAPACITATED — the Yeti has you. Your footage is lost.";
       el.style.display = "block";
     } else {
       el.style.display = "none";

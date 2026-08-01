@@ -172,7 +172,7 @@ namespace Metoh.Game
             // Tagline on the front page only — the sub-pages need the vertical space.
             if (_page == Page.Root)
                 GUI.Label(new Rect(0, Screen.height * 0.14f + 86f, Screen.width, 30f),
-                    "five went looking for proof — something in the pines was looking back", _subStyle);
+                    "five went looking for proof — something on the mountain was looking back", _subStyle);
 
             switch (_page)
             {
@@ -330,7 +330,7 @@ namespace Metoh.Game
         {
             float y = Screen.height * 0.40f;
             GUI.Label(new Rect(cx - 220f, y, 440f, 22f),
-                "you, alone, against the thing in the pines", _subStyle);
+                "you, alone, against the thing on the mountain", _subStyle);
             y += 34f;
 
             if (MenuButton(cx, ref y, "PLAY AS SEARCHER"))
