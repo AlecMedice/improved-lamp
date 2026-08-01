@@ -206,7 +206,7 @@ namespace Metoh.Game
             lines.AppendLine($"  [4] shadows      {OnOff(_shadows)}");
             lines.AppendLine();
             lines.AppendLine("  [N] skip to next night (host only)");
-            lines.AppendLine($"  [P] yeti AI: {(YetiBot.AggressiveProwl ? "AGGRESSIVE (prowls to you)" : "PASSIVE (wander only)")}");
+            lines.AppendLine($"  [P] yeti AI fallback prowl: {(YetiBot.AggressiveProwl ? "ON (walks to you when it has no track)" : "OFF (sight/hearing/tracks only)")}");
             lines.AppendLine();
             lines.Append("[F3] closes  ·  renderScale lives in the Esc pause menu");
 

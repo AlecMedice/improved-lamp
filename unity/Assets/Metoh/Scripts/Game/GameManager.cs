@@ -1269,7 +1269,10 @@ namespace Metoh.Game
 
             var emerge = Caves.CaveEmergePoint(_world.Caves[index]);
             var pos = new Vector3((float)emerge.X, (float)_world.GetHeight(emerge.X, emerge.Z), (float)emerge.Z);
-            p.TargetTeleport(p.Owner, pos, (float)emerge.Yaw);
+            // Same guards for both, one authority — only the delivery differs. TargetTeleport is a
+            // TargetRpc to the owning client, which a CPU Yeti does not have.
+            if (p.IsBot) p.ServerBotTeleport(pos, (float)emerge.Yaw);
+            else p.TargetTeleport(p.Owner, pos, (float)emerge.Yaw);
         }
 
         private void ExpireMarks()

@@ -19,6 +19,23 @@
 // That loop — spotted, chase, lost behind the trees, hunt the area, fade back to wandering — is what
 // makes it read as a creature instead of a homing missile.
 //
+// TRACKING is how it finds you in the first place. The old brain closed the gap by walking at the
+// nearest searcher's true position — omniscience, dressed up with jitter. It now follows SNOW PRINTS
+// instead: the tracks searchers leave off-trail, which only the Yeti can see. That is the same
+// information the fiction says it has, so the behaviour is honest, and it makes the deep-snow mechanic
+// cut both ways — stay on the packed trails or in camp and you leave the bot genuinely nothing to
+// follow. The omniscient prowl survives only as a last resort when no track exists at all, so a team
+// that hides perfectly still isn't rewarded with a Yeti that wanders the far side of the map forever.
+//
+// The full behaviour set, in priority order:
+//   DAZZLED  — blinded, abilities locked: break off and get out of the beam rather than stand in it
+//   DRAG     — after a grab, haul the victim away from the duffel before dropping them
+//   HUNT     — perceived right now: close and use roar/grab
+//   SEARCH   — lost them: work the last-known position until memory expires
+//   TRACK    — follow the freshest snow print, and take a crevasse if the trail is cold and far
+//   PROWL    — no tracks anywhere: the old coarse instinct, as a floor
+//   WANDER   — nobody left to hunt
+//
 // All tuning here is first-guess and has NOT run in the editor. The named constants are the dials.
 using FishNet;
 using Metoh.Sim;
@@ -49,6 +66,43 @@ namespace Metoh.Game
         private const float ProwlJitter = 30f;      // the prowl target is this coarse — an area, not a pixel
         private const float ProwlRepick = 5f;       // re-aim only this often, so it lags your real movement
         private const float ProwlSprintBeyond = 55f; // sprint to close from far, walk in so perception can catch you
+
+        // --- tracking: following snow prints (first-guess) -------------------------
+        /// <summary>Ignore prints older than this. Below the server's 35 s print lifetime on purpose —
+        /// a track at the edge of expiry is a lead to nowhere, and chasing it looks like confusion.</summary>
+        private const float TrackMaxAge = 22f;
+        /// <summary>Re-choose which print to follow only this often, so it commits to a trail
+        /// instead of twitching between two searchers' tracks every frame.</summary>
+        private const float TrackRepick = 2.5f;
+        /// <summary>Sprint toward a track farther than this; walk it in so perception can catch up.</summary>
+        private const float TrackSprintBeyond = 30f;
+        /// <summary>Consider a print reached at this radius — then immediately look for a fresher one.</summary>
+        private const float TrackReach = 4f;
+
+        // --- crevasse fast-travel (first-guess) ------------------------------------
+        /// <summary>Only bother travelling if it saves at least this much ground.</summary>
+        private const float TravelWorthwhile = 120f;
+        /// <summary>Don't consider travelling more often than this (the server also has a cooldown).</summary>
+        private const float TravelThinkInterval = 6f;
+
+        // --- reactions (first-guess) -----------------------------------------------
+        /// <summary>Seconds to retreat after being dazzled — long enough that the searcher's beam wins
+        /// them real distance, short enough that it comes back.</summary>
+        private const float DazzleBreakSeconds = 3.5f;
+        /// <summary>How long to haul a grabbed searcher before dropping them.</summary>
+        private const float DragSeconds = 6f;
+        /// <summary>Stop dragging early once this far from the duffel — the point is made.</summary>
+        private const float DragClearOfDuffel = 70f;
+
+        // --- target preference (first-guess) ---------------------------------------
+        /// <summary>Score bonus for a searcher carrying proof — worth ~25 m of extra walk.</summary>
+        private const float CarrierBias = 25f;
+        /// <summary>Score bonus for a searcher currently stuck in a drift basin.</summary>
+        private const float BoggedBias = 15f;
+
+        /// <summary>Spend the roar on a lone target only inside this range, where the grab should land.
+        /// Comfortably under the ~25 m roar radius, so a single searcher at the fringe doesn't burn it.</summary>
+        private const float RoarCommitRange = 14f;
 
         // --- movement (first-guess) ------------------------------------------------
         private const float LoseRange = 85f;   // drop a quarry once it's this far (hysteresis vs re-acquire)
@@ -84,6 +138,15 @@ namespace Metoh.Game
         // Wander.
         private float _wanderUntil;
         private Vector3 _wanderGoal;
+
+        // Tracking / reactions.
+        private ClueMarker _track;      // the print we're currently walking to
+        private float _trackRepickAt;   // re-choose a print after this
+        private float _travelThinkAt;   // next time we're allowed to consider a crevasse hop
+        private float _breakOffUntil;   // retreating from a flashlight beam until this time
+        private Vector3 _breakOffDir;   // the direction we bolted, held so the retreat is a line not a jitter
+        private float _dragUntil;       // hauling a grabbed searcher until this time
+        private bool _wasDragging;      // edge-detect the grab so the haul timer starts once
 
         private void Awake()
         {
@@ -127,6 +190,54 @@ namespace Metoh.Game
                 _quarry = null; // memory expired or they broke well clear — back to prowling
             }
 
+            // DRAG — a grab landed and we're hauling someone. Take them AWAY from the duffel before
+            // letting go: a body dropped at camp is a two-second rescue, a body dropped in the dark
+            // costs the team a search. Outranks everything below because the victim is already caught.
+            bool dragging = IsDragging();
+            // Start the haul clock on the frame the grab lands, not on every frame after it — without
+            // the edge-detect the timer reads as already expired and the bot drops them instantly.
+            if (dragging && !_wasDragging) _dragUntil = Time.time + DragSeconds;
+            _wasDragging = dragging;
+
+            if (dragging)
+            {
+                if (Time.time >= _dragUntil || FarEnoughFromDuffel(pos))
+                {
+                    _self.ServerBotGrab(); // second grab = release, per TryGrab
+                }
+                else
+                {
+                    Vector3 away = pos - WorldBuilder.DuffelPosition();
+                    away.y = 0f;
+                    if (away.sqrMagnitude < 1f) away = transform.forward;
+                    DbgState = "DRAG";
+                    Vector3 dragGoal = pos + away.normalized * 40f;
+                    Repath(dragGoal);
+                    SteerAlongPath(pos, dragGoal, sprint: false); // dragging is a walk, not a sprint
+                    return;
+                }
+            }
+
+            // DAZZLED — a searcher is holding a beam on us. Roar and grab are locked server-side, so
+            // standing here is pure loss: it hands them film of a stationary Yeti. Break line of sight
+            // instead. This is what makes the flashlight feel like a weapon rather than a status icon.
+            if (_self.Dazzled.Value && Time.time >= _breakOffUntil - DazzleBreakSeconds)
+            {
+                _breakOffUntil = Time.time + DazzleBreakSeconds;
+                Vector3 from = seen != null ? seen.transform.position : _lastKnown;
+                Vector3 away = pos - from;
+                away.y = 0f;
+                _breakOffDir = away.sqrMagnitude > 1f ? away.normalized : -transform.forward;
+            }
+            if (Time.time < _breakOffUntil)
+            {
+                DbgState = "DAZZLED";
+                Vector3 goal = pos + _breakOffDir * 30f;
+                Repath(goal);
+                SteerAlongPath(pos, goal, sprint: true);
+                return;
+            }
+
             if (_quarry != null)
             {
                 // HUNT — toward the quarry if currently perceived, else toward where we last sensed it.
@@ -136,6 +247,10 @@ namespace Metoh.Game
                 float d = Mathf.Sqrt(Flat2(goal, pos));
                 DbgState = seen != null ? "HUNT" : "SEARCH";
                 SteerAlongPath(pos, goal, sprint: d > SprintBeyond);
+            }
+            else if (FollowTrack(pos))
+            {
+                // TRACK — handled inside FollowTrack (it steers and sets DbgState).
             }
             else
             {
@@ -178,15 +293,135 @@ namespace Metoh.Game
             }
         }
 
-        /// <summary>Current AI state, surfaced to the F3 overlay for debugging ("HUNT"/"SEARCH"/"WANDER").</summary>
+        /// <summary>
+        /// Current AI state, surfaced to the F3 overlay for debugging. One of
+        /// DRAG / DAZZLED / HUNT / SEARCH / TRACK / PROWL / WANDER — listed in the priority order the
+        /// Update loop resolves them, so the overlay reads as "why is it doing that".
+        /// </summary>
         public string DbgState { get; private set; } = "—";
 
         /// <summary>
-        /// DEV toggle (F3): true = the predator PROWLS toward you when it can't see you (the shipping
-        /// behavior). False = the ORIGINAL passive brain — it only wanders and engages solely when you
-        /// walk into its sight/hearing. Static so it applies to every bot and survives a reseed.
+        /// DEV toggle (F3): allow the omniscient fallback PROWL — walking at a searcher's true position
+        /// when there is no track to follow and nothing perceived.
+        ///
+        /// Turning it OFF is the honest-perception build: the bot then relies purely on sight, hearing
+        /// and snow prints, and a team that stays on the packed trails can genuinely lose it. That is
+        /// arguably the better game, and worth play-testing both ways — the reason it defaults ON is
+        /// that with no prowl at all, a group hiding motionless in camp is never found and the night
+        /// just runs out. Static so it applies to every bot and survives a reseed.
         /// </summary>
         public static bool AggressiveProwl = true;
+
+        // --- tracking --------------------------------------------------------------
+
+        /// <summary>
+        /// Follow the freshest usable snow print. Returns false if there is no track worth walking to,
+        /// which drops the caller through to the coarse prowl.
+        ///
+        /// This is the bot's honest answer to "where did they go" — the exact information the Yeti is
+        /// designed to have and nobody else can see. It commits to one print for TrackRepick seconds
+        /// rather than re-choosing every frame, because a predator that re-aims 60 times a second
+        /// between two searchers' trails reads as indecision, not menace.
+        /// </summary>
+        private bool FollowTrack(Vector3 pos)
+        {
+            // Re-choose on a timer, when the current track expires/despawns, or once we've reached it.
+            bool reached = _track != null && Flat2(_track.transform.position, pos) <= TrackReach * TrackReach;
+            if (_track == null || reached || Time.time >= _trackRepickAt || TrackAge(_track) > TrackMaxAge)
+            {
+                _track = FreshestPrint(pos);
+                _trackRepickAt = Time.time + TrackRepick;
+            }
+            if (_track == null) return false;
+
+            Vector3 goal = _track.transform.position;
+            float d = Mathf.Sqrt(Flat2(goal, pos));
+
+            // If the trail is cold AND a long walk away, take the crevasse network instead of jogging
+            // the width of the map. This is the Yeti's own fast-travel, through the same validated
+            // authority a human uses — cooldown and "must be standing in a mouth" still apply, so it
+            // can only do this when it has genuinely earned the reposition.
+            if (d > TravelWorthwhile && Time.time >= _travelThinkAt)
+            {
+                _travelThinkAt = Time.time + TravelThinkInterval;
+                TryCrevasseTravel(pos, goal, d);
+            }
+
+            DbgState = "TRACK";
+            Repath(goal);
+            SteerAlongPath(pos, goal, sprint: d > TrackSprintBeyond);
+            return true;
+        }
+
+        /// <summary>Freshest snow print within TrackMaxAge, tie-broken toward the closer one.</summary>
+        private ClueMarker FreshestPrint(Vector3 pos)
+        {
+            ClueMarker best = null;
+            float bestScore = float.MinValue;
+            foreach (var c in ClueMarker.All)
+            {
+                if (c == null || c.CType.Value != ClueMarker.TypeSnowPrint) continue;
+                float age = TrackAge(c);
+                if (age > TrackMaxAge) continue;
+                // Freshness leads, distance is a real tie-breaker rather than a rounding error. The
+                // weights are in comparable units on purpose: 10 per second of age against 0.15 per
+                // metre means ~67 m of extra walk is worth one second of freshness. Weight distance
+                // much lower and the bot will cross the whole 800 m map for a print a second newer,
+                // abandoning a trail under its feet.
+                float score = -age * 10f - Mathf.Sqrt(Flat2(c.transform.position, pos)) * 0.15f;
+                if (score > bestScore) { bestScore = score; best = c; }
+            }
+            return best;
+        }
+
+        private static float TrackAge(ClueMarker c) => Time.time - c.Born;
+
+        /// <summary>
+        /// Hop to whichever crevasse leaves us closest to the trail, if that actually beats walking.
+        /// Requires standing in a mouth (the server enforces it), so in practice this fires when the
+        /// bot happens to pass one while the trail is far — which is exactly when a human would use it.
+        /// </summary>
+        private void TryCrevasseTravel(Vector3 pos, Vector3 goal, float walkDist)
+        {
+            if (_self.CaveReadyIn > 0f) return;
+            var world = WorldBuilder.World;
+            if (world == null || world.Caves == null) return;
+
+            int here = Caves.NearestCaveIndex(world.Caves, pos.x, pos.z);
+            if (here < 0) return; // not standing in a mouth — nothing to travel from
+
+            int best = -1;
+            float bestD = walkDist - TravelWorthwhile * 0.5f; // must beat walking by a clear margin
+            for (int i = 0; i < world.Caves.Count; i++)
+            {
+                if (i == here) continue;
+                var c = world.Caves[i];
+                float dx = (float)c.X - goal.x, dz = (float)c.Z - goal.z;
+                float d = Mathf.Sqrt(dx * dx + dz * dz);
+                if (d < bestD) { bestD = d; best = i; }
+            }
+            if (best >= 0) _self.ServerBotCaveTravel(best);
+        }
+
+        // --- reactions -------------------------------------------------------------
+
+        /// <summary>Are we currently hauling someone? (The victim carries our object id.)</summary>
+        private bool IsDragging()
+        {
+            foreach (var p in HPPlayer.All)
+            {
+                if (p == null || p.IsYeti) continue;
+                if (p.GrabberObjectId.Value == _self.ObjectId) return true;
+            }
+            return false;
+        }
+
+        private bool FarEnoughFromDuffel(Vector3 pos)
+        {
+            Vector3 d = pos - WorldBuilder.DuffelPosition();
+            d.y = 0f;
+            return d.sqrMagnitude > DragClearOfDuffel * DragClearOfDuffel;
+        }
 
         // --- perception ------------------------------------------------------------
 
@@ -241,8 +476,23 @@ namespace Metoh.Game
                 }
 
                 if (!sensed) continue;
-                // Prefer the closest — score is just inverse distance.
+
+                // Closest is the baseline, then two predator instincts on top.
                 float score = 1000f - dist;
+
+                // Go for the one holding proof. Carried evidence is worth nothing until it reaches the
+                // duffel and it SPILLS on a grab, so taking the carrier is worth more than taking a
+                // searcher with empty hands — this is the difference between the bot fighting the team
+                // and the bot fighting their win condition.
+                if (p.CarriedTotal > 0) score += CarrierBias;
+
+                // Prefer prey that is already wading. Deep snow doesn't touch the Yeti, so a searcher
+                // caught in a drift basin is the cheapest kill on the field, and cutting them off there
+                // is the exact behaviour the mechanic exists to create.
+                var world = WorldBuilder.World;
+                if (world != null && Movement.DeepSnowDepth(world, p.transform.position.x, p.transform.position.z) > 0.35)
+                    score += BoggedBias;
+
                 if (score > bestScore) { bestScore = score; best = p; }
             }
             return best;
@@ -294,15 +544,24 @@ namespace Metoh.Game
             }
 
             if (_self.RoarReadyIn.Value > 0f) return;
+
+            // Roar is on a long cooldown, so spending it the instant one searcher clips the radius is
+            // usually a waste — the freeze is an AoE and the follow-up grab can only take one person
+            // at a time. Hold it unless the shot is actually worth taking: either it catches two or
+            // more, or the single target is close enough that the grab is a near-certainty.
+            int caught = 0;
+            float nearest2 = float.MaxValue;
             foreach (var p in HPPlayer.All)
             {
                 if (p == null || p.IsYeti || p.Status.Value != HPPlayer.StatusActive) continue;
-                if (Flat2(p.transform.position, transform.position) <= GameManager.RoarRadius * GameManager.RoarRadius)
-                {
-                    _self.ServerBotRoar();
-                    return;
-                }
+                float d2 = Flat2(p.transform.position, transform.position);
+                if (d2 > GameManager.RoarRadius * GameManager.RoarRadius) continue;
+                caught++;
+                if (d2 < nearest2) nearest2 = d2;
             }
+            if (caught == 0) return;
+            bool worthIt = caught >= 2 || nearest2 <= RoarCommitRange * RoarCommitRange;
+            if (worthIt) _self.ServerBotRoar();
         }
 
         // --- navigation ------------------------------------------------------------

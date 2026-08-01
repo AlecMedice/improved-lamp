@@ -62,19 +62,32 @@ namespace Metoh.Game
         /// <summary>Time.time this clue appeared here; the map only shows clues younger than the clue window.</summary>
         public float Born { get; private set; }
 
-        public override void OnStopClient()
+        // `All` and `Born` register on the NETWORK callbacks, not the client ones, because the CPU
+        // Yeti reads this registry to track snow prints and it thinks on the server. On a listen host
+        // the client callback happens to run too, so this looks equivalent — it is not, and relying on
+        // that coincidence is how the bot would go blind the moment anything is server-only.
+        // Castables/Hairs stay client-side: they feed searcher prompts and the map, nothing else.
+        public override void OnStopNetwork()
         {
             All.Remove(this);
+        }
+
+        public override void OnStartNetwork()
+        {
+            All.Add(this);
+            Born = Time.time;
+        }
+
+        public override void OnStopClient()
+        {
             Castables.Remove(this);
             Hairs.Remove(this);
         }
 
         public override void OnStartClient()
         {
-            All.Add(this);
             if (Castable.Value) Castables.Add(this);
             if (CType.Value == TypeHair) Hairs.Add(this);
-            Born = Time.time;
 
             var root = new GameObject("ClueVisual").transform;
             root.SetParent(transform, false);

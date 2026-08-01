@@ -1186,6 +1186,27 @@ namespace Metoh.Game
         /// <summary>Bot ability triggers — thin pass-throughs to the same authority a human hits.</summary>
         public void ServerBotRoar() { if (_isBot) GameManager.Instance?.TryRoar(this); }
         public void ServerBotGrab() { if (_isBot) GameManager.Instance?.TryGrab(this); }
+        public void ServerBotCaveTravel(int index) { if (_isBot) GameManager.Instance?.TryCaveTravel(this, index); }
+
+        /// <summary>
+        /// Server-side teleport for a BOT, used by crevasse fast-travel.
+        ///
+        /// <see cref="TargetTeleport"/> cannot serve here: it is a TargetRpc that runs on the OWNER's
+        /// client and touches MapView/Cursor, and a bot has no owning connection — so cave travel
+        /// would silently do nothing for the CPU Yeti. This is the same state change, server-side,
+        /// minus the client-only bits. Stamina carries over rather than refilling, so travelling is
+        /// not a free rest (ServerBotPlace would reset it — that one is for match placement).
+        /// </summary>
+        public void ServerBotTeleport(Vector3 pos, float yawRad)
+        {
+            if (!_isBot) return;
+            float stamina = _sim != null ? (float)_sim.Stamina : Stamina.Value;
+            _sim = NewSimState(pos, IsYeti);
+            _sim.Stamina = stamina;
+            _yaw = yawRad;
+            transform.position = new Vector3(pos.x, (float)_sim.FeetY, pos.z);
+            ApplyBodyYaw();
+        }
 
         // Owner HUD accessors (local sim is fresher than the SyncVars for your own bars).
         public bool OwnGrounded => _sim == null || _sim.Grounded;

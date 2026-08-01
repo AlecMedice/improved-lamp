@@ -270,6 +270,28 @@ distance-clairvoyance: **sight** is line-of-sight-gated and far longer against a
 searcher; then it **remembers** a last-known position and searches it before giving up. Tuning
 constants are all at the top of `YetiBot.cs`.
 
+**How it finds you is snow prints, not clairvoyance.** The first version closed the gap by walking at
+the nearest searcher's *true* position — omniscience with jitter on top. It now follows the
+`TypeSnowPrint` clues searchers leave off-trail, which only the Yeti can see, so its knowledge is the
+knowledge the fiction grants it. That makes the deep-snow mechanic cut both ways: stay on the packed
+trails or in camp and the bot has genuinely nothing to follow. States resolve in priority order —
+**DRAG** (haul a grabbed searcher away from the duffel before dropping them) → **DAZZLED** (break off
+and leave the beam, since roar/grab are locked anyway) → **HUNT** → **SEARCH** → **TRACK** (the
+freshest print, taking a crevasse if the trail is cold and far) → **PROWL** → **WANDER**. Target
+choice prefers whoever is carrying proof, then whoever is bogged in a drift. The roar is held unless
+it catches two or more, or the lone target is close enough that the grab should land.
+
+The omniscient prowl survives as the **last-resort floor** behind the F3 `[P]` toggle, and it is worth
+play-testing with it OFF: pure sight/hearing/tracks is arguably the better game, but with no prowl at
+all a team hiding motionless in camp is never found and the night just runs out.
+
+Two plumbing notes that are easy to trip over. `ClueMarker` registers in `All` on the **network**
+callbacks, not the client ones, because the bot reads that registry server-side — on a listen host the
+client callback runs too, which makes the difference invisible until it isn't. And crevasse
+fast-travel needed a bot path: `TargetTeleport` is a TargetRpc to an owning client, so
+`TryCaveTravel` now branches to `ServerBotTeleport` for a bot. Same guards, same authority, only the
+delivery differs.
+
 **Roles are the normal deal.** The bot carries `WantsYeti = true` and the lone human `= false`, so
 `DoStartMatch` hands the monster to the bot with no special-casing. A bot has no `Owner`, so it can't
 receive the `TargetTeleport` RPC — it's placed server-side by `ServerBotPlace`, which also spins up
@@ -289,8 +311,12 @@ never to walking through solid geometry.
 >   even in co-op (clients bake a mesh only the host uses — a perf item to gate later).
 > - **Does the bot actually move?** The owner-less-NetworkTransform-server-drive path is reasoned from
 >   source, not observed.
-> - **All AI tuning is first-guess** — sense ranges, hearing, sprint/grab distances, wander. Expect to
->   sit in `YetiBot.cs` and tune once it's playable.
+> - **All AI tuning is first-guess** — sense ranges, hearing, sprint/grab distances, wander, and the
+>   whole tracking layer (print age window, freshness-vs-distance weighting, drag time, dazzle
+>   break-off). Expect to sit in `YetiBot.cs` and tune once it's playable.
+> - **Does print-tracking read as tracking?** The bot walking your trail is the intended feel, but
+>   whether it looks like a predator following spoor or like a magnet is a play-test question, and
+>   the freshness/distance weights are where that gets decided.
 > - **Play-as-Yeti is stubbed** (greyed on the menu) — it needs CPU *searchers*, the larger job
 >   (routing + filming a five-strong team).
 
