@@ -1135,7 +1135,22 @@ namespace Metoh.Game
             // The brain is a plain host-side component; it needs no networking of its own because it
             // only ever calls this player's public server methods. Added dynamically so the shared
             // player prefab stays exactly what a human uses.
-            if (IsYeti && GetComponent<YetiBot>() == null) gameObject.AddComponent<YetiBot>();
+            //
+            // Which brain depends on the role, so this must run AFTER Role is dealt — and it is
+            // re-entrant on purpose: a bot that gets re-placed between nights comes back through here,
+            // and swapping roles between matches has to swap brains rather than stack them.
+            if (IsYeti)
+            {
+                var searcherBrain = GetComponent<SearcherBot>();
+                if (searcherBrain != null) Destroy(searcherBrain);
+                if (GetComponent<YetiBot>() == null) gameObject.AddComponent<YetiBot>();
+            }
+            else
+            {
+                var yetiBrain = GetComponent<YetiBot>();
+                if (yetiBrain != null) Destroy(yetiBrain);
+                if (GetComponent<SearcherBot>() == null) gameObject.AddComponent<SearcherBot>();
+            }
         }
 
         /// <summary>
@@ -1156,9 +1171,15 @@ namespace Metoh.Game
             _lastStep = Movement.StepPlayer(_sim, input, _world, mods);
             transform.position = new Vector3((float)_sim.X, (float)_sim.FeetY, (float)_sim.Z);
             ApplyBodyYaw();
-            // Keep the replicated stamina bar honest (a human streams it via ServerVitals; the bot has
-            // no such path, so write it here). Battery is irrelevant — the bot never lights a torch.
+            // Keep the replicated vitals honest — a human streams them via ServerVitals, and a bot has
+            // no such path, so write them here.
+            //
+            // Battery used to be skipped on the grounds that "the bot never lights a torch". That was
+            // true while the only bot was the Yeti; CPU SEARCHERS do light torches, and a stale
+            // Battery makes them invisible to Sam's spare-battery scan (which skips anyone at >= 99%)
+            // and to the HUD. Cheap to write, and wrong to leave.
             if (!Mathf.Approximately(Stamina.Value, (float)_sim.Stamina)) Stamina.Value = (float)_sim.Stamina;
+            if (!Mathf.Approximately(Battery.Value, (float)_sim.Battery)) Battery.Value = (float)_sim.Battery;
 
             // DEV diagnostic (throttled): pinpoints where movement breaks if the bot ever stalls.
             //  simMoved 0     -> StepPlayer isn't moving it (input.W false, speedMul 0, world issue)
@@ -1187,6 +1208,49 @@ namespace Metoh.Game
         public void ServerBotRoar() { if (_isBot) GameManager.Instance?.TryRoar(this); }
         public void ServerBotGrab() { if (_isBot) GameManager.Instance?.TryGrab(this); }
         public void ServerBotCaveTravel(int index) { if (_isBot) GameManager.Instance?.TryCaveTravel(this, index); }
+
+        // --- searcher bot entry points ---------------------------------------------
+        // Same shape and the same reason as the Yeti's: every searcher action a human takes travels
+        // through a [ServerRpc], which needs an owning connection a bot does not have. These land in
+        // the identical GameManager authority, so a CPU searcher is bound by the same range, cone,
+        // line-of-sight, channel-duration and cooldown rules a person is. There is deliberately no
+        // "AI filming" or "AI casting" that could drift from the real thing.
+
+        public void ServerBotSetRecording(bool recording) { if (_isBot) GameManager.Instance?.SetRecording(this, recording); }
+        public void ServerBotSetReviveTarget(int targetObjectId) { if (_isBot) GameManager.Instance?.SetReviveTarget(this, targetObjectId); }
+        public void ServerBotSetCollectTarget(int evidenceObjectId) { if (_isBot) GameManager.Instance?.SetCollectTarget(this, evidenceObjectId); }
+        public void ServerBotDeposit() { if (_isBot) GameManager.Instance?.TryDeposit(this); }
+        public void ServerBotRecoverPile(int pileObjectId) { if (_isBot) GameManager.Instance?.TryRecoverPile(this, pileObjectId); }
+        public void ServerBotFlash() { if (_isBot) GameManager.Instance?.TryFlash(this); }
+        public void ServerBotPing(float x, float z) { if (_isBot) GameManager.Instance?.TryPing(this, x, z); }
+        public void ServerBotMark() { if (_isBot) GameManager.Instance?.TryMark(this); }
+
+        /// <summary>
+        /// A bot's torch. Writes the sim (so <see cref="Movement.StepPlayer"/> drains its battery on
+        /// the same schedule a human's does) and the replicated flag together, because that flag is
+        /// not cosmetic: <c>YetiBot</c> sees a lit torch from more than twice as far as an unlit
+        /// searcher. A bot that lights up is genuinely giving away its position, which is the whole
+        /// trade the flashlight exists to create.
+        /// </summary>
+        public void ServerBotSetFlashlight(bool on)
+        {
+            if (!_isBot || _sim == null) return;
+            bool lit = on && _sim.Battery > 0d;
+            _sim.FlashlightOn = lit;
+            if (FlashOn.Value != lit) FlashOn.Value = lit;
+        }
+
+        /// <summary>Bot crouch — silent movement, and no snow prints (see GameManager.DropSnowPrints).</summary>
+        public void ServerBotSetCrouched(bool crouched)
+        {
+            if (!_isBot) return;
+            if (Crouched.Value != crouched) Crouched.Value = crouched;
+        }
+
+        /// <summary>Battery level for the brain's own decisions (the sim is fresher than the SyncVar).</summary>
+        public float BotBattery => _sim != null ? (float)_sim.Battery : 0f;
+        /// <summary>Stamina level for the brain's own decisions.</summary>
+        public float BotStamina => _sim != null ? (float)_sim.Stamina : 0f;
 
         /// <summary>
         /// Server-side teleport for a BOT, used by crevasse fast-travel.

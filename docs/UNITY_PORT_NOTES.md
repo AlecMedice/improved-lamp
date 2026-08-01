@@ -317,8 +317,53 @@ never to walking through solid geometry.
 > - **Does print-tracking read as tracking?** The bot walking your trail is the intended feel, but
 >   whether it looks like a predator following spoor or like a magnet is a play-test question, and
 >   the freshness/distance weights are where that gets decided.
-> - **Play-as-Yeti is stubbed** (greyed on the menu) — it needs CPU *searchers*, the larger job
->   (routing + filming a five-strong team).
+> - **Play-as-Yeti is now live but early** — see §6d. The CPU searcher team exists as a working
+>   shell; whether it is any fun to hunt is completely unmeasured.
+
+## 6d. The CPU searchers (`SearcherBot`) — a shell, deliberately
+
+Title → SINGLE PLAYER → **PLAY AS YETI** spawns four CPU searchers and hands the human the monster.
+Construction is identical to the Yeti bot — server-owned `HPPlayer`s with no connection, flagged
+`WantsYeti = false` so the normal `DoStartMatch` deal gives them searcher roles and `DealSpecialties`
+gives each a distinct character with real specialty numbers. No special-casing: to the match they are
+just searchers who never send input. `ServerBecomeBot` picks the brain by role and is re-entrant, so a
+role swap between matches swaps brains instead of stacking them.
+
+**Every searcher action needed a bot entry point**, for the same reason the Yeti's did: a human's
+film / revive / collect / deposit / recover / flash / ping / mark all travel through `[ServerRpc]`,
+which needs an owning connection. `ServerBot*` pass-throughs land in the identical `GameManager`
+authority, so a CPU searcher is bound by the same range, cone, LOS, channel duration and cooldown
+rules a person is.
+
+**The ladder** (highest priority first, one rung owns each frame, and the F3 overlay prints which):
+FLEE → REVIVE → BANK → FILM → COLLECT → INVESTIGATE → EXPLORE.
+
+**Why a searcher is harder to write than the Yeti.** The Yeti's brain is a pursuit problem: one
+target, close the distance. A searcher's is a resource problem with a fear layer, and the pieces pull
+against each other — the torch is its only real sensor *and* a flare the Yeti sees from 80 m; carried
+proof is a debt that grows the longer it is held; filming means pointing yourself at the thing hunting
+you and standing still; and nobody wins alone, but clumping lets one roar take the whole team. A bot
+that only optimises evidence walks into the Yeti's arms, and one that only avoids it never wins.
+
+**What is genuinely shallow, in priority order for whoever fills it in:**
+- **EXPLORE is random roam.** The single biggest gap. A real search would divide the map between
+  teammates, sweep outward from camp, and prefer ground nobody has covered recently. Random roam is
+  why a bot team reads as five people wandering rather than as a search party.
+- **No team coordination at all.** They do not spread out, call contact, converge on a downed
+  teammate deliberately, or stage a rescue. Wren's trail marks and the stakeout ping exist and go
+  unused (`ServerBotMark` / `ServerBotPing` are wired and never called).
+- **FLEE always lights the torch and runs.** The actual stealth play — kill the light and break line
+  of sight when it has *not yet* been seen — needs a "has it noticed me" estimate the shell lacks.
+- **REVIVE ignores the incap timer and the Yeti standing over the body**, so it will happily walk into
+  a guarded down and donate a second victim.
+- **Specialties are dealt but never played.** Eli's flash, Sam's battery gift and Wren's marking are
+  all reachable (`ServerBotFlash`, `ServerBotSetReviveTarget`, …) and none are used, so every bot
+  currently plays the same generic searcher regardless of who it was dealt.
+
+> Bug this surfaced, worth remembering: `ServerBotDrive` deliberately skipped writing `Battery` on the
+> grounds that "the bot never lights a torch" — true while the only bot was the Yeti. CPU searchers do,
+> and a stale battery makes them invisible to Sam's spare-battery scan, which skips anyone at ≥ 99%.
+> When a second kind of bot appears, re-read the assumptions the first one baked in.
 
 ## 6c. The lookout ladder + binoculars (no parity change)
 

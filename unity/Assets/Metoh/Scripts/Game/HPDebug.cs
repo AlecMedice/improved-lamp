@@ -179,6 +179,7 @@ namespace Metoh.Game
             // "none", the bot never spawned or never got the role; if it shows a big distance, it's
             // just far off at its cave, wandering, and you have to go find it.
             lines.AppendLine(YetiLine());
+            lines.AppendLine(SearcherBotLine());
 
             // LOOK — chasing the "axis sticks while walking" report. Read it as three comparisons:
             //   delta stops changing while you move the mouse   -> the input is losing the axis
@@ -242,6 +243,25 @@ namespace Metoh.Game
             string[] names = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
             string dir = names[Mathf.RoundToInt(ang / 45f) % 8];
             return $"yeti: {tag}  {dist:0} m  {dir}{ai}   status {bf.Status.Value}";
+        }
+
+        /// <summary>
+        /// One line per CPU searcher: who they are and what their brain is doing. With five of them
+        /// running the ladder at once, "why is nobody filming me" is otherwise unanswerable without
+        /// attaching a debugger.
+        /// </summary>
+        private static string SearcherBotLine()
+        {
+            var parts = new System.Collections.Generic.List<string>();
+            foreach (var p in HPPlayer.All)
+            {
+                if (p == null || p.IsYeti || !p.IsBot) continue;
+                var brain = p.GetComponent<SearcherBot>();
+                string who = p.CharacterName.Value != "" ? p.CharacterName.Value.Split(' ')[0] : "bot";
+                string carried = p.CarriedTotal > 0 ? $"+{p.CarriedTotal}" : "";
+                parts.Add($"{who}:{(brain != null ? brain.DbgState : "NO-BRAIN")}{carried}");
+            }
+            return parts.Count == 0 ? "cpu searchers: none" : "cpu searchers: " + string.Join("  ", parts);
         }
 
         private static string TickRateLabel()

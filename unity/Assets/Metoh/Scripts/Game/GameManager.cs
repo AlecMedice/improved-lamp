@@ -284,7 +284,15 @@ namespace Metoh.Game
         /// survive the scene load between the menu click and the server coming up.
         /// </summary>
         public static bool SoloPending;
-        private bool _soloArmed; // host-side: waiting for the human + bot to finish spawning
+
+        /// <summary>
+        /// The other solo mode: the human plays the Yeti and the CPU fields the expedition. Same
+        /// consume-once contract as <see cref="SoloPending"/>; exactly one of the two may be set.
+        /// </summary>
+        public static bool SoloAsYetiPending;
+
+        private bool _soloArmed;   // host-side: waiting for the whole cast to finish spawning
+        private int _soloExpected; // how many HPPlayers to wait for before auto-starting
         private float _displayTod; // client-side smoothed clock for the sky
         private int _lastVideos, _lastNightHeard;   // client-side audio edge detection
         private byte _lastWinnerHeard = WinnerNone;
@@ -348,16 +356,26 @@ namespace Metoh.Game
             Vector3 pos = CampSpot();
             NetworkObject nob = Instantiate(_playerPrefab, pos, Quaternion.Euler(0f, 180f, 0f));
             var hp = nob.GetComponent<HPPlayer>();
-            hp.PlayerName.Value = SoloPending ? "You" : "Player " + (conn.ClientId + 1);
-            if (SoloPending) hp.WantsYeti.Value = false; // solo: the human is always a searcher
+            bool solo = SoloPending || SoloAsYetiPending;
+            hp.PlayerName.Value = solo ? "You" : "Player " + (conn.ClientId + 1);
+            // Solo: the human takes whichever side they picked and the CPU fills the other.
+            if (solo) hp.WantsYeti.Value = SoloAsYetiPending;
             InstanceFinder.ServerManager.Spawn(nob, conn);
 
-            // Single-player: also spawn a CPU Yeti and arm the auto-start. Consumed once, so a
-            // later multiplayer host on the same process doesn't inherit it.
+            // Single-player: spawn the CPU side and arm the auto-start. Both flags are consumed once,
+            // so a later multiplayer host on the same process doesn't inherit them.
             if (SoloPending)
             {
                 SoloPending = false;
                 SpawnYetiBot();
+                _soloExpected = 2; // the human + the CPU Yeti
+                _soloArmed = true;
+            }
+            else if (SoloAsYetiPending)
+            {
+                SoloAsYetiPending = false;
+                SpawnSearcherBots(SoloSearcherBots);
+                _soloExpected = 1 + SoloSearcherBots;
                 _soloArmed = true;
             }
         }
@@ -379,6 +397,31 @@ namespace Metoh.Game
             Debug.Log("[solo] CPU Yeti spawned (server-owned); waiting to auto-start the match");
         }
 
+        /// <summary>How many CPU searchers the play-as-Yeti mode fields (a full team is five).</summary>
+        public const int SoloSearcherBots = 4;
+
+        /// <summary>
+        /// The CPU expedition, for PLAY AS YETI. Same construction as the Yeti bot — server-owned
+        /// HPPlayers with no connection — but flagged as NOT wanting the monster, so the normal role
+        /// deal in DoStartMatch hands them searcher roles and DealSpecialties gives each a distinct
+        /// character with real specialty numbers. No special-casing anywhere: from the match's point
+        /// of view they are simply five searchers who never send input.
+        /// </summary>
+        private void SpawnSearcherBots(int count)
+        {
+            if (_playerPrefab == null) { Debug.LogError("[solo] no player prefab — searcher bots cannot spawn"); return; }
+            for (int i = 0; i < count; i++)
+            {
+                NetworkObject nob = Instantiate(_playerPrefab, CampSpot(), Quaternion.identity);
+                var hp = nob.GetComponent<HPPlayer>();
+                hp.PlayerName.Value = "Searcher " + (i + 1); // replaced by the dealt character name
+                hp.WantsYeti.Value = false;
+                hp.ServerMarkBot();
+                InstanceFinder.ServerManager.Spawn(nob, null);
+            }
+            Debug.Log($"[solo] {count} CPU searchers spawned (server-owned)");
+        }
+
         /// <summary>
         /// Waits for the human + bot spawn callbacks to land in HPPlayer.All, then starts the match.
         /// Polled from OnTick because spawn-time OnStartClient isn't guaranteed synchronous, so we
@@ -388,9 +431,11 @@ namespace Metoh.Game
         {
             if (MatchPhase.Value != PhaseLobby) { _soloArmed = false; return; }
             var players = LivePlayers();
-            if (players.Count < 2) return; // human + bot both present yet?
+            // Wait for the WHOLE cast, not just two: play-as-Yeti spawns five objects, and starting
+            // early would deal roles to a half-arrived team and leave the stragglers specialty-less.
+            if (players.Count < _soloExpected) return;
             _soloArmed = false;
-            Debug.Log($"[solo] {players.Count} players present — auto-starting the match");
+            Debug.Log($"[solo] {players.Count}/{_soloExpected} players present — auto-starting the match");
             DoStartMatch();
         }
 
@@ -659,6 +704,17 @@ namespace Metoh.Game
                 }
             }
             RpcRoared(bf.transform.position);
+
+            // CPU searchers get the roar as a server-side event rather than through the RPC: the
+            // broadcast is a CLIENT concern (it plays positional audio), and a bot has no client to
+            // receive it. Without this a bot team would be deaf to the single loudest thing in the
+            // game — including the ones a roar just froze, who need to know where it came from the
+            // moment they thaw.
+            foreach (var h in LivePlayers())
+            {
+                if (h.IsYeti || !h.IsBot) continue;
+                h.GetComponent<SearcherBot>()?.OnHeardRoar(bf.transform.position);
+            }
         }
 
         public void TryGrab(HPPlayer bf)

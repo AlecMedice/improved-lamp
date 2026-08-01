@@ -342,13 +342,13 @@ namespace Metoh.Game
                 "find proof and get it to the duffel before the CPU Yeti takes you", _hintStyle);
             y += 34f;
 
-            // Play-as-Yeti needs bot SEARCHERS, which don't exist yet — greyed with a note so the
-            // intent reads, rather than a live button that does nothing.
-            GUI.enabled = false;
-            MenuButton(cx, ref y, "PLAY AS YETI");
-            GUI.enabled = true;
+            if (MenuButton(cx, ref y, "PLAY AS YETI"))
+            {
+                GameManager.SoloAsYetiPending = true;
+                StartHost();
+            }
             GUI.Label(new Rect(cx - 220f, y, 440f, 20f),
-                "coming soon — needs CPU searchers to hunt", _hintStyle);
+                $"hunt {GameManager.SoloSearcherBots} CPU searchers — early, and they are not clever yet", _hintStyle);
             y += 34f;
 
             if (MenuButton(cx, ref y, "BACK")) _page = Page.Root;
