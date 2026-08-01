@@ -1,6 +1,16 @@
 # Metoh migration — Bigfoot/PNW → Yeti/Himalayas
 
-**Audience: this plan is written as explicit instructions for the implementing model (Opus 5). Follow it literally. Where it says "run Gate X", run it and do not proceed on red.**
+> ## ▶ DONE — read the [Build record](#build-record--what-actually-shipped) at the bottom first.
+>
+> **This plan has been executed** (branch `yeti_port`, 14 commits, Aug 2026). It is kept as the
+> record of intent, **not** as instructions — several steps in it are now known to be wrong (the
+> snowline threshold, the server-enforcement claim, the live-project path, an `IceCrack` call site,
+> the Gate C command). Every one is corrected in the build record. Do not follow this literally
+> any more; read what actually shipped.
+>
+> Still open: **nothing has been play-tested.** Verification items 4 and 5 need the editor.
+
+**Original audience note:** this plan was written as explicit instructions for the implementing model (Opus 5). Follow it literally. Where it says "run Gate X", run it and do not proceed on red.
 
 ## Context
 
@@ -268,3 +278,151 @@ Gates A, B (new vitest case), C (regen golden + mirrored test).
 4. Unity solo (owner play-test): snow world with legible packed trails, prayer flags/basecamp/crevasses, "DEEP SNOW" pill + slow off-trail, ice-crack + tarn-groan audio, title "METOH", `Metoh.exe`.
 5. Unity two-instance: snow prints appear behind the searcher, visible only in the Yeti instance (+ glow under `V`); Yeti unaffected by deep snow; grab/dazzle/film/revive intact.
 6. New vitest deep-snow case + `DeepSnowTests` in `Program.cs` both green.
+
+---
+
+# Build record — what actually shipped
+
+*Written after execution. Everything above is the PLAN as amended before work started; this section
+is the outcome, including the places the plan turned out to be wrong. Branch `yeti_port`, 14 commits.
+**Nothing below has been play-tested** — every gate here is a compiler or a test, never an eye.*
+
+```
+43fe8a7 Realism pass: give every surface a material instead of a colour
+d94237f Add the CPU searcher shell, and turn PLAY AS YETI on
+9c12be7 Give the CPU Yeti tracking, reactions, and a reason to hold its roar
+1525af4 Finish the copy pass: the title cards still said Hollow Pines
+11df097 Add a parity CI job so the C# sim can't drift unnoticed
+60e7175 Rewrite the docs for Metoh, and retire the Bigfoot depth plan
+3d64ffa Snow prints: searchers leave tracks only the Yeti can read
+a68043c Deep snow: drifts slow searchers, the Yeti crosses them
+d8cfc9c Re-theme the audio: ice, not wood and water
+38df898 Re-theme the world: a Himalayan snowfield, not a forest
+b9bdee6 Rebrand to Metoh: namespaces, directories, room, scene, packaging
+893d375 Rename the creature: Bigfoot becomes Yeti
+238e801 Add the Metoh migration plan, with the corrections it needed
+25978cd Fix HPAudio pool destruction on world rebuild + BigfootBot ctor crash
+```
+
+Commit 5 was split (5a sim + parity, 5b the feature) so the parity-locked change bisects on its own.
+Commit 7 was taken, not skipped.
+
+## Where the plan was wrong
+
+Recorded because these are failure *shapes* worth recognising again, not just fixes.
+
+1. **The snowline threshold would have done nothing.** The plan said "above ~60% of `HillHeight`".
+   `HillHeight` is the noise **amplitude** (14), not a reachable height — the shipping seed's terrain
+   spans about −10.2 to +7.8, so that cut sits above the highest ground on the map and would have
+   snow-caked exactly zero trees. Replaced with a measured constant (3.0 ≈ the 85th percentile on a
+   400×400 sample grid). *Shape: a tuning value derived from a generator's parameter rather than from
+   its output.*
+2. **The golden fixture could not see deep snow.** Regenerating after the sim change produced a
+   **byte-identical file**, which reads as "nothing changed" and actually meant the fixture had no
+   probe capable of observing the new behaviour: the hunter trajectory starts at the origin, inside
+   the camp clearing, and 40 sprint steps carry it ~17 m, so it never leaves the exempt zone. Added
+   `deepSnowProbes` (full basin, feathered edge, scoured ridge, trail, tarn, camp) and
+   `driftTrajectory`. *Shape: a green test that never executed the code.* The CI job in Commit 7 now
+   regenerates and diffs the fixture for exactly this reason.
+3. **The slow is not server-enforced, on either build.** The plan claimed the web build validated it
+   "on both sides (client prediction + `applyMove` re-validation)". `applyMove` validates a move —
+   bounds, speed-gate token bucket, collision pushout, feet clamp — but never re-runs `stepPlayer`,
+   so the drift slow is applied entirely client-side, exactly as in Unity. A hacked client can be
+   "not slowed", never "faster than legitimate". Same trust level `lakeHunterFactor` has always had.
+4. **The live Unity project was not what the plan assumed.** It described `C:\Users\amedi\Mothman_port`
+   as the Bigfoot build and told the owner to delete `Assets/HollowPines/` inside it. That tree is
+   the **Mothman** build from the abandoned `mothman_port` branch. Re-sync now targets a **fresh**
+   `C:\Users\amedi\Metoh_port`, leaving the Mothman build intact.
+5. **`IceCrack` had one call site, not the two listed** — `ClueMarker.OnStartClient`, where the clue
+   drop actually makes its noise.
+6. **The Gate C `ts-node` invocation does not run on this machine.** `tsx` from `server/node_modules`
+   runs the generator unmodified.
+
+## Beyond the plan
+
+Four commits of work the migration did not cover.
+
+**Copy pass finished (1525af4).** The web title card was still `<h1>HOLLOW&nbsp;PINES</h1>` — the
+rebrand's sed missed it because of the `&nbsp;` entity, so the first screen any web player sees was
+the last one carrying the old name. Also: Unity taglines off "the pines", player-facing CAVE →
+CREVASSE throughout (the sim's `Caves` API and the keybind names deliberately untouched), duffel "by
+the RV" → "at basecamp", both win screens off "THE FOREST", map `LAKE` → `TARN`, and the definite
+articles the mechanical rename deferred.
+
+**Yeti AI (9c12be7).** It could already sense you honestly, but it could not *find* you honestly and
+did not react to anything you did. It now follows **snow prints** rather than walking at the nearest
+searcher's true position — the same information the fiction grants it, which also makes deep snow cut
+both ways: stay on packed trails or in camp and it has nothing to follow. The omniscient prowl
+survives only as a last-resort floor behind the F3 `[P]` toggle, and is worth play-testing **off**.
+Added DAZZLED (break off and leave the beam, since roar/grab are locked anyway), DRAG (haul a victim
+away from the duffel before dropping them), carrier-and-bogged target preference, and roar discipline
+(hold it unless it catches two, or the lone target is inside ~14 m). Crevasse fast-travel was a silent
+no-op for bots — `TargetTeleport` is a TargetRpc to an owning client — so `TryCaveTravel` now branches
+to a server-side path.
+
+**CPU searchers (d94237f).** A deliberate **shell**: perception, the priority ladder
+(FLEE → REVIVE → BANK → FILM → COLLECT → INVESTIGATE → EXPLORE), navigation and every server
+hand-off are real and wired; the judgement inside several rungs is shallow and marked TODO.
+`PLAY AS YETI` is live. Full state, and the honest list of what is missing, in
+`UNITY_PORT_NOTES.md` §6d.
+
+**Realism pass (43fe8a7).** Owner-directed change of art direction; supersedes the low-poly framing
+in `GAME_DESIGN.md` §8 for the Unity target. The cause of the "just polygons" look was **materials,
+not mesh density** — every surface was `URP/Lit`, flat colour, smoothness 0.05. Fixed with
+procedurally generated normal maps (`ProcTex.cs`, tileable noise, still no asset files), per-class
+PBR response, bounce-weighted Trilight ambient, soft shadows and split toning. The blocker was that
+no generated mesh carried **UVs or tangents**, without which a normal map cannot bind at all. Full
+write-up in `UNITY_PORT_NOTES.md` §5b — including the one win impossible from this repo: **SSAO is a
+URP Renderer Feature living on a `.asset` the repo does not track.** Owner step, and the largest
+remaining gain, because AO is what grounds an object instead of leaving it hovering over the snow.
+
+## Pre-existing bugs found along the way
+
+Each was found by touching something adjacent, and each had been quietly wrong for a while.
+
+- `SetTimeOfDay` re-asserted `LightShadows.Hard` **every frame**, so shadow quality could never be
+  configured from anywhere.
+- The world **leaked its entire material set on every reseed** (`new Material` allocates a native
+  object Unity does not collect). Survivable at a couple of dozen; not at ~200 after per-chunk
+  tinting. Now swept on rebuild.
+- `ServerBotDrive` skipped writing `Battery`, reasoning that "the bot never lights a torch" — true
+  while the only bot was the Yeti. CPU searchers do, and a stale battery makes them invisible to
+  Sam's spare-battery scan, which skips anyone at ≥ 99%. *When a second kind of something appears,
+  re-read the assumptions the first one baked in.*
+- Snow prints stay in `ClueMarker.All` on a searcher's client (only the renderer is hidden), so
+  unfiltered, a searcher's own tracks would satisfy the evidence-in-sight test and permanently unlock
+  their clue-trail map layer. `ClueMarker.IsYetiTrail` now gates every consumer of that list.
+- `ClueMarker` registered in `All` on the **client** callbacks, so a server-side reader worked only by
+  the accident of a listen host also being a client. Moved to the network callbacks.
+- URP drives every main-texture UV from `_BaseMap_ST` and every detail UV from `_DetailAlbedoMap_ST`;
+  tiling set on `_BumpMap` or `_DetailNormalMap` is silently ignored.
+
+## Verification status
+
+| Gate | State |
+|---|---|
+| A — client `tsc` + `vite build` | green |
+| B — server `tsc` + vitest | green, **39 tests** (was 35) |
+| C — `PARITY OK` | green, with 26 new deep-snow cross-checks; now in CI with a regen-and-diff step |
+| Unity smoke-compile (§8) | green, 0 warnings 0 errors |
+| Web smoke (throwaway, deleted) | green — prints appear, coexist with the Yeti trail, never drop in camp, track the searcher not the Yeti, stop when standing still |
+| Brand sweep | zero hits outside `docs/July19Work.md` and this file |
+| **Owner play-test** | **not done — nothing here has been seen or heard** |
+
+Checklist items 4 and 5 (Unity solo, Unity two-instance) remain **open**: they need the editor and a
+person. The deep-snow smoke test also proved *why* the slow itself cannot be asserted at socket
+level — hand-driving a socket measures the harness, not the sim — so that stays covered by vitest and
+the parity harness instead.
+
+## If you are picking this up next
+
+In rough order of value:
+
+1. **Run it.** Everything visual and audible is unseen and unheard. The realism pass's tiling scales
+   especially are the kind of thing that is obviously wrong the moment you look and impossible to
+   guess from a compiler.
+2. **Add SSAO** in the live project (§5b) — biggest remaining visual gain, two minutes of clicking.
+3. **`SearcherBot`'s EXPLORE**, which is random roam, and is why a bot team reads as five people
+   wandering rather than as a search party.
+4. **Balance the deep-snow constants** — `deepSnowFactor`, `driftHeight`, `driftDepth`, print
+   stride/lifetime are all first-guess and none has met a player.
