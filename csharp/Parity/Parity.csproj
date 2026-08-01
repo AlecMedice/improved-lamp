@@ -5,12 +5,12 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
-    <RootNamespace>HollowPines.Parity</RootNamespace>
+    <RootNamespace>Metoh.Parity</RootNamespace>
   </PropertyGroup>
 
   <!-- Compile the engine-agnostic sim sources directly (same files Unity will import). -->
   <ItemGroup>
-    <Compile Include="../HollowPines.Sim/*.cs" />
+    <Compile Include="../Metoh.Sim/*.cs" />
   </ItemGroup>
 
   <!-- Ship the golden fixture (generated from the TypeScript sim) next to the binary. -->

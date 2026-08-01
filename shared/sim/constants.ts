@@ -3,7 +3,7 @@
  * computed from one source of truth (no drift → no reconciliation rubber-banding).
  * The client's config.ts re-exports WORLD/PLAYER from here and adds its own
  * render-only values (colors, MAP, FILM, etc.). Per-night escalation is NOT here:
- * the server owns the ESCALATION table (ForestRoom.ts) and replicates multipliers,
+ * the server owns the ESCALATION table (MountainRoom.ts) and replicates multipliers,
  * which callers pass into stepPlayer via StepModifiers.
  */
 

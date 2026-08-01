@@ -1,5 +1,5 @@
 /**
- * Shared, dependency-free movement + world simulation for Hollow Pines. Imported by BOTH
+ * Shared, dependency-free movement + world simulation for Metoh. Imported by BOTH
  * the Three.js client (prediction) and the Colyseus server (authority). Same V8 + same
  * source → bit-identical results, so client prediction reconciles cleanly. No three.js here.
  */

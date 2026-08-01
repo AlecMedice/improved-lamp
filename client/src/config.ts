@@ -54,7 +54,7 @@ export const YETI_VISION = {
 };
 
 /**
- * Per-night escalation lives on the server (the `ESCALATION` table in `ForestRoom.ts`),
+ * Per-night escalation lives on the server (the `ESCALATION` table in `MountainRoom.ts`),
  * which replicates the multipliers to clients — single source of truth. See GameState.
  */
 

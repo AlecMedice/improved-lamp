@@ -71,7 +71,7 @@ export class Network {
       return true;
     }
     try {
-      this.room = await this.client.joinOrCreate("forest", { role: this.role, name: this.name });
+      this.room = await this.client.joinOrCreate("mountain", { role: this.role, name: this.name });
       this.connected = true;
       this.reconnectionToken = this.room.reconnectionToken;
       this.onStatus("online");
@@ -79,7 +79,7 @@ export class Network {
       return true;
     } catch (e) {
       this.onStatus("offline · solo");
-      console.warn("Could not reach the Hollow Pines server — running offline.", e);
+      console.warn("Could not reach the Metoh server — running offline.", e);
       return false;
     }
   }

@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
-using HollowPines.Sim;
+using Metoh.Sim;
 
-namespace HollowPines.Parity
+namespace Metoh.Parity
 {
     /// <summary>
     /// Determinism gate for the C# sim port. Two layers:

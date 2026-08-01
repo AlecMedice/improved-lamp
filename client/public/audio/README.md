@@ -1,6 +1,6 @@
 # Audio overrides (optional)
 
-Hollow Pines **synthesizes its sound at runtime** (see `client/src/core/AudioEngine.ts`), so the
+Metoh **synthesizes its sound at runtime** (see `client/src/core/AudioEngine.ts`), so the
 game has full audio with no files here. This folder is purely for *upgrading* individual one-shot
 cues with real recordings — drop a file in, no code change required.
 

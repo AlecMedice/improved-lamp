@@ -1,7 +1,7 @@
 /**
  * Pure server-authority helpers — the anti-cheat math the client can't be trusted to do.
- * Extracted from ForestRoom so the validation is unit-testable in isolation (no Colyseus lifecycle,
- * no network): given plain numbers/colliders in, a decision out. ForestRoom composes these with its
+ * Extracted from MountainRoom so the validation is unit-testable in isolation (no Colyseus lifecycle,
+ * no network): given plain numbers/colliders in, a decision out. MountainRoom composes these with its
  * per-session state (token buckets, timestamps). Keep them dependency-free apart from shared/sim.
  */
 import { lineBlocked, type Collider, type Vec2 } from "../../../shared/sim";

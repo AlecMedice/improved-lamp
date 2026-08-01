@@ -1,9 +1,9 @@
-# Hollow Pines
+# Metoh
 
 > An asymmetric 1‑vs‑5 multiplayer hunt set in a dusk‑to‑dawn Pacific Northwest forest.
 > Five investigators search for evidence of Yeti. One player **is** Yeti.
 
-**Working title:** *Hollow Pines* &nbsp;•&nbsp; **Repo:** `improved-lamp` (the flashlight is your lifeline — an *improved lamp*, if you will).
+**Working title:** *Metoh* &nbsp;•&nbsp; **Repo:** `improved-lamp` (the flashlight is your lifeline — an *improved lamp*, if you will).
 
 Stylized **low‑poly, smooth‑shaded** visuals. Volumetric flashlight cones, drifting fog,
 and a sky that bleeds from dusk into a black, witching‑hour night.

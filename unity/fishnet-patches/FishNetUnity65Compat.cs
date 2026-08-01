@@ -1,4 +1,4 @@
-// LOCAL PATCH (Hollow Pines) — FishNet 4.7.2 on Unity 6000.5+.
+// LOCAL PATCH (Metoh) — FishNet 4.7.2 on Unity 6000.5+.
 //
 // Unity 6.5 changed Scene.handle from int to a SceneHandle struct and made the implicit
 // int conversions compile errors (CS0619). FishNet 4.7.2 (Apr 2026, latest at patch time)

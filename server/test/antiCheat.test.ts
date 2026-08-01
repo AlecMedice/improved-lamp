@@ -3,7 +3,7 @@ import { refillAllowance, gateStep, staminaCeiling, filmVisible } from "../src/r
 import type { Collider } from "../../shared/sim";
 
 // These guard the Track A integrity fixes: the client is not trusted for the win condition (filming),
-// its resource claims, or its position. Each function is the exact logic ForestRoom runs per move.
+// its resource claims, or its position. Each function is the exact logic MountainRoom runs per move.
 
 describe("filmVisible (A1 — server-authoritative filming)", () => {
   // Hunter at origin looking down -z (yaw 0 → forward = (0,-1)); Yeti 10 m in front.

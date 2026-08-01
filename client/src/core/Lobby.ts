@@ -21,7 +21,7 @@ export class Lobby {
     const params = new URLSearchParams(location.search);
     const devRole = params.get("devRole") ?? undefined;
     const devSpecialty = params.get("devSpecialty") ?? undefined; // force a persona for testing (gated server-side)
-    const room = await this.client.joinOrCreate("forest", { name, devRole, devSpecialty });
+    const room = await this.client.joinOrCreate("mountain", { name, devRole, devSpecialty });
     this.overlay.style.display = "flex";
     this.startBtn.onclick = () => room.send("startMatch");
 

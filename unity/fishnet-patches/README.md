@@ -4,7 +4,7 @@
 FishNet **4.7.2R (Apr 2026) — the latest release at patch time — predates them**, so a stock import
 fails to compile (`FishNet.Runtime` never builds; the console then also shows a misleading
 `Failed to find entry-points / Failed to resolve assembly: Unity.FishNet.Codegen` ILPP error, which
-is pure fallout). Applied 2026-07-18 to the local project (`C:\Users\amedi\HollowPines`).
+is pure fallout). Applied 2026-07-18 to the local project (`C:\Users\amedi\Metoh`).
 
 **Drop this patch** when a FishNet release with native Unity 6.5 support exists — delete the shim
 file and reimport clean.

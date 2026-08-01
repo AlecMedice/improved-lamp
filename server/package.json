@@ -1,8 +1,8 @@
 {
-  "name": "hollow-pines-server",
+  "name": "metoh-server",
   "version": "0.1.0",
   "private": true,
-  "description": "Authoritative Colyseus room for Hollow Pines (1v5 Yeti hunt).",
+  "description": "Authoritative Colyseus room for Metoh (1v5 Yeti hunt).",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",

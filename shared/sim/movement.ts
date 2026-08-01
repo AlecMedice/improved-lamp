@@ -42,7 +42,7 @@ export type StepResult = { moving: boolean; sprinting: boolean };
 
 /**
  * External multipliers applied to this step. The sim owns no escalation table — the server's
- * ESCALATION (ForestRoom.ts) is the single source of truth, replicated to clients; both sides
+ * ESCALATION (MountainRoom.ts) is the single source of truth, replicated to clients; both sides
  * compose these from it (plus the post-incapacitation slow) and pass them in.
  */
 export type StepModifiers = {

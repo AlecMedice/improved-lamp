@@ -1,4 +1,4 @@
-# Hollow Pines — agent orientation
+# Metoh — agent orientation
 
 Asymmetric 1‑vs‑5 multiplayer horror game. Five **searchers** hunt a Pacific‑NW forest
 for proof of **Yeti** (played by the 6th player). Browser game: **Three.js client +
@@ -56,10 +56,10 @@ Don't commit smoke files or `client/dist/`.
   (e.g. Yeti's brighter exposure/night‑vision) are just local and don't leak.
 - **Server is authoritative** for match state: night clock, clues, pings, roar/grab/
   incapacitation, footage tally, win/loss. The simulation runs at 20 Hz in
-  `ForestRoom.update()`.
+  `MountainRoom.update()`.
 - **Movement is server‑authoritative** (Phase 2). The client predicts locally (shared‑sim
   `stepPlayer` in `LocalPlayer`) and streams `move` ~15 Hz; the server **re‑validates** each move
-  against the shared world (`ForestRoom.applyMove`: world‑bounds clamp, speed‑gate **token bucket**,
+  against the shared world (`MountainRoom.applyMove`: world‑bounds clamp, speed‑gate **token bucket**,
   collision pushout, terrain feet‑clamp) and ignores moves from non‑`active` players. The client
   **reconciles** by easing toward the server's corrected position (`LocalPlayer.correctTo`);
   large desyncs snap. Remotes interpolate on a snapshot buffer. Cave fast‑travel is a validated
@@ -168,7 +168,7 @@ Client (`client/src/`):
 - `config.ts` — all client tunables. `index.html` — all HUD/overlay DOM + CSS. `main.ts` — bootstrap.
 
 Server (`server/src/`):
-- `rooms/ForestRoom.ts` — the authoritative room (messages, 20 Hz update, all systems + tunables at top).
+- `rooms/MountainRoom.ts` — the authoritative room (messages, 20 Hz update, all systems + tunables at top).
 - `rooms/schema/GameState.ts` — `Player` / `Clue` / `Ping` / `GameState` schema.
 - `index.ts` — Colyseus + Express `/health`.
 
@@ -179,7 +179,7 @@ Shared (`shared/sim/`) — dependency‑free deterministic sim, imported by both
 - `constants.ts` — `WORLD` / `PLAYER` movement tunables (client `config.ts` re‑exports these).
 
 ## Tuning
-- **Server constants** (top of `ForestRoom.ts`): `NIGHT_SECONDS` (600, overridable via the
+- **Server constants** (top of `MountainRoom.ts`): `NIGHT_SECONDS` (600, overridable via the
   `NIGHT_SECONDS` env var for quick test matches), `TOTAL_NIGHTS` (3),
   `ROAR_RADIUS/ROAR_COOLDOWN/FREEZE_SECONDS`, `GRAB_RADIUS/INCAP_SECONDS/SLOW_SECONDS`,
   `FILM_RANGE/FILM_SECONDS`, `CLUE_LIFETIME/STRIDE/BRANCH_CHANCE`, `PING_LIFETIME`, `CAVES`,
