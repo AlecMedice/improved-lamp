@@ -1,4 +1,4 @@
-# Hollow Pines — Development Roadmap
+# Metoh — Development Roadmap
 
 A phased plan from the current scaffold to a playable game. Each phase ends in something you
 can actually run and feel. Ship the **vertical slice** (Phases 0–4) first; everything after is
@@ -15,7 +15,7 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 - ✅ Low‑poly smooth‑shaded terrain + instanced conifers
 - ✅ First‑person controller (WASD + mouse look + pointer lock)
 - ✅ Working flashlight (spotlight + toggle + battery drain)
-- ✅ Server: Colyseus + `ForestRoom` + `GameState` schema
+- ✅ Server: Colyseus + `MountainRoom` + `GameState` schema
 - ✅ Client↔server connect + remote‑player sync (graceful offline fallback)
 
 **Run it:** see [`README.md`](../README.md). Walk the forest at dusk with a flashlight; open a second tab to see another player.
@@ -27,7 +27,7 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 - ✅ Collision (terrain height sampling + tree trunk colliders)
 - ✅ Jump (`Space`, gravity + ballistic feetY, networked) + auto‑step/vault over small rises + stamina + sprint
 - ✅ Day‑night cycle driving sky/fog/ambient over the match (`timeOfDay`)
-- ✅ Landmarks: base camp (campfire + **RV**), **cave entrances**, **creek**, **trailhead sign**, **lookout tower**, **lake**, **fallen logs** (asymmetric: slow hunters, not Bigfoot), bushes + shore rocks, terrain vertex coloring
+- ✅ Landmarks: base camp (campfire + **RV**), **cave entrances**, **creek**, **trailhead sign**, **lookout tower**, **lake**, **fallen logs** (asymmetric: slow hunters, not Yeti), bushes + shore rocks, terrain vertex coloring
 - ✅ Audio (`core/AudioEngine.ts`): gusting wind + proximity‑driven creek beds, **positional** footsteps (own + remote, true 3D), flashlight click — see Phase 5 for the full cue set
 
 **Goal:** the forest *feels* like a place you don't want to be alone in. **← done.**
@@ -40,7 +40,7 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 - ✅ **Client‑side interpolation** — remotes render on a small **snapshot buffer** (interpolate between bracketing snapshots, render ~100 ms behind) for smooth constant‑velocity motion; teleports snap.
 - ✅ **Shared deterministic world + movement sim** — `shared/sim/` (rng, constants, terrain, colliders, **seeded `CAVES`**, and the pure `stepPlayer` movement physics) imported by both client + server; the old `Math.random()` cave duplication is gone (client + server now agree).
 - ✅ **Lobby → match → results room lifecycle** (`matchPhase` lobby/playing/results; clock only runs in‑match)
-- ✅ **Role assignment** — host presses Start; server picks **one random Bigfoot** (solo player roams as searcher)
+- ✅ **Role assignment** — host presses Start; server picks **one random Yeti** (solo player roams as searcher)
 - ✅ **Disconnect/reconnect handling** — 20s reconnection grace (`allowReconnection`), `connected` flag, host reassignment; host migration N/A (server‑owned)
 - ✅ Host **rematch** (results → Return to lobby) + preserved offline‑solo entry path
 
@@ -49,29 +49,34 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 ---
 
 ## Phase 3 — Asymmetry & abilities ✅
-- 🟡 Two playable roles with distinct cameras/speed/models *(distinct speed, height, night‑vision, avatars + Bigfoot eye‑shine done; rigged models pending — Phase 6)*
-- ✅ Bigfoot **roar** (AoE freeze) → **grab** frozen hunter → **incapacitate + drag + erase footage**; recover slowed
-- ✅ Bigfoot mobility kit — **leap** (`Space`, stamina‑gated bound), **charge** (`Shift`, forward burst dash on a cooldown), **surface‑climb** (`Space` vs a structure: scale the tower/RV/boulders and stand on top)
-- ✅ Bigfoot **senses overlay** (`V`) — predator vision revealing hunters (and its own scent trail) through the forest
-- ✅ Bigfoot leaves a trackable trail (footprints + broken branches) — *the clue framework*
-- ✅ Bigfoot **cave fast-travel** network (spawn at a cave; pick the destination from the map)
+- 🟡 Two playable roles with distinct cameras/speed/models *(distinct speed, height, night‑vision, avatars + Yeti eye‑shine done; rigged models pending — Phase 6)*
+- ✅ Yeti **roar** (AoE freeze) → **grab** frozen hunter → **incapacitate + drag + erase footage**; recover slowed
+- ✅ Yeti mobility kit — **leap** (`Space`, stamina‑gated bound), **charge** (`Shift`, forward burst dash on a cooldown), **surface‑climb** (`Space` vs a structure: scale the tower/RV/boulders and stand on top)
+- ✅ Yeti **senses overlay** (`V`) — predator vision revealing hunters (and its own scent trail) through the forest
+- ✅ Yeti leaves a trackable trail (footprints + broken branches) — *the clue framework*
+- ✅ Yeti **cave fast-travel** network (spawn at a cave; pick the destination from the map)
 - ✅ **Map** (`M`) for both roles — position/heading, camp, caves; hunters also see teammates + recent clue trail
 - ✅ **Stakeout pings** (`Q`/map-click) — shared hunter markers on the map + world beacons
-- ✅ Fade-to-black transition on Bigfoot cave fast-travel + between nights
+- ✅ Fade-to-black transition on Yeti cave fast-travel + between nights
 - ✅ Frozen/incapacitated states synced; remote status icons (grab targets)
-- ✅ Searcher **counterplay** — **revive** a downed teammate (`E`), **dazzle** Bigfoot with a sustained flashlight (locks its roar/grab), and **vault** a fallen log (`Space`)
+- ✅ Searcher **counterplay** — **revive** a downed teammate (`E`), **dazzle** Yeti with a sustained flashlight (locks its roar/grab), and **vault** a fallen log (`Space`)
 
 **Goal:** "be the monster vs. survive the monster" is real and fun. **← both sides now have offense *and* defense.**
 
 ---
 
 ## Phase 4 — Game loop & objectives 🟡
-- ✅ **Filming win condition** — capture 3 solid videos of Bigfoot (client detects in‑frame, server tallies; pooled across nights)
+- ✅ **Filming win condition** — capture 3 solid videos of Yeti (client detects in‑frame, server tallies; pooled across nights)
 - ✅ Clue trail spawn/expire/fade ("the trail goes cold"); map trail gated by contact + recency
 - ✅ **3-night structure** — each night 8pm→8am, daylight skipped, fade between nights
-- ✅ Win/loss resolution + results screen (3 videos → hunters; survive 3 nights → Bigfoot)
+- ✅ Win/loss resolution + results screen (3 videos → hunters; survive 3 nights → Yeti)
 - ✅ HUD: battery, stamina (with exhaustion), footage, night + clock, viewfinder, status banner, roar cooldown
-- ✅ **Escalation buffs per night** — server `ESCALATION` table (faster Bigfoot, faster battery/stamina drain, shorter roar cooldown, longer freeze, faster‑cooling trail; replicated to clients) + role‑specific tutorial hints
+- ✅ **Escalation buffs per night** — server `ESCALATION` table (faster Yeti, faster battery/stamina drain, shorter roar cooldown, longer freeze, faster‑cooling trail; replicated to clients) + role‑specific tutorial hints
+
+- ✅ **Deep snow & trails** (shipped with the Metoh re-theme, Aug 2026) — the drift-basin slow that
+  spares the Yeti, plus searcher snow prints only the Yeti can read. Two separate derived zones; spec
+  in `GAME_DESIGN.md` §7.7. **Unplayed as of landing** — the constants (`deepSnowFactor`,
+  `driftHeight`, `driftDepth`, print stride/lifetime) are first-guess values wanting a balance pass.
 
 **Goal:** a full match has a beginning, middle, and a winner. **← core of the vertical slice is in.**
 
@@ -94,7 +99,7 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
 
 ## Phase 6 — Art pass & performance 🟢
 - 🟡 Authored low‑poly models + rigs/animations — **articulated procedural avatars now replace the
-  capsules: hunters read as a person, Bigfoot as a hunched creature, both with a ground‑locked walk
+  capsules: hunters read as a person, Yeti as a hunched creature, both with a ground‑locked walk
   cycle + idle breath and re‑anchored eye‑shine/status icons.** Hand‑authored/skinned meshes still ⬜.
 - ✅ Perf — trees/bushes/rocks `InstancedMesh`, no shadows; forward‑render light‑budget cull (only the
   nearest cave glow lit), mobile pixel‑ratio + AA scaling (`config.QUALITY`/`isMobile`),
@@ -128,6 +133,8 @@ Steam relay "moving cube" slice) scaffolded in [`unity/`](../unity); **R3** — 
 | Asymmetric balance (1 vs 5) | Tunable knobs in GDD §5; playtest early and often |
 | Browser perf with many trees/lights | Instancing, LODs, cap dynamic lights, bake where possible |
 | Scope creep | Lock the vertical slice (P0–P4) before any P5+ work |
+| Sim drift between TS and C# | The `csharp/Parity` harness. **Regenerate `golden.json` whenever `shared/sim` output or key names change, then re-run it** — see the gates in `Metoh_migration.md`. Regen events so far: the Bigfoot→Yeti rename (key names), deep snow (new probes). A byte-identical regen after a behaviour change means the fixture doesn't cover it — add probes, don't assume you're safe. |
+| Trail network coupling | Deep snow reads the *absence* of a trail, so any future "bigger map" work must keep `generatePaths` covering it — trails that stop short would strand players in permanent deep snow |
 
 ## Definition of "vertical slice" (the first real milestone)
 One map · 6 players online · both roles playable · flashlight + clue trail ·

@@ -1,8 +1,14 @@
 # Metoh — agent orientation
 
-Asymmetric 1‑vs‑5 multiplayer horror game. Five **searchers** hunt a Pacific‑NW forest
-for proof of **Yeti** (played by the 6th player). Browser game: **Three.js client +
+Asymmetric 1‑vs‑5 multiplayer horror game. Five **searchers** hunt a Himalayan valley
+for proof of the **Yeti** (played by the 6th player). Browser game: **Three.js client +
 Colyseus server, TypeScript everywhere**. Stylized low‑poly, smooth‑shaded, dusk‑to‑dawn.
+
+**The project was re-themed from "Hollow Pines" (a Pacific-NW Bigfoot hunt) to Metoh in Aug 2026**,
+to escape overlap with the Steam game *BIGFOOT*. Plan and rationale: `docs/Metoh_migration.md`.
+Two things to know: the **web build keeps its forest visuals on purpose** (only identifiers were
+renamed — web visuals are abandoned; the Unity build carries the snow re-theme), and the
+`mothman_port` branch is an **abandoned** earlier attempt at the same problem — don't mine it.
 
 Read `docs/` for the full picture — every file there is current, nothing is a stale plan:
 - `GAME_DESIGN.md` — the GDD, source of truth for rules · `STORY.md` — world + the five characters
@@ -109,7 +115,11 @@ Server state (`GameState`, replicated):
   status, slowed, filming, filmProgress, connected, beingRevived, dazzled}`.
   `status ∈ "active" | "frozen" | "incapacitated"`; `beingRevived` = a teammate is reviving this
   downed hunter; `dazzled` (Yeti only) = a searcher's flashlight is blinding it.
-- `clues: Clue[]` `{id, ctype("footprint"|"branch"), x, z, ry}` — Yeti's trail.
+- `clues: Clue[]` `{id, ctype("footprint"|"branch"|"snowprint"), x, z, ry}` — `footprint`/`branch` are
+  the Yeti's trail (searchers follow it); **`snowprint` is a SEARCHER's track**, replicated to all but
+  **render‑filtered to the Yeti only** (`ClueField`/`MapView` on web, `ClueMarker.IsYetiTrail` in Unity).
+  One array, but the room caps and expires the two kinds **separately** — prints must never be able to
+  evict the Yeti trail, which is the hunters' win condition.
 - `pings: Ping[]` `{id, x, z}` — hunter stakeout markers (1 per hunter).
 - `matchPhase ("lobby"|"playing"|"results"), hostId` — lifecycle; the clock only runs while playing.
 - `phase, timeOfDay (0..1 of the night), nightNumber, totalNights`,
@@ -135,9 +145,23 @@ Server state (`GameState`, replicated):
   expires; keep a **flashlight** trained on Yeti (~1.2s, range+cone+LOS) to **dazzle** it — its
   roar/grab lock and its sight cone cuts for ~3s (a deterrent, doesn't free a grabbed hunter); `Space`
   to **vault** a fallen log (stamina-gated hop that negates the log slow).
+- **Deep snow & trails** (the Metoh signature mechanic — full spec in `GAME_DESIGN.md` §7.7). Two
+  **separate** zones, and conflating them is the easiest mistake to make here:
+  - *Slow* — only the **low ground** (below `PLAYER.driftHeight`) holds deep drift; searchers fall
+    toward `PLAYER.deepSnowFactor`, **the Yeti is unaffected**. ~⅓ of the map, so it's a routing
+    choice. Applying it everywhere off-trail would be ~96% of the map, i.e. a flat searcher nerf.
+  - *Prints* — **anywhere off-trail** (the wider rule), a moving searcher drops a `snowprint` only
+    the Yeti sees. Wide on purpose: that's what makes the Yeti's tracking signal dense enough to use.
+  - Both exempt camp + the tarn; the packed trail network is exempt from both, which is what turns
+    trails into a real speed-for-exposure trade. Zones are **derived from the seed, never replicated**
+    (`deepSnowDepth`/`leavesSnowPrints` in `shared/sim/movement.ts` + the C# mirror).
+  - **Trust:** the slow lives inside `stepPlayer`, so it's applied by whoever simulates the player —
+    the owning client, on **both** builds. `applyMove` validates a move, it does not re-simulate one.
+    A hacked client can be "not slowed", never "faster than legitimate".
 - **Map (`M`):** both roles see self/camp/caves; hunters also see teammates, pings, and the
   *recent* clue trail **only while in contact** (Yeti heard nearby or recent evidence in
-  sight). Yeti in a cave mouth clicks a cave on the map to fast‑travel.
+  sight). The **Yeti** sees searcher **snow prints** instead — ungated, because reading tracks *is*
+  its contact. Yeti in a cave mouth clicks a cave on the map to fast‑travel.
 
 ## Where things live
 Client (`client/src/`):

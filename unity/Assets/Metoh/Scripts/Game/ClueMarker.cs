@@ -147,7 +147,7 @@ namespace Metoh.Game
                 var wood = MeshUtil.Lit(MeshUtil.Rgb(0x4a443c));
                 AddStick(root, new Vector3(0f, 0.42f, 0f), Quaternion.Euler(0f, 20f, 14f), 0.9f, wood);
 
-                // Pale coarse hair against dark bark — the Yeti's coat, not Bigfoot's.
+                // Pale coarse hair against dark bark — a high-altitude coat, not a forest animal's.
                 var fur = MeshUtil.Emissive(MeshUtil.Rgb(0x6e6a60), MeshUtil.Rgb(0xd8d2c4), 0.55f);
                 for (int i = 0; i < 4; i++)
                 {

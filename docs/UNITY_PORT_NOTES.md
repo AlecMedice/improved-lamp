@@ -24,6 +24,15 @@ which is which, because it changes the size of the job:
   host-authoritative. Adopting it means moving `HPPlayer.StepSim` into a `[Replicate]` method and
   making `PlayerSimState` a reconcile struct. **When it lands, FishNet's tick loop owns the step
   cadence and the per-frame stepping in §7 reverts.**
+  > **Deep snow rides on this, and so does the web build.** The drift slow (`Movement.DeepSnowDepth`)
+  > is applied inside `StepPlayer`, i.e. by whoever simulates the player — which today is the owning
+  > client. A hacked client can ignore it. This is *not* a Unity-only caveat, which the migration
+  > plan originally assumed: `MountainRoom.applyMove` on the web build validates a move (bounds,
+  > speed-gate token bucket, collision pushout, feet clamp) but never re-runs `StepPlayer` either, so
+  > the web build is in exactly the same position. In both cases the speed gate still caps the
+  > result, so the exploit is "not slowed", never "faster than legitimate" — the same trust level
+  > `lakeHunterFactor` has always had. Adopting prediction closes it for Unity; the web build would
+  > need `applyMove` to re-simulate rather than validate.
 - **Lag compensation** for the filming/dazzle cone checks — FishNet ships `ColliderRollback`; the
   work is enabling it and rolling back at the right tick.
 
@@ -31,8 +40,8 @@ which is which, because it changes the size of the job:
 - **Session/lobby semantics** — ready-up rules, reconnection grace, rejoining with your prior role.
   *Partly done (2026-07-20):* a **disconnect handler** exists — `HPPlayer.OnStopServer` →
   `GameManager.ServerForgetPlayer`, which scrubs the leaver from every per-player dictionary (as key
-  AND as value: the teammate they were reviving, the Bigfoot dragging them) and **aborts the match to
-  the lobby** with an on-screen reason if it becomes unplayable (Bigfoot gone, or no searchers left).
+  AND as value: the teammate they were reviving, the Yeti dragging them) and **aborts the match to
+  the lobby** with an on-screen reason if it becomes unplayable (Yeti gone, or no searchers left).
   Still **not** done: reconnection grace and rejoining with your prior role/state — a leaver is gone
   for good, mid-match.
 
@@ -42,7 +51,7 @@ friend invites — revisit when shipping is actually on the table, not before.
 
 **Known bugs, unverified against the Unity build:**
 - ~~Fallen logs **slow** the player; the design calls for them to **block**.~~ **Fixed 2026‑07‑20.**
-  `Collision.ResolveLogs` pushes a *grounded hunter* out of the log capsule in both sims; Bigfoot
+  `Collision.ResolveLogs` pushes a *grounded hunter* out of the log capsule in both sims; Yeti
   strides over untouched and a vaulter is airborne, so the trunk passes beneath. The vault trigger
   moved to a **padded reach** (`Player.VaultReach`) — with the push-out in place a hunter can never
   stand inside a log, so a prompt tested at the bare radius would be one that could never appear.
@@ -115,7 +124,7 @@ Server-side aim cones (filming, dazzle) only ever dot with **forward**, so they 
 
 ## 3. The C# sim is parity-locked — fix around it, never through it
 
-`csharp/HollowPines.Sim` is verified against the TypeScript `shared/sim`. Do not "fix" gameplay by
+`csharp/Metoh.Sim` is verified against the TypeScript `shared/sim`. Do not "fix" gameplay by
 editing it. Ability tunables live in `GameManager` constants (precedent: Wren's mark, the flash, the
 battery gift, all the casting numbers). Presentation problems get renderer-side fixes.
 
@@ -125,7 +134,9 @@ rendered *underneath* it and the map looked flooded. Carving a basin into the te
 option: players stand on the sim's analytic height, so a visual-only basin leaves them walking on
 invisible ground above the water. The fix was a **terrain-conforming water sheet** — same coverage as
 `Collision.LakeDepth`, never above the land, and consistent with the rule that you wade rather than
-swim.
+swim. *(Since the Metoh re-theme the sheet is a frozen tarn — slick ice and breaking crust, with
+pressure ridges over it — but the geometry and the `LakeDepth` slow underneath it are unchanged, so
+this worked example still holds exactly.)*
 
 Related: trees stand *in* the lake because `WorldData.BuildColliders` skips only the camp clearing
 and cave mouths. `BuildForest` mirrors that RNG stream exactly, so skipping them visually would
@@ -173,7 +184,7 @@ Five separate "bugs" this session were working mechanics with missing or mislead
   *during* cooldown, so a ready ability showed nothing at all. Every ability now states itself in
   both states.
 - **"Cave system is lost"** — handler, map buttons and cooldown were all intact. The port had simply
-  dropped the on-screen cue telling Bigfoot a mouth was usable, making the whole network
+  dropped the on-screen cue telling Yeti a mouth was usable, making the whole network
   undiscoverable.
 - **START NEW GAME did nothing** — the click handler swallowed failures. It now checks
   `StartConnection()`'s bool, try/catches, `Debug.LogException`s, and shows the reason on screen.
@@ -236,10 +247,10 @@ the last two states parks the camera a full step (50 ms) in the past. `StepPlaye
 `dt`, so the owner steps **once per frame with the real frame delta** (hitch-clamped). This reverts
 when FishNet prediction is adopted (see §0), which owns the cadence itself.
 
-## 6b. Single-player / the CPU Bigfoot bot
+## 6b. Single-player / the CPU Yeti bot
 
 A legitimate **offline mode** (title → SINGLE PLAYER → PLAY AS SEARCHER): a lone human searcher vs a
-CPU Bigfoot, no internet. It's also the fastest solo test harness. Architecture, because it's a
+CPU Yeti, no internet. It's also the fastest solo test harness. Architecture, because it's a
 pattern worth reusing for future bots:
 
 **A bot is just an HPPlayer spawned with no owner.** `Spawn(nob, null)` → `base.IsOwner` is false on
@@ -251,18 +262,18 @@ client-authoritative `NetworkTransform` replicates the host's transform writes t
 (verified in FishNet source: `controlledByClient = clientAuth && Owner.IsActive` → false with no
 owner → the server moves and syncs it).
 
-**The brain (`BigfootBot`) is intent only** — a host-only `MonoBehaviour` added at runtime by
+**The brain (`YetiBot`) is intent only** — a host-only `MonoBehaviour` added at runtime by
 `ServerBecomeBot` (so the shared player prefab is untouched and it never needs stamping). It decides a
 direction + a couple of booleans; that's all. Its perception is the actual stealth game, not
 distance-clairvoyance: **sight** is line-of-sight-gated and far longer against a lit flashlight;
 **hearing** scales with the target's movement speed and is **silent for a crouching or still**
 searcher; then it **remembers** a last-known position and searches it before giving up. Tuning
-constants are all at the top of `BigfootBot.cs`.
+constants are all at the top of `YetiBot.cs`.
 
-**Roles are the normal deal.** The bot carries `WantsBigfoot = true` and the lone human `= false`, so
+**Roles are the normal deal.** The bot carries `WantsYeti = true` and the lone human `= false`, so
 `DoStartMatch` hands the monster to the bot with no special-casing. A bot has no `Owner`, so it can't
 receive the `TargetTeleport` RPC — it's placed server-side by `ServerBotPlace`, which also spins up
-the brain once the role (and the sim's `IsBigfoot`) is settled. Solo auto-starts: `SpawnBigfootBot`
+the brain once the role (and the sim's `IsYeti`) is settled. Solo auto-starts: `SpawnYetiBot`
 runs at host load, then `TrySoloStart` (polled from `OnTick`, before the phase guard) waits for both
 players to appear in `HPPlayer.All` and calls `DoStartMatch` — no lobby.
 
@@ -279,15 +290,15 @@ never to walking through solid geometry.
 > - **Does the bot actually move?** The owner-less-NetworkTransform-server-drive path is reasoned from
 >   source, not observed.
 > - **All AI tuning is first-guess** — sense ranges, hearing, sprint/grab distances, wander. Expect to
->   sit in `BigfootBot.cs` and tune once it's playable.
-> - **Play-as-Bigfoot is stubbed** (greyed on the menu) — it needs CPU *searchers*, the larger job
+>   sit in `YetiBot.cs` and tune once it's playable.
+> - **Play-as-Yeti is stubbed** (greyed on the menu) — it needs CPU *searchers*, the larger job
 >   (routing + filming a five-strong team).
 
 ## 6c. The lookout ladder + binoculars (no parity change)
 
 The tower collider is **climbable** (`WorldData.Lookout`, `ClimbH = 9.5`), so the shared sim already
 holds any player standing on the platform at `base + 9.5` and stops pushing them out of the footprint
-up there — for every role. The only thing a searcher lacked was a way UP (Bigfoot scales it; searchers
+up there — for every role. The only thing a searcher lacked was a way UP (Yeti scales it; searchers
 can't). So the ladder is **entirely client-side** and touches nothing parity-locked:
 
 - `WorldBuilder.BuildTower` aligns the platform MESH top to `ClimbH` (was 9.8, a ~0.5 m clip), builds
@@ -311,13 +322,13 @@ replicated step like everything else — note it here so it isn't missed.
 
 ## 7a. Testing the whole game alone, on one PC
 
-**Solo works by design.** `ServerStartMatch` picks Bigfoot from whoever opted in; with nobody opted
-in it needs 2+ players, and with **one** player it assigns **no Bigfoot at all**. So:
+**Solo works by design.** `ServerStartMatch` picks Yeti from whoever opted in; with nobody opted
+in it needs 2+ players, and with **one** player it assigns **no Yeti at all**. So:
 
 | Setup | You are | Covers |
 |---|---|---|
 | 1 instance, lobby toggle **off** | a searcher, alone | world, trails, cave discovery, evidence + duffel, logs, sky/moon, HUD, perf |
-| 1 instance, **"wants Bigfoot"** on | Bigfoot, alone | roar/leap/climb/cave travel, hair shedding, senses overlay |
+| 1 instance, **"wants Yeti"** on | Yeti, alone | roar/leap/climb/cave travel, hair shedding, senses overlay |
 | 2 instances | one of each | the interactions only: grab → spill, dazzle, filming, revive |
 
 Most of what needs verifying is reachable **solo** — only grab/dazzle/film/revive need two.
@@ -330,7 +341,7 @@ it starts faster and you can shrink it, which matters on integrated graphics alr
 trees. Run it windowed and small:
 
 ```
-HollowPines.exe -screen-width 1280 -screen-height 720 -screen-fullscreen 0
+Metoh.exe -screen-width 1280 -screen-height 720 -screen-fullscreen 0
 ```
 
 Host in the editor, JOIN from the build at `127.0.0.1`. Only the focused window takes input, so drive
@@ -360,12 +371,17 @@ settings from the pause menu will overwrite it. Fine for a dev toggle, just don'
 
 ## 8. Workflow
 
-- **Edit in the repo** (`unity/Assets/HollowPines/`), then `robocopy /E` into
-  `C:\Users\amedi\HollowPines\Assets\HollowPines`. Robocopy exit codes < 8 are success.
+- **Edit in the repo** (`unity/Assets/Metoh/`), then `robocopy /E` into
+  `C:\Users\amedi\Metoh_port\Assets\Metoh`. Robocopy exit codes < 8 are success.
   **There are now THREE trees to sync, not one** — `Scripts/`, `Shaders/`, and `Sim/` (which comes
-  from `csharp/HollowPines.Sim`, not from `unity/`). A sync script that only copies `Scripts/` will
+  from `csharp/Metoh.Sim`, not from `unity/`). A sync script that only copies `Scripts/` will
   silently leave the shader or a new sim file behind, and the failure shows up as a magenta sky or a
   missing type rather than as a copy error.
+  > **The live project path has moved twice — check before you copy.** It is
+  > `C:\Users\amedi\Metoh_port`, created fresh for the Metoh rebrand. `C:\Users\amedi\Mothman_port`
+  > is the abandoned `mothman_port` branch's build and must not be overwritten;
+  > `C:\Users\amedi\HollowPines` no longer exists. The repo carries no `.meta` or `Library/`, so the
+  > live project is always a separate tree, never a checkout.
 - **Smoke-compile outside Unity** before handing over — a scratch csproj (netstandard2.1, LangVersion
   9, `ENABLE_INPUT_SYSTEM`, plus `UNITY_EDITOR` and `UnityEditor*.dll` for a second editor pass)
   against `Library/ScriptAssemblies/*.dll` and the Unity Managed DLLs. This has caught real errors
@@ -373,9 +389,9 @@ settings from the pause menu will overwrite it. Fine for a dev toggle, just don'
 - **The editor log lives at `<project>/Logs/Editor.log`**, *not* the one in `AppData` (which goes
   stale with multiple editor instances). When something fails at runtime, read that file — the first
   error is usually several steps upstream of the reported one.
-- **Re-run "Hollow Pines → Set Up Game Scene (Forest)"** whenever the scene gains a component or a
+- **Re-run "Metoh → Set Up Game Scene (Mountain)"** whenever the scene gains a component or a
   spawnable prefab. The scene has no hand-made content; rebuilding it costs nothing.
-- `HollowPines.Sim` collides with UnityEngine on `Collider`/`Collision` — qualify them.
+- `Metoh.Sim` collides with UnityEngine on `Collider`/`Collision` — qualify them.
 - FishNet 4.7.2 does not compile on Unity 6000.5 unpatched; see [`../unity/fishnet-patches/`](../unity/fishnet-patches/README.md).
 
 ## 9. Copy should read as capability, not as a stat block
