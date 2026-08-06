@@ -55,6 +55,49 @@ namespace Metoh.Game
         public static Texture2D FabricNormal => _fabric ??= BuildNormal(128, "FabricNormal", 1.2f,
             (x, y) => (Mathf.Sin(x * 1.4f) * Mathf.Sin(y * 1.4f)) * 0.5f + 0.5f);
 
+        /// <summary>
+        /// A soft round dot — the sprite every particle in the game is drawn with (snow, breath,
+        /// spindrift, motes in the torch beam).
+        ///
+        /// Without it a particle is a flat quad, and a flat quad reads as a SQUARE the instant it is
+        /// big enough to see: falling snow becomes falling confetti. This is a colour texture, not a
+        /// normal map, so it is the one thing here that does not go through BuildNormal.
+        ///
+        /// The falloff is squared rather than linear because a linear ramp still shows a definite
+        /// circular edge; squaring puts most of the fade near the rim, which is what makes a dot read
+        /// as out-of-focus rather than as a drawn circle.
+        /// </summary>
+        private static Texture2D _dot;
+        public static Texture2D SoftDot
+        {
+            get
+            {
+                if (_dot != null) return _dot;
+                const int size = 32;
+                _dot = new Texture2D(size, size, TextureFormat.RGBA32, true, false)
+                {
+                    name = "SoftDot",
+                    wrapMode = TextureWrapMode.Clamp,
+                    filterMode = FilterMode.Bilinear,
+                };
+                var px = new Color32[size * size];
+                float c = (size - 1) * 0.5f;
+                for (int y = 0; y < size; y++)
+                {
+                    for (int x = 0; x < size; x++)
+                    {
+                        float d = Mathf.Sqrt((x - c) * (x - c) + (y - c) * (y - c)) / c;
+                        float a = Mathf.Clamp01(1f - d);
+                        a *= a;
+                        px[y * size + x] = new Color32(255, 255, 255, (byte)Mathf.RoundToInt(a * 255f));
+                    }
+                }
+                _dot.SetPixels32(px);
+                _dot.Apply(true, true);
+                return _dot;
+            }
+        }
+
         // ---------------------------------------------------------------- generation
 
         /// <summary>

@@ -169,6 +169,9 @@ namespace Metoh.Game
             Build();
             BuildNavMesh();
             PostFX.Ensure(gameObject);
+            // Before anything connects, so the TITLE cinematic flies through the same weather the match
+            // does — the systems follow Camera.main, not a player.
+            Weather.Ensure(gameObject);
             HPAudio.Ensure(gameObject); // synthesizes every cue + starts the wind/tarn beds
             HPDebug.Ensure(gameObject); // F3 diagnostics overlay (costs nothing while hidden)
             SetTimeOfDay(0f);
@@ -270,7 +273,7 @@ namespace Metoh.Game
         }
 
         /// <summary>The warm prop lights (campfire, RV, cave glows). Realtime point lights are the
-        /// second lever in the §7 perf order, after bloom.</summary>
+        /// second lever in the [perf] perf order, after bloom.</summary>
         public void SetPropLightsEnabled(bool on)
         {
             foreach (var l in _propLights) if (l != null) l.enabled = on;
@@ -507,7 +510,7 @@ namespace Metoh.Game
                 // alternate as before. All of this is pure material/mesh CHOICE driven by the
                 // already-computed height and index — no rand() call is added, moved or skipped, so
                 // the tree stream stays in lockstep with WorldData.BuildColliders (UNITY_PORT_NOTES
-                // §3c). The treeIndex % 2 alternation was never an RNG draw either, which is why it
+                // [rng-lockstep]). The treeIndex % 2 alternation was never an RNG draw either, which is why it
                 // is safe to key off it here.
                 bool aboveSnowline = y >= SnowlineHeight;
                 var crownBucket = (aboveSnowline || treeIndex % 2 != 0) ? crownLightC : crownDarkC;
@@ -973,9 +976,26 @@ namespace Metoh.Game
                 tent.transform.parent = root.transform;
                 tent.transform.localPosition = new Vector3(i * 4.9f, 0f, i * 1.4f);
                 tent.transform.localRotation = Quaternion.Euler(0f, i * 24f, 0f);
+                // A real ridge tent, not Cone(r, h, 4) — that is a four-sided PYRAMID, and a pyramid
+                // has a point where a tent has a ridge. See MeshUtil.RidgeTent for why the sag matters.
+                var canvas = MeshUtil.Surface(MeshUtil.Rgb(0xc7563c), 0.22f, ProcTex.FabricNormal, 0.7f, 3f);
                 var mf = tent.AddComponent<MeshFilter>();
-                mf.sharedMesh = MeshUtil.Cone(1.5f, 1.9f, 4); // 4 segments = a pitched A-frame
-                tent.AddComponent<MeshRenderer>().sharedMaterial = MeshUtil.Surface(MeshUtil.Rgb(0xc7563c), 0.22f, ProcTex.FabricNormal, 0.7f, 3f);
+                mf.sharedMesh = MeshUtil.RidgeTent(1.35f, 1.75f, 1.9f,
+                    HPQuality.HighDetail ? 5 : 3, HPQuality.HighDetail ? 8 : 4);
+                tent.AddComponent<MeshRenderer>().sharedMaterial = canvas;
+
+                // Guy lines to pegs. Four thin poles for the cost of nothing, and they are what stop
+                // the tent reading as an object resting ON the snow rather than pitched INTO it.
+                var cord = MeshUtil.Lit(MeshUtil.Rgb(0x2e2a24));
+                for (int g = 0; g < 4; g++)
+                {
+                    float sx = (g & 1) == 0 ? -1f : 1f;
+                    float sz = g < 2 ? -1f : 1f;
+                    var guy = NewMeshGo("Guy", MeshUtil.TaperedCylinder(0.018f, 0.014f, 1.5f, 3), cord);
+                    guy.transform.SetParent(tent.transform, false);
+                    guy.transform.localPosition = new Vector3(0f, 1.72f, sz * 1.85f);
+                    guy.transform.localRotation = Quaternion.Euler(sz * 46f, 0f, sx * 34f);
+                }
             }
 
             AddBox(root, "Crate1", new Vector3(-2.4f, 0.35f, 1.9f), new Vector3(0.9f, 0.7f, 0.9f), MeshUtil.Rgb(0x6f6250));
@@ -1021,23 +1041,25 @@ namespace Metoh.Game
             tarp.AddComponent<MeshFilter>().sharedMesh = MeshUtil.EllipseDisc(1.5f, 1.2f, 14);
             tarp.AddComponent<MeshRenderer>().sharedMaterial = MeshUtil.Surface(MeshUtil.Rgb(0x3a4650), 0.25f, ProcTex.FabricNormal, 0.6f, 2f);
 
-            // The bag: a rounded body with end caps and a strap.
-            var body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-            Object.Destroy(body.GetComponent<UnityEngine.Collider>());
-            body.name = "Bag";
+            // The bag. Was a rotated CAPSULE, which is a perfect cylinder with perfect hemispheres on
+            // the ends — the shape of a propane tank, not of a canvas holdall with things in it. This
+            // is the object every searcher walks up to and stares at while the deposit hold runs, so
+            // it gets looked at closer than almost anything else in the world.
+            var canvasMat = MeshUtil.Surface(MeshUtil.Rgb(0xb8552f), 0.28f, ProcTex.FabricNormal, 0.8f, 2.5f);
+            var body = NewMeshGo("Bag", MeshUtil.Blob(0.72f, 0.30f, 0.34f, 7, 12, 4021, 0.16f), canvasMat);
             body.transform.SetParent(root.transform, false);
-            body.transform.localPosition = new Vector3(0f, 0.34f, 0f);
-            body.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
-            body.transform.localScale = new Vector3(0.62f, 0.72f, 0.62f);
-            body.GetComponent<MeshRenderer>().sharedMaterial = MeshUtil.Surface(MeshUtil.Rgb(0xb8552f), 0.28f, ProcTex.FabricNormal, 0.8f, 2.5f);
+            body.transform.localPosition = new Vector3(0f, 0.32f, 0f);
 
-            var strap = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            Object.Destroy(strap.GetComponent<UnityEngine.Collider>());
-            strap.name = "Strap";
+            // A slumped end, because a full bag does not hold a symmetrical shape.
+            var endLump = NewMeshGo("BagEnd", MeshUtil.Blob(0.26f, 0.24f, 0.28f, 6, 10, 4022, 0.20f), canvasMat);
+            endLump.transform.SetParent(root.transform, false);
+            endLump.transform.localPosition = new Vector3(0.52f, 0.24f, 0.04f);
+
+            var webbing = MeshUtil.Surface(MeshUtil.Rgb(0x3a3026), 0.14f, ProcTex.FabricNormal, 0.6f, 6f);
+            var strap = NewMeshGo("Strap", MeshUtil.Limb(0.05f, 0.05f, 1.34f, 6, 6, 4023, 0.05f), webbing);
             strap.transform.SetParent(root.transform, false);
-            strap.transform.localPosition = new Vector3(0f, 0.55f, 0f);
-            strap.transform.localScale = new Vector3(1.5f, 0.09f, 0.22f);
-            strap.GetComponent<MeshRenderer>().sharedMaterial = MeshUtil.Lit(MeshUtil.Rgb(0x3a3026));
+            strap.transform.localPosition = new Vector3(-0.67f, 0.50f, 0f);
+            strap.transform.localRotation = Quaternion.Euler(0f, 0f, -90f);
 
             // A warm work lamp over it — the "safe place" beacon.
             var lamp = new GameObject("DuffelLamp").AddComponent<Light>();
@@ -1090,24 +1112,38 @@ namespace Metoh.Game
                 mound.transform.localPosition = new Vector3(0f, 1.1f, -3.4f);
                 mound.transform.localScale = new Vector3(13f, 7.2f, 11f);
 
-                // The opening: a dark recess set into the mound's front face.
-                var mouth = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                Object.Destroy(mouth.GetComponent<UnityEngine.Collider>());
-                mouth.name = "Mouth";
+                // The opening. Was a scaled SPHERE, which is the single worst shape available for a
+                // hole: a sphere is convex, so the "recess" bulged outward and read as a black
+                // beachball parked against the ice. An irregular mass reads as a crack because its
+                // outline is broken — and the outline is all you get, since the interior is unlit.
+                var mouth = NewMeshGo("Mouth", MeshUtil.Rock(1f, 8, 12, caveIndex + 11), voidMat);
                 mouth.transform.SetParent(root.transform, false);
                 mouth.transform.localPosition = new Vector3(0f, 1.5f, 0.7f);
                 mouth.transform.localScale = new Vector3(4.6f, 3.9f, 4.2f);
-                mouth.GetComponent<MeshRenderer>().sharedMaterial = voidMat;
 
-                // Overhanging brow above the opening — the strongest "this is an entrance" cue.
-                var brow = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                Object.Destroy(brow.GetComponent<UnityEngine.Collider>());
-                brow.name = "Brow";
+                // Overhanging brow above the opening — the strongest "this is an entrance" cue, and
+                // formerly a rotated cube. A straight horizontal edge is the one line that never occurs
+                // in broken ice, so it read as a lintel somebody had installed.
+                var brow = NewMeshGo("Brow", MeshUtil.Rock(1f, 7, 12, caveIndex + 23), darkRock);
                 brow.transform.SetParent(root.transform, false);
-                brow.transform.localPosition = new Vector3(0f, 3.5f, 1.5f);
+                brow.transform.localPosition = new Vector3(0f, 3.4f, 1.4f);
                 brow.transform.localRotation = Quaternion.Euler(-14f, 0f, 0f);
-                brow.transform.localScale = new Vector3(7.2f, 0.9f, 3.0f);
-                brow.GetComponent<MeshRenderer>().sharedMaterial = darkRock;
+                brow.transform.localScale = new Vector3(3.9f, 0.62f, 1.7f);
+
+                // Icicles across the brow — the detail that says ICE rather than rock, and the one
+                // piece of geometry here small enough to read as detail at the range you approach from.
+                // Hashed off the cave index like everything else, never from an RNG stream ([rng-lockstep]).
+                var ice = MeshUtil.Surface(MeshUtil.Rgb(0xbfe2f0), 0.72f, ProcTex.IceNormal, 0.8f, 0.9f);
+                int teeth = HPQuality.HighDetail ? 9 : 5;
+                for (int t = 0; t < teeth; t++)
+                {
+                    float h01 = MeshUtil.Hash01(caveIndex * 977 + t * 37);
+                    float len = 0.55f + h01 * 1.5f;
+                    var spike = NewMeshGo("Icicle", MeshUtil.Limb(0.02f, 0.11f, len, 5, 5, caveIndex * 50 + t, 0.12f), ice);
+                    spike.transform.SetParent(root.transform, false);
+                    spike.transform.localPosition = new Vector3(
+                        Mathf.Lerp(-3.3f, 3.3f, (t + 0.5f) / teeth), 3.25f - len, 1.75f + h01 * 0.5f);
+                }
 
                 // Flanking pillars framing the opening, and rubble spilling out of it.
                 Boulder(rock, cave.X + px * 3.1 + dx * 0.6, cave.Z + pz * 3.1 + dz * 0.6, 1.9);
@@ -1183,7 +1219,7 @@ namespace Metoh.Game
         private void Boulder(Material rock, double x, double z, double r)
         {
             // Hashed from the position, so a given world always gets the same rocks and no RNG stream
-            // is touched (UNITY_PORT_NOTES §3c).
+            // is touched (UNITY_PORT_NOTES [rng-lockstep]).
             int variant = Mathf.Abs((int)(x * 73.3 + z * 149.7)) % 8;
             var go = NewMeshGo("Boulder", MeshUtil.Rock((float)r, 7, 10, variant), rock);
             float y = (float)World.GetHeight(x, z);
@@ -1374,7 +1410,7 @@ namespace Metoh.Game
         /// `dir = (cos e · sin a, sin e, cos e · cos a)` gives a=0 → +Z, a=90° → +X.
         ///
         /// **Read the map's compass before trusting your instincts here.** `MapView.ToMap` MIRRORS
-        /// the x axis to match the sim's handedness (see §2), and its compass labels put **W at
+        /// the x axis to match the sim's handedness (see [handedness]), and its compass labels put **W at
         /// world +X and E at world −X** — the opposite of the usual assumption. North is −Z. So east
         /// is a = 270°, and the moon runs 270° → 360°(south) → 450°(west). Get this backwards and the
         /// moon rises in the west, which is the classic internally-consistent-but-wrong bug.
@@ -1460,7 +1496,7 @@ namespace Metoh.Game
             if (shader == null)
             {
                 // Don't fail silently into a black void — this is exactly the "menu button that does
-                // nothing" failure mode from §4. Keep the old flat fill and say why.
+                // nothing" failure mode from [feedback]. Keep the old flat fill and say why.
                 Debug.LogWarning("[WorldBuilder] Metoh/NightSky shader not found — " +
                                  "falling back to a flat sky. Is Shaders/NightSky.shader imported?");
                 _skyMat = null;
@@ -1658,7 +1694,7 @@ namespace Metoh.Game
         /// Nudge a palette colour deterministically per forest chunk, so neighbouring stands differ.
         ///
         /// Uses its own hash of the cell index rather than any RNG stream — this must never touch the
-        /// tree/collider lockstep (UNITY_PORT_NOTES §3c), and being a pure function of the index means
+        /// tree/collider lockstep (UNITY_PORT_NOTES [rng-lockstep]), and being a pure function of the index means
         /// it is stable across a rebuild without needing a stream at all. Value-only: hue is left
         /// alone so the palette still reads as one deliberate scheme rather than as noise.
         /// </summary>

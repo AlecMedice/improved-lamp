@@ -25,8 +25,7 @@ improved-lamp/
 │   ├── CHARACTER_FUNC_DEV.md ← specialties, the evidence/casting system, the duffel
 │   ├── ROADMAP.md           ← phased development plan & milestones
 │   ├── UNITY_PORT_NOTES.md  ← Unity traps and conventions (read before touching unity/)
-│   ├── Metoh_migration.md   ← the Hollow Pines → Metoh re-theme plan and its rationale
-│   └── July19Work.md        ← the Unity port's build log (historical record, not current)
+│   └── Metoh_migration.md   ← the re-theme record + what shipped after it
 ├── client/              ← Three.js + Vite + TypeScript (the game you run in a browser)
 ├── server/              ← Colyseus + TypeScript (authoritative multiplayer room)
 ├── shared/sim/          ← the deterministic world + movement sim, imported by both

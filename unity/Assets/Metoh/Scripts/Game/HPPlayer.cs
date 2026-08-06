@@ -135,12 +135,20 @@ namespace Metoh.Game
 
         // --- Visuals ---
         private Transform _visualRoot;
-        private Renderer _bodyRenderer;
-        private Material _bodyMat;
+        private Material _bodyMat, _gearMat, _eyeMat;
         private Light _flashlight;
         private Renderer _recDot;
         private byte _builtRole = 255;
         private Color _baseBodyColor;
+        private Avatar _avatar;
+        private TorchBeam _beam;
+        // Animation drive. Speed and yaw rate are measured from the TRANSFORM rather than read from the
+        // sim, so the owner and a remote (whose transform is interpolated by FishNet) go down one code
+        // path and a remote's gait matches the motion actually being drawn rather than the motion the
+        // owner reported some milliseconds ago.
+        private Vector3 _lastVisPos;
+        private float _lastVisYaw, _visSpeed, _visYawRate;
+        private bool _visPosInit;
 
         // --- Senses overlay (V, Yeti, client-only render toggle like the web build) ---
         public static bool SensesOn;
@@ -1503,48 +1511,44 @@ namespace Metoh.Game
         {
             if (_builtRole == Role.Value) return;
             _builtRole = Role.Value;
-            if (_visualRoot != null) Destroy(_visualRoot.gameObject);
+            DisposeVisuals();
             _visualRoot = new GameObject("Visual").transform;
             _visualRoot.SetParent(transform, false);
 
-            var body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-            Destroy(body.GetComponent<UnityEngine.Collider>());
-            body.transform.SetParent(_visualRoot, false);
-            _bodyRenderer = body.GetComponent<MeshRenderer>();
+            // Deterministic per-player shape variation, from the network id rather than any RNG — the
+            // same rule the forest follows ([rng-lockstep]). Five searchers built from one hash would be five
+            // identical mannequins, and the lumps are most of what stops that.
+            int variant = Mathf.Abs(ObjectId) * 31 + 7;
 
             if (IsYeti)
             {
-                body.transform.localScale = new Vector3(1.3f, 1.35f, 1.3f); // capsule h=2 -> ~2.7 m
-                body.transform.localPosition = new Vector3(0f, 1.35f, 0f);
                 _baseBodyColor = MeshUtil.Rgb(0x2a2018);
                 // Matted fur, not painted plastic. Low smoothness so it stays a light SINK — the Yeti
                 // reading as a silhouette that swallows the torch is half of what makes it scary.
                 _bodyMat = MeshUtil.Surface(_baseBodyColor, 0.08f, ProcTex.FurNormal, 1.15f, 2.2f);
-                _bodyRenderer.sharedMaterial = _bodyMat;
-                foreach (float sx in new[] { -0.16f, 0.16f })
-                {
-                    var eye = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                    Destroy(eye.GetComponent<UnityEngine.Collider>());
-                    eye.transform.SetParent(_visualRoot, false);
-                    eye.transform.localScale = Vector3.one * 0.12f;
-                    eye.transform.localPosition = new Vector3(sx, 2.3f, 0.55f);
-                    eye.GetComponent<MeshRenderer>().sharedMaterial =
-                        MeshUtil.Emissive(Color.black, MeshUtil.Rgb(0xffcc55), 3.5f);
-                }
+                _eyeMat = MeshUtil.Emissive(Color.black, MeshUtil.Rgb(0xffcc55), 3.5f);
+                _avatar = Avatar.BuildYeti(_visualRoot, _bodyMat, _eyeMat, variant);
             }
             else
             {
-                body.transform.localScale = new Vector3(0.8f, 0.9f, 0.8f);
-                body.transform.localPosition = new Vector3(0f, 0.9f, 0f);
                 int hex = SpecialtyColors.TryGetValue(Specialty.Value ?? "", out int c) ? c : 0x9aa2aa;
                 _baseBodyColor = MeshUtil.Rgb(hex);
                 // Technical outerwear: a little sheen, woven surface.
                 _bodyMat = MeshUtil.Surface(_baseBodyColor, 0.24f, ProcTex.FabricNormal, 0.8f, 3f);
-                _bodyRenderer.sharedMaterial = _bodyMat;
+                // Pack and hood in webbing brown, deliberately NOT the specialty colour: the colour is
+                // how you tell teammates apart at range, so spending it on the gear too would blur the
+                // one signal it carries.
+                _gearMat = MeshUtil.Surface(MeshUtil.Rgb(0x3a3630), 0.16f, ProcTex.FabricNormal, 0.7f, 3.5f);
+                _avatar = Avatar.BuildSearcher(_visualRoot, _bodyMat, _gearMat, variant);
 
+                // The torch rides the HAND now, not a point floating at eye height. A remote searcher's
+                // beam therefore swings with their arm and sweeps as they walk, which is most of how
+                // you read where somebody else is looking from across a valley — and it is the reason
+                // the hand is the avatar's TorchAnchor rather than the head.
                 var lightGo = new GameObject("Flashlight");
-                lightGo.transform.SetParent(_visualRoot, false);
-                lightGo.transform.localPosition = new Vector3(0.18f, (float)Sim.Player.EyeHeight - 0.15f, 0.1f);
+                lightGo.transform.SetParent(_avatar.TorchAnchor, false);
+                lightGo.transform.localPosition = new Vector3(0f, -0.06f, 0.06f);
+                lightGo.transform.localRotation = Quaternion.Euler(90f, 0f, 0f); // hand hangs -Y; aim +Z
                 _flashlight = lightGo.AddComponent<Light>();
                 _flashlight.type = LightType.Spot;
                 // A searcher's torch is their main tool in the dark, so it reaches and punches harder
@@ -1557,16 +1561,31 @@ namespace Metoh.Game
                 _flashlight.spotAngle = 62f;
                 _flashlight.innerSpotAngle = 38f;
                 _flashlight.intensity = 20f;
-                _flashlight.color = MeshUtil.Rgb(0xfff4dc);
-                _flashlight.shadows = LightShadows.None;
+                // Warmer and slightly greener than the old flat 0xfff4dc: a real headtorch LED is not
+                // white, and against snow — which is the coldest surface in the frame and takes the
+                // moon's blue almost unchanged — the warmth of the beam is what separates "lit by me"
+                // from "lit by the sky". That separation is the whole navigational value of the torch.
+                _flashlight.color = MeshUtil.Rgb(0xffe9c4);
+                // ONLY the owner's torch casts shadows, and only on the expensive tier. A shadow-casting
+                // spot per searcher is five extra shadow maps rendered every frame on a machine whose
+                // whole performance story is integrated graphics — and you cannot see the shadows a
+                // teammate's beam casts 40 m away anyway. Yours you see constantly.
+                _flashlight.shadows = base.IsOwner && HPQuality.HighDetail ? LightShadows.Soft : LightShadows.None;
+                _flashlight.shadowStrength = 0.75f;
+                _flashlight.shadowBias = 0.08f;
                 _flashlight.enabled = false;
+
+                // The beam itself, as geometry. A spot light with nothing in the air is invisible until
+                // it lands on something, so in open snowfield a searcher's torch simply had no presence
+                // in the frame — you saw a lit patch of ground with no shaft connecting it to a person.
+                _beam = TorchBeam.Build(lightGo.transform, _flashlight.range, _flashlight.spotAngle);
 
                 // REC light — a red bead above a filming searcher's head (like the web rec light).
                 var rec = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                 Destroy(rec.GetComponent<UnityEngine.Collider>());
-                rec.transform.SetParent(_visualRoot, false);
-                rec.transform.localScale = Vector3.one * 0.09f;
-                rec.transform.localPosition = new Vector3(0f, 2.05f, 0f);
+                rec.transform.SetParent(_avatar.HeadAnchor, false);
+                rec.transform.localScale = Vector3.one * 0.07f;
+                rec.transform.localPosition = new Vector3(0f, 0.30f, 0f);
                 _recDot = rec.GetComponent<MeshRenderer>();
                 _recDot.sharedMaterial = MeshUtil.Emissive(Color.black, Color.red, 4f);
                 _recDot.enabled = false;
@@ -1574,7 +1593,40 @@ namespace Metoh.Game
 
             // First person: hide your own body, keep your light.
             if (base.IsOwner)
-                foreach (var r in _visualRoot.GetComponentsInChildren<Renderer>()) r.enabled = false;
+            {
+                _avatar.SetVisible(false);
+                if (_recDot != null) _recDot.enabled = false;
+            }
+            else
+            {
+                // Breath on remotes only — see Weather.AttachBreath for why the owner does not get it.
+                Weather.AttachBreath(_avatar.HeadAnchor, IsYeti);
+            }
+        }
+
+        /// <summary>
+        /// Tear down the generated body. Meshes and materials are both native objects Unity's GC does
+        /// NOT collect, and a role swap between matches rebuilds the whole figure — ~19 meshes plus
+        /// three materials each time. The world had exactly this leak before the realism pass swept it.
+        /// </summary>
+        private void DisposeVisuals()
+        {
+            _avatar?.Dispose();
+            _avatar = null;
+            if (_bodyMat != null) Destroy(_bodyMat);
+            if (_gearMat != null) Destroy(_gearMat);
+            if (_eyeMat != null) Destroy(_eyeMat);
+            _bodyMat = _gearMat = _eyeMat = null;
+            if (_visualRoot != null) Destroy(_visualRoot.gameObject);
+            _visualRoot = null;
+            _flashlight = null;
+            _recDot = null;
+            _beam = null;
+        }
+
+        private void OnDestroy()
+        {
+            DisposeVisuals();
         }
 
         /// <summary>
@@ -1636,20 +1688,91 @@ namespace Metoh.Game
                 _bodyMat.SetColor("_BaseColor", target);
             }
 
-            if (_visualRoot != null)
-            {
-                var lying = Status.Value == StatusIncap;
-                var targetRot = lying ? Quaternion.Euler(90f, 0f, 0f) : Quaternion.identity;
-                _visualRoot.localRotation = Quaternion.Slerp(_visualRoot.localRotation, targetRot, Time.deltaTime * 8f);
-            }
+            if (_beam != null) _beam.SetOn(base.IsOwner ? OwnFlashOn : FlashOn.Value);
 
-            // Camera eye follows crouch for the owner; remotes just show the capsule.
-            if (base.IsOwner && Specialty.Value != null && _bodyRenderer != null && !IsYeti)
+            // Body colour can change when the specialty is dealt mid-session.
+            if (!IsYeti && !string.IsNullOrEmpty(Specialty.Value))
             {
-                // Body colour can change when the specialty is dealt mid-session.
                 int hex = SpecialtyColors.TryGetValue(Specialty.Value, out int c) ? c : 0x9aa2aa;
                 _baseBodyColor = MeshUtil.Rgb(hex);
             }
+
+            UpdateAvatar();
+        }
+
+        /// <summary>
+        /// Measure how this body is actually moving, and hand it to the animation layer.
+        ///
+        /// Speed and yaw rate come from the TRANSFORM, not from the sim, and that is deliberate: a
+        /// remote's transform is what FishNet is interpolating and therefore what is being drawn, so a
+        /// gait derived from it cannot slide against the motion on screen. Deriving it from replicated
+        /// velocity instead would put the feet a network frame out of step with the body they belong to.
+        /// </summary>
+        private void UpdateAvatar()
+        {
+            if (_avatar == null) return;
+
+            float dt = Time.deltaTime;
+            Vector3 pos = transform.position;
+            float yaw = transform.eulerAngles.y * Mathf.Deg2Rad;
+
+            if (!_visPosInit)
+            {
+                _visPosInit = true;
+                _lastVisPos = pos;
+                _lastVisYaw = yaw;
+            }
+            else if (dt > 1e-4f)
+            {
+                float moved = Vector2.Distance(new Vector2(pos.x, pos.z), new Vector2(_lastVisPos.x, _lastVisPos.z));
+                // A jump this big is a teleport (cave travel, match-start placement), not a step. Left
+                // unfiltered it spikes the stride rate and the legs blur for a frame on arrival.
+                float inst = moved > 3f ? 0f : moved / dt;
+                _visSpeed = Mathf.Lerp(_visSpeed, inst, 1f - Mathf.Exp(-12f * dt));
+                float dYaw = Mathf.DeltaAngle(_lastVisYaw * Mathf.Rad2Deg, yaw * Mathf.Rad2Deg) * Mathf.Deg2Rad;
+                _visYawRate = Mathf.Lerp(_visYawRate, dYaw / dt, 1f - Mathf.Exp(-9f * dt));
+                _lastVisPos = pos;
+                _lastVisYaw = yaw;
+            }
+
+            // The owner's own body is hidden (first person), so there is nothing to animate and no
+            // reason to spend the frame on it.
+            if (base.IsOwner) return;
+
+            var inp = new AvatarInput
+            {
+                Speed = _visSpeed,
+                Sprinting = _visSpeed > (IsYeti ? 5.5f : 4.2f),
+                Crouched = Crouched.Value,
+                Status = Status.Value,
+                Filming = Filming.Value,
+                Carrying = IsYeti && IsCarryingSomeone(),
+                BeingCarried = GrabberObjectId.Value >= 0,
+                YawRate = _visYawRate,
+            };
+            _avatar.Tick(in inp, dt);
+        }
+
+        /// <summary>
+        /// Is this Yeti hauling a searcher right now? Derived by scanning, not replicated: the victim
+        /// already carries its grabber's id, so a second SyncVar on the Yeti would be the same fact
+        /// stored twice and able to disagree with itself. Six players makes the scan free.
+        /// </summary>
+        private bool IsCarryingSomeone()
+        {
+            for (int i = 0; i < All.Count; i++)
+                if (All[i] != null && All[i].GrabberObjectId.Value == ObjectId) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Play the roar pose on whichever body is the Yeti. Called from the roar RPC every client
+        /// already receives, so the pose needs no message of its own.
+        /// </summary>
+        public static void PlayRoarPose()
+        {
+            for (int i = 0; i < All.Count; i++)
+                if (All[i] != null && All[i].IsYeti) All[i]._avatar?.TriggerRoar();
         }
     }
 }

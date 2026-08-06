@@ -204,7 +204,7 @@ depth — was settled the other way by the Metoh migration. The depth ideas outl
 > supersedes the low-poly framing below for the Unity target. The geometry stays generated and
 > relatively simple — that is not what made it read as "polygons" — but every surface now carries
 > procedurally generated normal detail and a tuned PBR response, lit by a bounce-weighted ambient and
-> soft shadows. See `UNITY_PORT_NOTES.md` §5b for what changed and why the cause was materials rather
+> soft shadows. See `UNITY_PORT_NOTES.md` [materials] for what changed and why the cause was materials rather
 > than mesh density. The **web build keeps the original low-poly look** along with its forest palette.
 
 - **Geometry:** low‑poly meshes with **smooth vertex normals** (`computeVertexNormals`, `flatShading: false`) → rounded, readable, *not* voxel/blocky. Trees = tapered trunks + stacked smooth conifer cones; terrain = noise‑displaced plane with smoothed normals.

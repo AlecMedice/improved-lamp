@@ -268,26 +268,45 @@ namespace Metoh.Game
             }
         }
 
+        /// <summary>
+        /// One pad of a print — a sole or a toe.
+        ///
+        /// Was a CUBE, and the footprint trail is the single most-looked-at object in the game: it is
+        /// the hunters' win condition, it is what a searcher walks head-down following for whole
+        /// nights, and it is examined from about a metre away while the cast hold runs. A rectangle
+        /// pressed into snow reads as a stamped tile — nothing in the natural world leaves a print with
+        /// four corners and four straight edges. A squashed irregular blob gives the organic outline
+        /// that makes it read as something that PRESSED into the pack.
+        /// </summary>
         private static void AddPad(Transform parent, Vector3 pos, Vector3 size, Material mat)
         {
-            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            Destroy(go.GetComponent<Collider>());
+            var go = new GameObject("Pad");
             go.transform.SetParent(parent, false);
             go.transform.localPosition = pos;
-            go.transform.localScale = size;
-            go.GetComponent<MeshRenderer>().sharedMaterial = mat;
+            // Variant hashed from the placement, so the two pads of one print differ from each other
+            // and from the next print along the trail, with no RNG stream involved.
+            int variant = Mathf.RoundToInt((pos.x * 977f + pos.z * 331f) * 100f);
+            go.AddComponent<MeshFilter>().sharedMesh =
+                MeshUtil.Blob(size.x * 0.5f, size.y * 0.5f, size.z * 0.5f, 5, 9, variant, 0.16f);
+            go.AddComponent<MeshRenderer>().sharedMaterial = mat;
         }
 
-        /// <summary>A tilted plate — like AddPad but rotatable, for broken crust shards.</summary>
+        /// <summary>
+        /// A tilted plate of broken crust. Irregular rather than a box: ice fractures along its own
+        /// flaws, so a shard is a rough polygon — and three rectangles at angles read as a stack of
+        /// dropped tiles, which is a shape that says "placed" exactly where the mechanic needs
+        /// "something heavy went through here".
+        /// </summary>
         private static void AddSlab(Transform parent, Vector3 pos, Quaternion rot, Vector3 size, Material mat)
         {
-            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            Destroy(go.GetComponent<Collider>());
+            var go = new GameObject("Slab");
             go.transform.SetParent(parent, false);
             go.transform.localPosition = pos;
             go.transform.localRotation = rot;
+            int variant = Mathf.RoundToInt((pos.x * 613f + pos.z * 149f) * 100f);
+            go.AddComponent<MeshFilter>().sharedMesh = MeshUtil.Rock(1f, 5, 8, variant);
             go.transform.localScale = size;
-            go.GetComponent<MeshRenderer>().sharedMaterial = mat;
+            go.AddComponent<MeshRenderer>().sharedMaterial = mat;
         }
 
         private static void AddStick(Transform parent, Vector3 pos, Quaternion rot, float len, Material mat)

@@ -45,7 +45,7 @@ Owner-approved decisions (do NOT re-litigate):
 
 Run Gates A+B after **every** commit. Run Gate C after commits 1, 2, and 5.
 
-Before touching Unity code, read `docs/UNITY_PORT_NOTES.md` — especially §3/§3c (never disturb the tree/collider RNG streams) and §4 (a mechanic isn't ported until its feedback is).
+Before touching Unity code, read `docs/UNITY_PORT_NOTES.md` — especially [parity-lock]/[rng-lockstep] (never disturb the tree/collider RNG streams) and [feedback] (a mechanic isn't ported until its feedback is).
 
 ---
 
@@ -102,7 +102,7 @@ Gates A, B, C (namespace-only — **no golden regen needed**, values and keys un
 
 ## Commit 3 — Unity visual re-theme (`unity/Assets/Metoh/Scripts/Game/WorldBuilder.cs`)
 
-**Hard rule (UNITY_PORT_NOTES §3c): never touch tree/collider RNG streams or any shared-sim value.** Only colors, mesh choices, and material selection — plus the undergrowth pass, which owns its private stream (`seed ^ 0x5eedb115`) and may be freely retuned.
+**Hard rule (UNITY_PORT_NOTES [rng-lockstep]): never touch tree/collider RNG streams or any shared-sim value.** Only colors, mesh choices, and material selection — plus the undergrowth pass, which owns its private stream (`seed ^ 0x5eedb115`) and may be freely retuned.
 
 Palette constants (lines ~50–59) — suggested values, tune by eye:
 
@@ -132,7 +132,7 @@ Builder changes:
 - **`ClueMarker.cs`** — footprint → blue-shadowed snow print; branch clue → cracked-ice slab. `TrailMark` orange flag stays (pops on snow).
 - **`MapView.cs`** — baked ground/lake/trail colors must match the new palette.
 
-Gates A/B unaffected (Unity-only C#); smoke-compile per UNITY_PORT_NOTES §8 if the scratch csproj rig exists.
+Gates A/B unaffected (Unity-only C#); smoke-compile per UNITY_PORT_NOTES [workflow] if the scratch csproj rig exists.
 
 ## Commit 4 — audio re-theme (`unity/Assets/Metoh/Scripts/Game/HPAudio.cs`)
 
@@ -210,7 +210,7 @@ today, and the same as `lakeHunterFactor`, which has always worked this way.
 Consequence for verification: the slow **cannot** be asserted from a socket-level smoke test, since
 driving the socket by hand measures the harness rather than the sim. It is covered by vitest and the
 C# parity harness instead. The smoke test covers what the server genuinely owns: where prints drop
-and how they are capped. Note the client-auth caveat in UNITY_PORT_NOTES §0 for both builds, not
+and how they are capped. Note the client-auth caveat in UNITY_PORT_NOTES [open-items] for both builds, not
 just Unity.
 
 ### 5b. Searcher snow prints — reuse the Clue pipeline
@@ -227,7 +227,7 @@ just Unity.
 - Visibility: `ClueMarker.OnStartClient` disables the print's renderers unless the local player `IsYeti`; the senses overlay (`V`) adds prints to its glow pass (same emissive-swap treatment as the scent trail). `MapView` draws print dots for the Yeti only.
 - `YetiBot` steering toward fresh prints = optional follow-up, not in scope.
 
-**Feedback (required per UNITY_PORT_NOTES §4):** searcher HUD shows a "DEEP SNOW" pill while `DeepSnowDepth > 0.35` — a threshold, not `> 0`, so the pill doesn't flicker across a feathered basin edge (Unity `HPHud.cs` required; web `HUD.ts` optional); off-trail footsteps duller (Commit 4 hook); one briefing-card sentence per role. Note the pill tracks the *slow*, which is the thing the searcher can act on; prints are deliberately not surfaced to them.
+**Feedback (required per UNITY_PORT_NOTES [feedback]):** searcher HUD shows a "DEEP SNOW" pill while `DeepSnowDepth > 0.35` — a threshold, not `> 0`, so the pill doesn't flicker across a feathered basin edge (Unity `HPHud.cs` required; web `HUD.ts` optional); off-trail footsteps duller (Commit 4 hook); one briefing-card sentence per role. Note the pill tracks the *slow*, which is the thing the searcher can act on; prints are deliberately not surfaced to them.
 
 Gates A, B (new vitest case), C (regen golden + mirrored test).
 
@@ -238,10 +238,11 @@ Gates A, B (new vitest case), C (regen golden + mirrored test).
 - `docs/CHARACTER_FUNC_DEV.md` — terminology pass (plaster casts → snow casts).
 - `docs/ROADMAP.md` — touch-ups; note parity-regen events.
 - `docs/BIGFOOT_DEPTH.md` — **delete** (its premise is the BIGFOOT-overlap decision this migration resolves); port any still-relevant depth ideas into GAME_DESIGN.md first.
-- `docs/UNITY_PORT_NOTES.md` — sync paths in §8 (doc is stale on the live project path), three-trees list (`unity/Assets/Metoh/{Scripts,Shaders}`, `csharp/Metoh.Sim`), `Metoh.exe` cmdline, menu names, add the client-auth deep-snow caveat to §0.
+- `docs/UNITY_PORT_NOTES.md` — sync paths in [workflow] (doc is stale on the live project path), three-trees list (`unity/Assets/Metoh/{Scripts,Shaders}`, `csharp/Metoh.Sim`), `Metoh.exe` cmdline, menu names, add the client-auth deep-snow caveat to [open-items].
 - `README.md`, `CLAUDE.md` — full rewrite (orientation, message contract with `yetiSpeedMul` + `"snowprint"`, room `"mountain"`, run instructions).
 - `client/index.html` + `ui/Briefing.ts` — copy strings.
-- `docs/July19Work.md` — **leave as-is** (explicit historical record); it's the one allowed grep hit.
+- `docs/July19Work.md` — was left as-is at the time (explicit historical record, and the one allowed
+  grep hit). **Deleted 2026-08-05** at the owner's call; it is in git history if it is ever wanted.
 
 ## Commit 7 (optional) — add a `parity` CI job to `.github/workflows/ci.yml` (`actions/setup-dotnet@v4`, .NET 8, `dotnet run --project csharp/Parity`). First confirm `csharp/Parity/bin|obj` are untracked.
 
@@ -262,7 +263,7 @@ Gates A, B (new vitest case), C (regen golden + mirrored test).
 2. **`yetiSpeedMul` is a breaking Colyseus wire change** — client+server deploy together (fine, nothing persists), but client state is `any`-typed: grep, not tsc, catches missed readers.
 3. **FishNet SyncVar renames** (`WantsYeti`) are safe only across a synchronized rebuild — never mix old/new builds.
 4. **Golden regen discipline:** regen in Commits 1 and 5 only, then immediately `dotnet run`.
-5. **Never disturb tree/collider RNG lockstep** (§3c) — Commit 3 changes must be material/mesh-level or in the undergrowth's private stream; the height-based crown rule uses no RNG draw, which is why it's legal.
+5. **Never disturb tree/collider RNG lockstep** ([rng-lockstep]) — Commit 3 changes must be material/mesh-level or in the undergrowth's private stream; the height-based crown rule uses no RNG draw, which is why it's legal.
 6. **Snowprints must live in their own list/cap** on both server implementations so they can't evict the Yeti trail.
 7. Trail coupling raises the stakes on any future "bigger map" work: paths stopping short would strand players in permanent deep snow.
 8. No case-only path renames on Windows (none are planned; keep it that way).
@@ -270,7 +271,7 @@ Gates A, B (new vitest case), C (regen golden + mirrored test).
 ## Verification checklist
 
 1. Gates A+B green after every commit; Gate C ends `PARITY OK` after Commits 1, 2, 5.
-2. `grep -ri "bigfoot\|hollowpines\|hollow.pines" --exclude-dir=node_modules --exclude-dir=bin --exclude-dir=obj --exclude-dir=dist --exclude-dir=.git .` → zero hits outside `docs/July19Work.md` and this file. `dist/` and `.git` must be excluded too: `client/dist/` exists locally as an untracked build artifact and currently holds stale pre-rebrand bundles, and `.git` holds old commit messages — all three would otherwise show as false hits.
+2. `grep -ri "bigfoot\|hollowpines\|hollow.pines" --exclude-dir=node_modules --exclude-dir=bin --exclude-dir=obj --exclude-dir=dist --exclude-dir=.git .` → zero hits outside this file (and, at the time, `docs/July19Work.md`, since deleted). `dist/` and `.git` must be excluded too: `client/dist/` exists locally as an untracked build artifact and currently holds stale pre-rebrand bundles, and `.git` holds old commit messages — all three would otherwise show as false hits.
 3. Web smoke (throwaway `client/_smoke.mjs`, per CLAUDE.md pattern): yeti + searcher join; roar/grab/film; winner `"yeti"`; off-trail searcher measurably slower; snowprint clues appear in state.
 4. Unity solo (owner play-test): snow world with legible packed trails, prayer flags/basecamp/crevasses, "DEEP SNOW" pill + slow off-trail, ice-crack + tarn-groan audio, title "METOH", `Metoh.exe`.
 5. Unity two-instance: snow prints appear behind the searcher, visible only in the Yeti instance (+ glow under `V`); Yeti unaffected by deep snow; grab/dazzle/film/revive intact.
@@ -361,17 +362,64 @@ to a server-side path.
 (FLEE → REVIVE → BANK → FILM → COLLECT → INVESTIGATE → EXPLORE), navigation and every server
 hand-off are real and wired; the judgement inside several rungs is shallow and marked TODO.
 `PLAY AS YETI` is live. Full state, and the honest list of what is missing, in
-`UNITY_PORT_NOTES.md` §6d.
+`UNITY_PORT_NOTES.md` [searcher-bots].
 
 **Realism pass (43fe8a7).** Owner-directed change of art direction; supersedes the low-poly framing
-in `GAME_DESIGN.md` §8 for the Unity target. The cause of the "just polygons" look was **materials,
+in `GAME_DESIGN.md` [workflow] for the Unity target. The cause of the "just polygons" look was **materials,
 not mesh density** — every surface was `URP/Lit`, flat colour, smoothness 0.05. Fixed with
 procedurally generated normal maps (`ProcTex.cs`, tileable noise, still no asset files), per-class
 PBR response, bounce-weighted Trilight ambient, soft shadows and split toning. The blocker was that
 no generated mesh carried **UVs or tangents**, without which a normal map cannot bind at all. Full
-write-up in `UNITY_PORT_NOTES.md` §5b — including the one win impossible from this repo: **SSAO is a
+write-up in `UNITY_PORT_NOTES.md` [materials] — including the one win impossible from this repo: **SSAO is a
 URP Renderer Feature living on a `.asset` the repo does not track.** Owner step, and the largest
 remaining gain, because AO is what grounds an object instead of leaving it hovering over the snow.
+
+## After the record — two more art passes (2026-08-05)
+
+Both landed after the build record above was written, and neither is part of the migration. Recorded
+here because this file is where someone looks to find out what state the build is actually in.
+
+**Legibility pass (0ef25a8).** Owner report after the realism pass shipped: *"everything looks way too
+much the same"* and *"it looks like a PS1 game"*. The second had almost nothing to do with the art —
+**two settings were cancelling the entire realism pass.** `RenderScale` shipped at 0.7, so the scene
+rendered at 70% and was upscaled, dissolving the fine normal grain [materials] is built on; and
+`HighDetail = renderScale > 0.7f` was tested against a shipping default of *exactly* 0.7, so it was
+false on every clean install and nobody had ever seen the expensive tier. *Shape: a boundary condition
+set to the same value as a default is a switch that is always off, and it fails silently as an art
+problem rather than as a bug.* Then the fix for "everything looks the same", which was a **value-range**
+problem and not a hue one: `Shaders/Snowpack.shader` blends snow against wind-stripped rock by slope,
+the deep-snow basin is finally visible, the value ramp widened, a seeded ridgeline renders in the
+skybox, crevasses got identity colours, and light levels rose ~40%. Also `MeshUtil.Conifer` and `Rock`,
+because [materials] was right about surfaces and **wrong about silhouettes**. SSAO stopped being a README step
+nobody performed and became `Metoh → Configure Render Pipeline`. Full write-up in [legibility].
+
+**Graphics pass (this commit).** Owner report: *"the yeti is literally 2 ovals on top of one
+another"* — an understatement. It was **one** primitive capsule plus two spheres for eyes, searchers
+were the same capsule, and there was **no character animation anywhere in the project**. Every body
+slid across the snow in a fixed pose.
+
+- **Jointed procedural bodies** (`Avatar.cs` over new `MeshUtil.Lathe`/`Limb`/`Blob`) — a hierarchy of
+  separate meshes moved by transform. No rig, no skinning, no `.fbx`, because an asset file would break
+  "clone it and it runs". The Yeti is the owner-chosen **hunched bruiser**: shoulder yoke ~1.7x hip
+  width, head ahead of the spine rather than on top of it, arms hanging below the knee.
+- **Full procedural animation** — walk cycle, counter-swinging arms, torso lean into turns and into
+  speed, head leading the turn, and poses for roar / carry / film / frozen / incapacitated. Driven
+  **entirely from already-replicated state**; it adds no SyncVar and no RPC, so it cannot desync.
+- **Weather** (`Weather.cs`) — falling snow, ground spindrift, breath vapour on remotes, motes in the
+  torch beam. The project had **zero** particle systems. It follows `Camera.main` and bootstraps before
+  connection, so the **title cinematic gets the same weather the match does**.
+- **Title card** (`TitleActors.cs`) — the menu backdrop is the longest look anyone gets at the bodies,
+  and it was an empty valley. Searchers now idle around the fire in the camp shot and the Yeti crosses
+  the corridor in the trail shot. They touch no networking and are destroyed on connect.
+- **Torch** — a visible additive beam (`Shaders/TorchBeam.shader`), riding the **hand** so a remote's
+  beam swings with their arm, warmer colour, and owner-only soft shadows on the high tier.
+- **Props** — cave mouths (a scaled sphere is a convex shape doing the job of a hole), their brows,
+  hanging icicles, real ridge tents instead of four-sided pyramids, the duffel, footprint pads and
+  broken-ice slabs, and the dropped proof pile.
+
+*Shape worth keeping from this one:* the realism pass added a stretched fur normal map and applied it
+to a capsule. **A material cannot fix an outline** — and where [legibility] learned that on trees, the same
+mistake was sitting untouched on the creature the whole game is named after.
 
 ## Pre-existing bugs found along the way
 
@@ -401,9 +449,9 @@ Each was found by touching something adjacent, and each had been quietly wrong f
 | A — client `tsc` + `vite build` | green |
 | B — server `tsc` + vitest | green, **39 tests** (was 35) |
 | C — `PARITY OK` | green, with 26 new deep-snow cross-checks; now in CI with a regen-and-diff step |
-| Unity smoke-compile (§8) | green, 0 warnings 0 errors |
+| Unity smoke-compile ([workflow]) | green, 0 warnings 0 errors |
 | Web smoke (throwaway, deleted) | green — prints appear, coexist with the Yeti trail, never drop in camp, track the searcher not the Yeti, stop when standing still |
-| Brand sweep | zero hits outside `docs/July19Work.md` and this file |
+| Brand sweep | zero hits outside this file (`docs/July19Work.md`, the other permitted hit, has since been deleted) |
 | **Owner play-test** | **not done — nothing here has been seen or heard** |
 
 Checklist items 4 and 5 (Unity solo, Unity two-instance) remain **open**: they need the editor and a
@@ -418,7 +466,7 @@ In rough order of value:
 1. **Run it.** Everything visual and audible is unseen and unheard. The realism pass's tiling scales
    especially are the kind of thing that is obviously wrong the moment you look and impossible to
    guess from a compiler.
-2. **Add SSAO** in the live project (§5b) — biggest remaining visual gain, two minutes of clicking.
+2. **Add SSAO** in the live project ([materials]) — biggest remaining visual gain, two minutes of clicking.
 3. **`SearcherBot`'s EXPLORE**, which is random roam, and is why a bot team reads as five people
    wandering rather than as a search party.
 4. **Balance the deep-snow constants** — `deepSnowFactor`, `driftHeight`, `driftDepth`, print

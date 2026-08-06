@@ -5,7 +5,7 @@
 // WHY THIS IS A SCRIPT AND NOT A README STEP. The repo tracks only Scripts/, Shaders/ and Sim/ —
 // the .asset files that define the render pipeline live in the live project and are never committed.
 // So every setting that lives on those assets was, until now, an instruction in a document that had
-// to be carried out by hand and could not be verified: UNITY_PORT_NOTES §5b literally listed
+// to be carried out by hand and could not be verified: UNITY_PORT_NOTES [materials] literally listed
 // "Add Renderer Feature → Screen Space Ambient Occlusion" as an owner step, and it was never done,
 // which is why the largest single realism gain available has been sitting unclaimed.
 //

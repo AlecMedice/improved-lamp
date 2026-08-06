@@ -16,7 +16,7 @@ export class Briefing {
     const objective = isYeti
       ? "Survive three nights. Hunt the searchers, drag them off, and erase their footage — just don't get filmed."
       : "Capture three solid videos of the Yeti before the third dawn. Track its prints and broken crust — and don't get caught alone.";
-    // Deep snow, stated as capability rather than as numbers (UNITY_PORT_NOTES §9).
+    // Deep snow, stated as capability rather than as numbers (UNITY_PORT_NOTES [copy]).
     const snowLine = isYeti
       ? "The drifts don't slow you, and the searchers can't help printing their way across them — read the tracks."
       : "The valleys lie deep and slow you down; the wind-scoured high ground is faster going. Watch for DEEP SNOW.";

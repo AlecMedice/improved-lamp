@@ -5,7 +5,7 @@
 // judgement inside a few states, and each of those is marked TODO with what "good" would look like.
 // It is built to be filled in, not to be a finished opponent-team. Nothing here has been play-tested.
 //
-// Same architecture as YetiBot, for the same reasons (see UNITY_PORT_NOTES §6b):
+// Same architecture as YetiBot, for the same reasons (see UNITY_PORT_NOTES [yeti-bot]):
 //   - INTENT ONLY. It never moves a transform or resolves an action itself. It picks a direction and
 //     a few booleans and hands them to HPPlayer.ServerBot*, which run the exact same shared sim and
 //     the same GameManager authority a human's input lands in. A CPU searcher therefore obeys

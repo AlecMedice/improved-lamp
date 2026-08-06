@@ -35,15 +35,16 @@ namespace Metoh.Game
             var root = new GameObject("PileVisual").transform;
             root.SetParent(transform, false);
 
-            // The pack itself, tipped over and open.
-            var canvas = MeshUtil.Lit(MeshUtil.Rgb(0x3a3228));
-            var bag = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            Destroy(bag.GetComponent<Collider>());
+            // The pack itself, tipped over and open. Not a box: this is a canvas bag that has been
+            // dropped and spilled, and the whole read of a proof pile is "something went wrong here".
+            // A crisp rectangle says the opposite — it says somebody set it down.
+            var canvas = MeshUtil.Surface(MeshUtil.Rgb(0x3a3228), 0.18f, ProcTex.FabricNormal, 0.8f, 4f);
+            var bag = new GameObject("Bag");
             bag.transform.SetParent(root, false);
-            bag.transform.localPosition = new Vector3(0f, 0.16f, 0f);
+            bag.transform.localPosition = new Vector3(0f, 0.15f, 0f);
             bag.transform.localRotation = Quaternion.Euler(-12f, 24f, 8f);
-            bag.transform.localScale = new Vector3(0.62f, 0.3f, 0.42f);
-            bag.GetComponent<MeshRenderer>().sharedMaterial = canvas;
+            bag.AddComponent<MeshFilter>().sharedMesh = MeshUtil.Blob(0.31f, 0.15f, 0.21f, 6, 10, ObjectId * 13, 0.22f);
+            bag.AddComponent<MeshRenderer>().sharedMaterial = canvas;
 
             // Its contents, thrown clear. Tapes and casts read differently so you can tell at a
             // glance what's lying there — the same split the duffel manifest uses.

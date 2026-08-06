@@ -38,7 +38,7 @@ namespace Metoh.Game
         /// Drop the baked terrain image so the next open re-bakes it. Called by WorldBuilder.SetSeed:
         /// the background is baked from the world's heightfield, so a reseed leaves it showing the
         /// PREVIOUS session's ridges under this session's markers — the same class of silent
-        /// inconsistency as the mirrored-map bug (see UNITY_PORT_NOTES §2).
+        /// inconsistency as the mirrored-map bug (see UNITY_PORT_NOTES [handedness]).
         /// </summary>
         public static void InvalidateBackground()
         {

@@ -6,9 +6,24 @@ worth keeping.
 
 For persona/evidence design, see [`CHARACTER_FUNC_DEV.md`](CHARACTER_FUNC_DEV.md).
 
+> **How sections are named.** Every heading carries a short bracketed id — `[rng-lockstep]`,
+> `[materials]`, `[bodies]` — and everything that references a section, in this file or from a code
+> comment, uses that id. **Cite the id, never the position.**
+>
+> This replaced a `§5b`/`§6d`-style scheme on 2026-08-05. That scheme had stopped being merely opaque
+> and become actively wrong: sections were appended in the order they were written rather than where
+> they belonged, so the file ran `0, 1, 2, 3, 3b, 3c, 4, 5, 6, 7, 6b, 5b, 5c, 5d, 6d, 6c, 7a…`. The
+> numbers did not sort, which meant they advertised an ordering the document did not have — and every
+> new section forced a choice between renumbering ~90 references across 19 files or inventing another
+> letter suffix. An id says what a section is *about*, so it survives reordering, survives rewording
+> the heading's prose, and greps exactly (`rg "\[rng-lockstep\]"`).
+>
+> Other docs keep their own numbering: `GAME_DESIGN.md` §7.7 and `CHARACTER_FUNC_DEV.md` §3 are those
+> files' internal schemes and are unaffected by this.
+
 ---
 
-## 0. Open items inherited from the retired planning docs
+## [open-items] Open items inherited from the retired planning docs
 
 `UNITY_MIGRATION.md`, `NETWORKING.md` and `BUGS.md` were retired on 2026-07-19. Everything in them
 was either finished or is captured below — this is the part that was still outstanding.
@@ -23,7 +38,7 @@ which is which, because it changes the size of the job:
   `NetworkTransform`, while every outcome (status, filming, dazzle, grab, proof) is already
   host-authoritative. Adopting it means moving `HPPlayer.StepSim` into a `[Replicate]` method and
   making `PlayerSimState` a reconcile struct. **When it lands, FishNet's tick loop owns the step
-  cadence and the per-frame stepping in §7 reverts.**
+  cadence and the per-frame stepping in [perf] reverts.**
   > **Deep snow rides on this, and so does the web build.** The drift slow (`Movement.DeepSnowDepth`)
   > is applied inside `StepPlayer`, i.e. by whoever simulates the player — which today is the owning
   > client. A hacked client can ignore it. This is *not* a Unity-only caveat, which the migration
@@ -74,11 +89,11 @@ silent degradation rather than an error:
 
 Terrain, the lake and the lookout are **fixed coordinates** near the origin and will simply sit in one
 corner of a much larger map; they need moving or scaling by hand. Any change here means regenerating
-`golden.json` and re-running the parity harness (see §3).
+`golden.json` and re-running the parity harness (see [parity-lock]).
 
 ---
 
-## 1. FishNet stamps identity metadata from editor callbacks — scripted setup outruns it
+## [fishnet-identity] FishNet stamps identity metadata from editor callbacks — scripted setup outruns it
 
 **This bit twice, and both times the reported error was several steps downstream of the cause.**
 
@@ -102,7 +117,7 @@ It therefore stamps them explicitly:
 Manual escape hatch: **Tools → Fish-Networking → Utility → Reserialize NetworkObjects**
 (tick *Reserialize Scenes* for scene objects), or **Refresh Default Prefabs**.
 
-## 2. Three.js is right-handed; Unity is left-handed. The shared sim is Three's.
+## [handedness] Three.js is right-handed; Unity is left-handed. The shared sim is Three's.
 
 `shared/sim` (and its C# port) uses `forward = (-sin yaw, -cos yaw)`, `right = (cos yaw, -sin yaw)`.
 A Unity body rotated to match that **forward** (`yaw * Rad2Deg + 180`) has the exact opposite
@@ -122,7 +137,7 @@ a scaling or offset error.
 
 Server-side aim cones (filming, dazzle) only ever dot with **forward**, so they were never affected.
 
-## 3. The C# sim is parity-locked — fix around it, never through it
+## [parity-lock] The C# sim is parity-locked — fix around it, never through it
 
 `csharp/Metoh.Sim` is verified against the TypeScript `shared/sim`. Do not "fix" gameplay by
 editing it. Ability tunables live in `GameManager` constants (precedent: Wren's mark, the flash, the
@@ -143,7 +158,7 @@ and cave mouths. `BuildForest` mirrors that RNG stream exactly, so skipping them
 leave invisible tree colliders in the water. Fixing it properly means a lake exclusion in **both**
 sims plus a re-run parity check.
 
-## 3b. The world is rebuilt at runtime now — nothing may cache a `GameWorld`
+## [no-world-cache] The world is rebuilt at runtime now — nothing may cache a `GameWorld`
 
 The host rolls a **per-session seed** (`GameManager.WorldSeed`) and clients rebuild the forest when it
 arrives, so `WorldBuilder.World` is no longer a build-once constant. Two rules fall out, and both
@@ -155,13 +170,13 @@ failures are silent:
   colliders — you collide with trees that aren't drawn and walk through ones that are.
 - **Anything baked from the world must be invalidated with it.** `MapView` bakes a terrain image once
   (`_bg`); without `InvalidateBackground()` the map draws last session's ridges under this session's
-  markers. Same failure class as the mirrored-map bug in §2: internally consistent, quietly wrong.
+  markers. Same failure class as the mirrored-map bug in [handedness]: internally consistent, quietly wrong.
 
 The reseed itself is just "destroy the children, run the builders again" — every mesh is parented to
 the `WorldBuilder` transform, while `PostFX`/`HPAudio` are *components* on that GameObject and so
 survive (re-synthesizing the audio cues would cut the wind beds).
 
-## 3c. Adding a rejection to the tree loop is safe; adding a *draw* is not
+## [rng-lockstep] Adding a rejection to the tree loop is safe; adding a *draw* is not
 
 `WorldData.BuildColliders` and `WorldBuilder.BuildForest` walk the same RNG stream in lockstep so the
 rendered trunks land exactly on the invisible colliders. This pass added two rejections (lake, trail
@@ -173,7 +188,7 @@ loops desync partway through: the first few hundred trees look right and the res
 its colliders offset from its trunks. **Undergrowth deliberately uses its own stream**
 (`seed ^ 0x5eedb115`) so clutter can be retuned freely without ever touching tree placement.
 
-## 4. A ported mechanic isn't ported until its FEEDBACK is
+## [feedback] A ported mechanic isn't ported until its FEEDBACK is
 
 Five separate "bugs" this session were working mechanics with missing or misleading feedback:
 
@@ -194,7 +209,7 @@ Five separate "bugs" this session were working mechanics with missing or mislead
   first-person view of someone standing still is pixel-identical to a frozen image. Fixed by
   *blending* the camera over ~0.4 s so the motion itself signals the change.
 
-## 5. Camera ownership: world space vs local space
+## [camera-space] Camera ownership: world space vs local space
 
 The camera is parented to the player for first-person and un-parented for the lobby cinematic. Two
 traps came out of that, both worth re-reading before touching camera code:
@@ -204,7 +219,7 @@ traps came out of that, both worth re-reading before touching camera code:
 - Running the look handler inside the cinematic *and* falling through to the normal path applies the
   mouse delta **twice** (doubled sensitivity).
 
-## 6. IMGUI panels must clamp to the window
+## [imgui-clamp] IMGUI panels must clamp to the window
 
 Every panel is manual pixel math with no anchoring, so fixed-size boxes clip on small windows (a
 560×400 briefing card lost its bottom on a 1133×528 Game view). **No fixed-pixel IMGUI panel without
@@ -221,14 +236,14 @@ a page that grows with content must **scroll**, and any escape control (BACK, CL
 *outside* the scroll where layout can't move it. Every sub-page now also answers **Esc** as a second
 way home, on the principle that a UI should never have exactly one exit.
 
-## 7. Performance: the browser was hiding the real cost
+## [perf] Performance: the browser was hiding the real cost
 
 The web build caps its device pixel ratio (`QUALITY.pixelRatioCap`), so Three.js never rendered at
 native resolution. **Unity does.** On integrated graphics at 2560×1600 that alone is the difference
 between choppy and smooth — fill rate scales with the *square* of resolution.
 
 `HPQuality` is the Unity counterpart: URP `renderScale` (**default 1.0 since the legibility pass —
-see §5c**; live slider in the pause menu), MSAA off, shadow distance 55 → 30 m by tier. If more is needed, in order: **bloom** in `PostFX` (full-screen,
+see [legibility]**; live slider in the pause menu), MSAA off, shadow distance 55 → 30 m by tier. If more is needed, in order: **bloom** in `PostFX` (full-screen,
 multi-pass — the most expensive single effect), then the realtime point lights in `WorldBuilder`,
 then `UndergrowthCount`, then `World.TreeCount`. **Do not start with the IMGUI HUD** — it is not the
 bottleneck.
@@ -245,9 +260,9 @@ integrated graphics at native resolution.
 Separately, input latency: stepping the sim at a fixed 20 Hz and rendering an interpolation between
 the last two states parks the camera a full step (50 ms) in the past. `StepPlayer` is pure and takes
 `dt`, so the owner steps **once per frame with the real frame delta** (hitch-clamped). This reverts
-when FishNet prediction is adopted (see §0), which owns the cadence itself.
+when FishNet prediction is adopted (see [open-items]), which owns the cadence itself.
 
-## 6b. Single-player / the CPU Yeti bot
+## [yeti-bot] Single-player / the CPU Yeti bot
 
 A legitimate **offline mode** (title → SINGLE PLAYER → PLAY AS SEARCHER): a lone human searcher vs a
 CPU Yeti, no internet. It's also the fastest solo test harness. Architecture, because it's a
@@ -317,10 +332,10 @@ never to walking through solid geometry.
 > - **Does print-tracking read as tracking?** The bot walking your trail is the intended feel, but
 >   whether it looks like a predator following spoor or like a magnet is a play-test question, and
 >   the freshness/distance weights are where that gets decided.
-> - **Play-as-Yeti is now live but early** — see §6d. The CPU searcher team exists as a working
+> - **Play-as-Yeti is now live but early** — see [searcher-bots]. The CPU searcher team exists as a working
 >   shell; whether it is any fun to hunt is completely unmeasured.
 
-## 5b. The realism pass — why it is materials, not models
+## [materials] The realism pass — why it is materials, not models
 
 The brief was "more realistic 3D game instead of just polygons". The instinct is to blame the
 geometry, but the geometry was never the problem: a low-poly cone lit properly reads fine, and a
@@ -356,13 +371,13 @@ So the pass is a **material and lighting** pass:
 - **Per-chunk colour jitter** on the forest. After flat shading, uniformity is the loudest tell:
   2,400 trunks in exactly one brown reads as instancing. Free, because each chunk is already its own
   draw and the SRP batcher batches by shader, not by material. Hashed from the cell index, never from
-  an RNG stream — it must not touch the tree/collider lockstep (§3c).
+  an RNG stream — it must not touch the tree/collider lockstep ([rng-lockstep]).
 
 **Cost is gated on the render-scale slider** (`HPQuality.HighDetail`), which now doubles as a detail
 tier: anyone who has already pulled it down to buy frames is not silently charged for soft shadows
 and a 55 m shadow distance too.
 
-> **~~The one big win that is NOT in here, and cannot be.~~ Done 2026-08-01 — see §5c.** SSAO is a
+> **~~The one big win that is NOT in here, and cannot be.~~ Done 2026-08-01 — see [legibility].** SSAO is a
 > URP *Renderer Feature* living on an untracked `.asset`, so it was written up here as a manual owner
 > step. It was never carried out, which is the whole problem with that format. It is now applied by
 > **Metoh → Configure Render Pipeline** (`Editor/RenderPipelineSetup.cs`) instead.
@@ -377,7 +392,7 @@ observed — expect to sit in `ProcTex` (normal strengths, tiling) and the smoot
 by eye. The tiling scales in particular are the kind of thing that is obviously wrong the moment you
 look and impossible to guess.
 
-## 5c. The legibility pass — and why none of §5b had ever actually rendered
+## [legibility] The legibility pass — and why none of [materials] had ever actually rendered
 
 Owner report, 2026-08-01, after the realism pass shipped: *"everything looks way too much the same…
 I want to be able to see things"* and *"it looks like a PS1 game"*. Both were true, and the second
@@ -387,7 +402,7 @@ one had almost nothing to do with the art.
 
 | What | Was | Why it mattered |
 |---|---|---|
-| `HPSettings.RenderScale` | `0.7` | The scene rendered at 70% of the panel and was upscaled. Soft edges, crawling stair-steps, and the fine normal-map grain §5b is built on dissolving before it reached a pixel. |
+| `HPSettings.RenderScale` | `0.7` | The scene rendered at 70% of the panel and was upscaled. Soft edges, crawling stair-steps, and the fine normal-map grain [materials] is built on dissolving before it reached a pixel. |
 | `HPQuality.HighDetail` | `renderScale > 0.7f` | The shipping default was *exactly* `0.7`, so this was **false on every clean install**. Soft shadows and the 55 m shadow distance were never on. Nobody had ever seen the expensive tier. |
 
 That is the lesson worth keeping: **a boundary condition set to the same value as a default is a
@@ -436,22 +451,124 @@ cue above was invisible regardless of how well separated it was in albedo. **If 
 too survivable, take it out of `MoonNights[2].Light`, not out of ambient** — losing the moon is the
 escalation the design already has; flat ambient is what makes geometry read as cardboard.
 
-**Geometry** (the part §5b was wrong about). §5b argued the problem was materials and not models,
+**Geometry** (the part [materials] was wrong about). [materials] argued the problem was materials and not models,
 and that was right about *surfaces* and wrong about *silhouettes*. Three smooth cones stacked on a
 stick is a shape no tree has, and at night — fogged, backlit, at 60 m — the outline is very nearly
 all the information reaching the player. `MeshUtil.Conifer` builds one tiered, jagged, drooping crown
 instead; `MeshUtil.Rock` replaces every scaled-sphere boulder. Both take a `variant` index hashed
 from the tree/cave index — **never from an RNG stream**, because the forest loop is in lockstep with
-`WorldData.BuildColliders` (§3c). The low detail tier is *cheaper* than the three cones it replaced
+`WorldData.BuildColliders` ([rng-lockstep]). The low detail tier is *cheaper* than the three cones it replaced
 (77 tris vs 96); the high tier spends 153.
 
-> **Unverified (editor), all of it.** Same standing caveat as §5b, plus two specific risks: the
+> **Unverified (editor), all of it.** Same standing caveat as [materials], plus two specific risks: the
 > `Metoh/Snowpack` shader has never been compiled by Unity (a compile failure falls back to
 > `URP/Lit`, which will look flat and *not* log a warning — the `Shader.Find` guard only catches a
 > missing file), and tree cost rose ~46% on the high tier at the same time render scale went to
-> native. If frames are short, the F3 levers in §7 order still apply.
+> native. If frames are short, the F3 levers in [perf] order still apply.
 
-## 6d. The CPU searchers (`SearcherBot`) — a shell, deliberately
+## [bodies] Bodies, animation and weather — the graphics pass
+
+Owner report, 2026-08-05: *"the yeti is literally 2 ovals on top of one another"*. Accurate, and an
+understatement — it was **one** Unity primitive capsule scaled to 1.3/1.35/1.3, with two 0.12 m
+spheres for eyes. Searchers were the same capsule at 0.8/0.9. And there was **no character animation
+anywhere in the project**: no `Animator`, no `SkinnedMeshRenderer`, no procedural limb motion. Head-bob
+was camera-only, so it did not exist for anyone *looking* at you. Every body slid across the snow.
+
+**The [legibility] silhouette argument applies harder to creatures than it did to trees.** A material cannot put
+arms on a pill. [materials] had duly built a stretched fur normal map and was applying it to a capsule.
+
+### Jointed bodies without a rig (`Avatar.cs`, `MeshUtil.Lathe/Limb/Blob`)
+
+No `.fbx`, no skeleton, no skinning — those would all break "clone it and it runs". A body is a
+**hierarchy of separate meshes moved by transform**: a shoulder joint with an upper-arm mesh under it,
+an elbow under that. At these distances it is indistinguishable from skinning **provided limb ends are
+rounded** so neighbouring parts overlap through their range of motion. Flat-capped cylinders butted at
+a joint show the join as a hard disc edge that swings independently, which reads as a doll made of parts.
+
+`MeshUtil.Lathe` is the general surface-of-revolution the bodies are built from, with `xScale`/`zScale`
+to squash it off-circular — a torso is far wider than it is deep, and a circular one is a barrel. It
+**seals its own seam**: the wrap column duplicates column 0's position to carry different U, but
+`RecalculateNormals` averages by vertex *index*, so those two co-located vertices light differently and
+put a bright hairline down the body. Averaging the pair afterwards costs nothing. (`Rock` and `Conifer`
+predate this and still have the unsealed seam; it shows less on a boulder.)
+
+The Yeti is the **hunched bruiser** the owner picked. Two proportions carry the whole read and neither
+is negotiable: the shoulder yoke is ~1.7x hip width (the ratio the eye uses to separate ape from
+person, and it survives being reduced to a black shape in fog), and **the head sits ahead of the
+shoulder line, not on top of it** — a head centred over the spine reads as upright and human no matter
+how big the body is. Head height is anchored to the sim's 2.4 m Yeti eye height (1.7 m for searchers)
+so the third-person figure and its own first-person camera agree about where its eyes are.
+
+### The animation layer
+
+Driven **entirely from data that is already replicated** — horizontal speed, body yaw, `Status`,
+`Crouched`, `Filming`, `GrabberObjectId`. No new SyncVars, no new RPCs. It is strictly a *read* of state
+the match already agreed on, so it cannot desync and cannot be cheated. The roar pose rides the
+existing `RpcRoared`, which every client already receives.
+
+Things worth not undoing:
+
+- **Gait phase advances with ground covered, not with time.** This is why the feet do not skate when the
+  per-night speed multipliers or the deep-snow slow change how fast a body is actually moving.
+- **Speed and yaw rate are measured from the transform**, not read from the sim, so the owner and a
+  remote go down one path and a remote's gait matches the motion *being drawn* rather than the motion
+  its owner reported a network frame ago.
+- **Knees bend off a rectified cosine offset from the leg swing**, which puts the bend on the recovery
+  half of the stride. A knee that bends while the leg is planted is the classic tell of a cycle built
+  from raw sine waves.
+- **There is no head pitch to track** — the schema has only ever carried yaw. The head *leads the turn*
+  instead, driven by yaw rate, which is replicated. Do not "fix" this by adding a pitch SyncVar for
+  cosmetics alone.
+- Damping is `1 - exp(-rate * dt)`, not `rate * dt`: the latter stiffens the whole rig at low framerates,
+  which is exactly the machine this runs on.
+
+### Weather (`Weather.cs`) — and the title card
+
+The project had **zero particle systems**. Falling snow does real work beyond mood: without something
+visibly moving between the camera and the fog wall, distance is unreadable, and this build's horror
+geometry is largely about not being able to tell how far away something is. Breath vapour is a fair
+positional tell on a searcher hiding with their torch off. Motes are what make a beam legible as a beam.
+
+- Snow is **alpha-blended, never additive** — it occludes what is behind it, which is how it adds depth.
+- The simulation box is 45 m and **re-centred on the camera every frame**: infinite snow for the cost of
+  a small volume, since the fog closes at ~150 m anyway.
+- **Breath is remotes-only.** The owner's head is inside their own camera; their breath would fog the
+  game rather than the world.
+- Bootstrapped from `WorldBuilder.Awake` and following `Camera.main`, so **the title cinematic flies
+  through the same weather the match does**. A still-air title card in front of a snowing game
+  advertises the exact seam this pass exists to close.
+
+`TitleActors.cs` stages three searchers around the fire in the camp shot and the Yeti crossing the
+corridor in the trail shot, driven by a synthetic `AvatarInput`. They are not players — nothing there
+touches FishNet, `GameManager` or the sim. They are built and destroyed on the `SetTitleLighting`
+transition, so connecting disposes them before the real bodies spawn.
+
+### Torch (`TorchBeam.cs` + `Shaders/TorchBeam.shader`)
+
+A spot light is invisible until it lands on something, so on open snowpack a torch produced a lit patch
+with no shaft connecting it to a person. The beam is a **cone of geometry with an additive falloff**,
+not volumetrics — additive because light adds and cannot darken what is behind it; an alpha-blended
+beam washes the scene toward grey where it crosses a dark trunk and reads as fog on the lens. It covers
+**26% of the light's range**: a shaft drawn to the full 90 m is a 54 m-wide cone of overdraw.
+
+The torch now rides the **hand**, so a remote's beam swings with their arm. Only the **owner's** torch
+casts shadows, and only on the high tier — five shadow-casting spots is five extra shadow maps a frame,
+and you cannot see the shadows a teammate's beam casts 40 m away.
+
+> **Unverified (editor), all of it** — same standing caveat as [materials] and [legibility], and the risk is higher here
+> because this pass is mostly *motion*, which cannot be reasoned about from a still frame the way
+> material response can. Specific risks: `Metoh/TorchBeam` has never been compiled by Unity (a compile
+> failure falls back to magenta, and `Shader.Find` only catches a *missing* file); the limb rotation
+> signs are derived in a comment rather than observed, so an arm swinging backwards is a sign flip, not
+> a redesign; and the ability poses (roar/carry/film) are pure guesses at angles.
+>
+> **Known leak, pre-existing and slightly worsened here.** `ReleaseWorldMaterials` sweeps materials on
+> reseed but nothing sweeps generated **meshes**, and this pass adds icicles, tents, guy lines and
+> duffel parts to what leaks. It was NOT fixed in passing: a hierarchy sweep would have to exclude
+> Unity's built-in primitive meshes, and destroying one of those breaks every primitive for the rest of
+> the session — a far worse bug than the leak. Avatar meshes are exempt; `Avatar.Dispose` owns them.
+
+## [searcher-bots] The CPU searchers (`SearcherBot`) — a shell, deliberately
 
 Title → SINGLE PLAYER → **PLAY AS YETI** spawns four CPU searchers and hands the human the monster.
 Construction is identical to the Yeti bot — server-owned `HPPlayer`s with no connection, flagged
@@ -505,7 +622,7 @@ that only optimises evidence walks into the Yeti's arms, and one that only avoid
 > and a stale battery makes them invisible to Sam's spare-battery scan, which skips anyone at ≥ 99%.
 > When a second kind of bot appears, re-read the assumptions the first one baked in.
 
-## 6c. The lookout ladder + binoculars (no parity change)
+## [lookout] The lookout ladder + binoculars (no parity change)
 
 The tower collider is **climbable** (`WorldData.Lookout`, `ClimbH = 9.5`), so the shared sim already
 holds any player standing on the platform at `base + 9.5` and stops pushing them out of the footprint
@@ -531,7 +648,7 @@ replicated step like everything else — note it here so it isn't missed.
 > top step land you cleanly on the deck?), the platform/rail alignment, and the binocular look are all
 > first-guess and have never run. The `B` key is a new rebindable action.
 
-## 7a. Testing the whole game alone, on one PC
+## [solo-testing] Testing the whole game alone, on one PC
 
 **Solo works by design.** `ServerStartMatch` picks Yeti from whoever opted in; with nobody opted
 in it needs 2+ players, and with **one** player it assigns **no Yeti at all**. So:
@@ -563,13 +680,13 @@ phase and arc, the escalation table, Eli's flash and Sam's battery refilling at 
 means sitting through two full nights to reach night 3. It runs the clock out rather than
 duplicating the rollover, so a skipped night is identical to an elapsed one.
 
-## 7b. Play-testing tools (F3 overlay + seed pin)
+## [dev-tools] Play-testing tools (F3 overlay + seed pin)
 
 Two dev affordances exist specifically so a play-test produces *data* instead of impressions:
 
 - **`F3` — diagnostics overlay** (`HPDebug`). Frame time + worst frame in the last second, render
   scale, the world seed, tree/trail/undergrowth/light counts, match phase, player count, tick rate.
-  Number keys flip the **cost levers live, in the §7 order**: `1` bloom, `2` prop lights,
+  Number keys flip the **cost levers live, in the [perf] order**: `1` bloom, `2` prop lights,
   `3` undergrowth, `4` shadows. The point is that "it felt slow" doesn't distinguish four causes with
   four different fixes, and toggling beats rebuilding.
 - **CPU Yeti levers, same overlay.** `O` pauses the bot where it stands (it keeps its state, stops
@@ -607,7 +724,7 @@ Two dev affordances exist specifically so a play-test produces *data* instead of
 Note `4` writes `QualitySettings.shadowDistance`, the same knob `HPQuality` owns — re-applying
 settings from the pause menu will overwrite it. Fine for a dev toggle, just don't read it as sticky.
 
-## 7c. The play-test log (`HPLog`)
+## [play-log] The play-test log (`HPLog`)
 
 `<project>/Logs/metoh-playtest.log`, with the run before it kept as `metoh-playtest.prev.log`. The
 path is printed to the Console at startup and the file name is shown in the F3 footer.
@@ -634,14 +751,15 @@ Three things about it are deliberate and worth not undoing:
 
 Buffered, flushed once a second and forced at night rollover and match end.
 
-## 8. Workflow
+## [workflow] Workflow
 
 - **Edit in the repo** (`unity/Assets/Metoh/`), then `robocopy /E` into
   `C:\Users\amedi\Metoh_port\Assets\Metoh`. Robocopy exit codes < 8 are success.
   **There are now THREE trees to sync, not one** — `Scripts/`, `Shaders/`, and `Sim/` (which comes
   from `csharp/Metoh.Sim`, not from `unity/`). A sync script that only copies `Scripts/` will
   silently leave the shader or a new sim file behind, and the failure shows up as a magenta sky or a
-  missing type rather than as a copy error.
+  missing type rather than as a copy error. There are now **four** shaders — `NightSky`, `Snowpack`
+  (+ its `.hlsl`) and `TorchBeam`; a copy that misses one fails as an art problem, not an error.
   > **The live project path has moved before — check before you copy.** It is
   > `C:\Users\amedi\Metoh_port`, created fresh for the Metoh rebrand; `C:\Users\amedi\HollowPines`
   > no longer exists. The repo carries no `.meta` or `Library/`, so the live project is always a
@@ -663,7 +781,7 @@ Buffered, flushed once a second and forced at night rollover and match end.
 - `Metoh.Sim` collides with UnityEngine on `Collider`/`Collision` — qualify them.
 - FishNet 4.7.2 does not compile on Unity 6000.5 unpatched; see [`../unity/fishnet-patches/`](../unity/fishnet-patches/README.md).
 
-## 9. Copy should read as capability, not as a stat block
+## [copy] Copy should read as capability, not as a stat block
 
 Briefing cards derive every figure from the live constants so they can't drift — good — but raw
 numbers are spec language, not player-facing copy. A card should say *"you can follow a trail long

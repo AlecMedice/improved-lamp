@@ -83,6 +83,11 @@ namespace Metoh.Game
             float campY = world != null ? (float)world.GetHeight(0, 0) : 0f;
             var fire = new Vector3(0f, campY + 1.2f, 0f);
 
+            // Stage the actors against the shot that is actually running. Driven from here, and not
+            // from TitleMenu.Update, because this method already owns the shot list — and it is also
+            // the path the camp LOBBY runs through, where the actors are already gone.
+            TitleActors.Tick(which, k, Time.deltaTime);
+
             switch (which)
             {
                 case 0:
@@ -141,6 +146,10 @@ namespace Metoh.Game
             WorldBuilder.TitleMode = on;
             if (WorldBuilder.Instance != null) WorldBuilder.Instance.InvalidatePalette(); // re-apply now
             if (PostFX.Instance != null) PostFX.Instance.SetTitleBrightness(on);
+            // The staged cast lives exactly as long as the menu does. Tied to this transition rather
+            // than to Awake/OnDestroy so backing out of a match rebuilds it, and connecting disposes it
+            // before the real bodies spawn — two Yetis on screen would be a memorable bug.
+            TitleActors.SetActive(on);
 
             // Join attempt timed out? (Tugboat fails quietly if nothing is listening.)
             if (_connectStartedAt >= 0f && Time.time - _connectStartedAt > 8f)

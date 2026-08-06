@@ -317,7 +317,7 @@ namespace Metoh.Game
 
             // Compare the cheap parts FIRST. Formatting the line unconditionally and letting
             // HPLog.Change discard the duplicate would allocate a string every frame, which on the
-            // integrated GPU this is tuned for is exactly the kind of steady GC churn §7 warns about.
+            // integrated GPU this is tuned for is exactly the kind of steady GC churn [perf] warns about.
             if (ReferenceEquals(DbgState, _loggedState) && AiMode == _loggedMode &&
                 Paused == _loggedPaused && Mathf.Approximately(SpeedMul, _loggedSpeed)) return;
             _loggedState = DbgState;

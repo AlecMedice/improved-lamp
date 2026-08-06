@@ -80,7 +80,7 @@ namespace Metoh.Game
         /// <paramref name="variant"/> picks a deterministic shape from the hash — build a handful and
         /// deal them out so a stand of trees isn't one tree stamped 2,400 times. It must NOT come from
         /// an RNG stream: the forest's stream is in lockstep with the collider builder's
-        /// (UNITY_PORT_NOTES §3c) and drawing one extra number here would offset every tree after it.
+        /// (UNITY_PORT_NOTES [rng-lockstep]) and drawing one extra number here would offset every tree after it.
         /// </summary>
         public static Mesh Conifer(float height, float baseRadius, int rings, int segments, int tiers, int variant)
         {
@@ -226,10 +226,259 @@ namespace Metoh.Game
         }
 
         /// <summary>
-        /// Deterministic 0..1 hash. Not an RNG — it takes no state and advances nothing, which is
-        /// precisely why it is safe to call from inside the forest loop (UNITY_PORT_NOTES §3c).
+        /// A surface of revolution built from an explicit PROFILE — the general form of the shape
+        /// <see cref="Conifer"/> and <see cref="Rock"/> are each a special case of, and the thing every
+        /// body part in <see cref="Avatar"/> is made from.
+        ///
+        /// <paramref name="profile"/> runs bottom to top, one entry per ring, as (y, radius). A ring of
+        /// radius 0 collapses to a pole, which is how limbs get rounded ends and heads close over the
+        /// top; anything ending at a real radius gets a fan cap so there is never a hole to see into.
+        ///
+        /// <paramref name="xScale"/>/<paramref name="zScale"/> squash the revolution off-circular, and
+        /// that is what makes this usable for bodies at all: a torso is far wider than it is deep, and a
+        /// circular one reads as a barrel — which is precisely the "stack of primitives" problem
+        /// (UNITY_PORT_NOTES [legibility]) reappearing on a creature instead of on a tree.
+        ///
+        /// THE SEAM IS SEALED EXPLICITLY. The wrap column duplicates column 0's position so the two can
+        /// carry different U — without that the texture runs backwards across one strip. But
+        /// RecalculateNormals averages by vertex INDEX, not by position, so those two co-located
+        /// vertices each end up with only half the surrounding faces and light differently: a bright
+        /// hairline seam straight down the body. Averaging the pair afterwards costs nothing and is why
+        /// this is a shared builder rather than another copy of the loop in Rock.
         /// </summary>
-        private static float Hash01(int n)
+        public static Mesh Lathe(Vector2[] profile, int segments, int variant,
+                                 float jag = 0f, float xScale = 1f, float zScale = 1f)
+        {
+            segments = Mathf.Max(segments, 4);
+            int rings = profile.Length;
+            int cols = segments + 1;
+
+            var verts = new Vector3[rings * cols];
+            var uvs = new Vector2[rings * cols];
+
+            for (int r = 0; r < rings; r++)
+            {
+                float y = profile[r].x, rad = profile[r].y;
+                for (int s = 0; s < cols; s++)
+                {
+                    // Wrapped segment index: the seam column must land on column 0's exact angle, and
+                    // must hash to the same jag, or the two halves of the seam pull apart.
+                    int sw = s % segments;
+                    float a = sw / (float)segments * Mathf.PI * 2f;
+                    float k = jag > 0f
+                        ? 1f + (Hash01(variant * 6151 + r * 179 + sw * 23) - 0.5f) * 2f * jag
+                        : 1f;
+                    float rr = rad * k;
+
+                    int i = r * cols + s;
+                    verts[i] = new Vector3(Mathf.Cos(a) * rr * xScale, y, Mathf.Sin(a) * rr * zScale);
+                    // V in metres, matching TaperedCylinder — fur grain must not stretch on a long limb.
+                    uvs[i] = new Vector2(s / (float)segments, y);
+                }
+            }
+
+            var tris = new System.Collections.Generic.List<int>(rings * segments * 6);
+            for (int r = 0; r < rings - 1; r++)
+            {
+                for (int s = 0; s < segments; s++)
+                {
+                    int a = r * cols + s, b = a + 1;
+                    int c = (r + 1) * cols + s, d = c + 1;
+                    tris.Add(a); tris.Add(c); tris.Add(d);
+                    tris.Add(a); tris.Add(d); tris.Add(b);
+                }
+            }
+
+            // Fan caps for ends that stop at a real radius. A pole (radius 0) already closes itself.
+            AddCap(tris, profile[0].y, 0, cols, segments, false);
+            AddCap(tris, profile[rings - 1].y, rings - 1, cols, segments, true);
+
+            var mesh = new Mesh();
+            mesh.vertices = verts;
+            mesh.uv = uvs;
+            mesh.triangles = tris.ToArray();
+            mesh.RecalculateNormals();
+
+            // Seal the seam (see the summary): give both copies of each seam vertex the same normal.
+            var norms = mesh.normals;
+            for (int r = 0; r < rings; r++)
+            {
+                int a = r * cols, b = r * cols + segments;
+                Vector3 avg = (norms[a] + norms[b]).normalized;
+                norms[a] = avg;
+                norms[b] = avg;
+            }
+            mesh.normals = norms;
+
+            mesh.RecalculateTangents();
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        /// <summary>
+        /// Fan-close one end of a lathe. No-op at a pole, where the ring has already collapsed to a
+        /// point and a cap would be a disc of degenerate triangles.
+        /// </summary>
+        private static void AddCap(System.Collections.Generic.List<int> tris,
+                                   float endRadius, int ring, int cols, int segments, bool top)
+        {
+            if (endRadius <= 0.001f) return;
+            // Fan around the ring's own vertices rather than adding a centre vertex: it keeps the arrays
+            // the caller allocated valid, and at these radii the missing centre never shows.
+            int b = ring * cols;
+            for (int s = 1; s < segments - 1; s++)
+            {
+                if (top) { tris.Add(b); tris.Add(b + s); tris.Add(b + s + 1); }
+                else { tris.Add(b); tris.Add(b + s + 1); tris.Add(b + s); }
+            }
+        }
+
+        /// <summary>
+        /// A limb segment: a tapered cylinder with rounded ends, along +Y from y=0.
+        ///
+        /// Rounded ends are the whole point. Flat-capped cylinders butted together at a joint show the
+        /// join as a hard disc edge that swings independently of the limb — which reads as a doll made
+        /// of parts. Round caps overlap into each other through the full range of motion instead, so an
+        /// elbow stays a continuous mass without any skinning.
+        /// </summary>
+        public static Mesh Limb(float radiusBottom, float radiusTop, float length,
+                                int rings, int segments, int variant, float jag = 0.04f)
+        {
+            rings = Mathf.Max(rings, 5);
+            var profile = new Vector2[rings];
+            const float cap = 0.18f; // fraction of the length each rounded end occupies
+            for (int r = 0; r < rings; r++)
+            {
+                float t = r / (float)(rings - 1);
+                float rad = Mathf.Lerp(radiusBottom, radiusTop, t);
+                // Quarter-sine shoulders at both ends: full radius through the middle, closing to a
+                // point at the tips.
+                if (t < cap) rad *= Mathf.Sin(t / cap * Mathf.PI * 0.5f);
+                else if (t > 1f - cap) rad *= Mathf.Sin((1f - t) / cap * Mathf.PI * 0.5f);
+                profile[r] = new Vector2(t * length, rad);
+            }
+            return Lathe(profile, segments, variant, jag);
+        }
+
+        /// <summary>
+        /// A lumpy ellipsoid centred on the origin — torsos, skulls, hands, feet, shoulder mass.
+        ///
+        /// <paramref name="lumpiness"/> is what separates it from a scaled sphere, and a sphere is the
+        /// one shape the eye names instantly ([legibility], on the boulders). On a body the tell is worse than on
+        /// a rock, because anatomy is asymmetric everywhere and a perfect ellipsoid is the single
+        /// loudest signal that what you are looking at is a primitive with a texture on it.
+        /// </summary>
+        public static Mesh Blob(float radiusX, float radiusY, float radiusZ,
+                                int rings, int segments, int variant, float lumpiness = 0.12f)
+        {
+            rings = Mathf.Max(rings, 5);
+            var profile = new Vector2[rings];
+            for (int r = 0; r < rings; r++)
+            {
+                float phi = r / (float)(rings - 1) * Mathf.PI; // pole to pole
+                profile[r] = new Vector2(-Mathf.Cos(phi) * radiusY, Mathf.Sin(phi) * radiusX);
+            }
+            return Lathe(profile, segments, variant, lumpiness, 1f, radiusZ / Mathf.Max(radiusX, 1e-4f));
+        }
+
+        /// <summary>
+        /// An A-frame ridge tent: two sagging fabric slopes over a ridge line, closed at both ends.
+        ///
+        /// The camp tents were <c>Cone(radius, height, 4)</c> — a four-sided pyramid. A pyramid has a
+        /// point where a tent has a RIDGE, and that difference is most of why the camp read as a set of
+        /// placeholder shapes rather than as somewhere people are living: camp is the silhouette every
+        /// searcher navigates home by and the one place the player stands still and looks around.
+        ///
+        /// The sag is the detail that does the work. Fabric under its own weight pulls inward between
+        /// the poles, so the ridge dips and the slopes hollow; taut flat panels read as sheet metal.
+        /// It is a sine in both axes — strongest mid-panel and mid-length, zero at every pole and
+        /// every ground peg, which is exactly where a real tent is pulled tight.
+        /// </summary>
+        public static Mesh RidgeTent(float halfWidth, float height, float halfLength,
+                                     int lengthSegs = 4, int slopeSegs = 6, float sag = 0.12f)
+        {
+            lengthSegs = Mathf.Max(lengthSegs, 2);
+            slopeSegs = Mathf.Max(slopeSegs, 4);
+            int cols = slopeSegs + 1, rows = lengthSegs + 1;
+
+            var verts = new Vector3[rows * cols];
+            var uvs = new Vector2[rows * cols];
+            for (int r = 0; r < rows; r++)
+            {
+                float tz = r / (float)lengthSegs;              // 0..1 along the ridge
+                float z = Mathf.Lerp(-halfLength, halfLength, tz);
+                float lengthSag = Mathf.Sin(tz * Mathf.PI);    // zero at both end poles
+                for (int s = 0; s < cols; s++)
+                {
+                    float u = s / (float)slopeSegs;            // 0 = left peg, 0.5 = ridge, 1 = right peg
+                    float x, y;
+                    if (u <= 0.5f) { float t = u * 2f; x = Mathf.Lerp(-halfWidth, 0f, t); y = Mathf.Lerp(0f, height, t); }
+                    else { float t = (u - 0.5f) * 2f; x = Mathf.Lerp(0f, halfWidth, t); y = Mathf.Lerp(height, 0f, t); }
+
+                    y -= sag * height * Mathf.Sin(u * Mathf.PI) * lengthSag;
+
+                    int i = r * cols + s;
+                    verts[i] = new Vector3(x, y, z);
+                    uvs[i] = new Vector2(u * (halfWidth * 2f), z); // metres, so the weave doesn't stretch
+                }
+            }
+
+            var tris = new System.Collections.Generic.List<int>(lengthSegs * slopeSegs * 6 + slopeSegs * 6);
+            for (int r = 0; r < lengthSegs; r++)
+            {
+                for (int s = 0; s < slopeSegs; s++)
+                {
+                    int a = r * cols + s, b = a + 1, c = (r + 1) * cols + s, d = c + 1;
+                    tris.Add(a); tris.Add(c); tris.Add(b);
+                    tris.Add(b); tris.Add(c); tris.Add(d);
+                }
+            }
+
+            // End walls: fan each end profile down to a point on the ground under the ridge. Closed on
+            // purpose — an open-ended tent shows its own inside surface backwards, and a lit camp is
+            // exactly where somebody will walk round the back and look.
+            var extra = new System.Collections.Generic.List<Vector3>();
+            var extraUv = new System.Collections.Generic.List<Vector2>();
+            for (int end = 0; end < 2; end++)
+            {
+                int baseRow = end == 0 ? 0 : lengthSegs;
+                float z = end == 0 ? -halfLength : halfLength;
+                int centre = verts.Length + extra.Count;
+                extra.Add(new Vector3(0f, 0f, z));
+                extraUv.Add(new Vector2(halfWidth, z));
+                for (int s = 0; s < slopeSegs; s++)
+                {
+                    int a = baseRow * cols + s, b = a + 1;
+                    if (end == 0) { tris.Add(centre); tris.Add(a); tris.Add(b); }
+                    else { tris.Add(centre); tris.Add(b); tris.Add(a); }
+                }
+            }
+
+            var allVerts = new Vector3[verts.Length + extra.Count];
+            var allUvs = new Vector2[uvs.Length + extraUv.Count];
+            verts.CopyTo(allVerts, 0);
+            uvs.CopyTo(allUvs, 0);
+            for (int i = 0; i < extra.Count; i++) { allVerts[verts.Length + i] = extra[i]; allUvs[uvs.Length + i] = extraUv[i]; }
+
+            var mesh = new Mesh();
+            mesh.vertices = allVerts;
+            mesh.uv = allUvs;
+            mesh.triangles = tris.ToArray();
+            mesh.RecalculateNormals();
+            mesh.RecalculateTangents();
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        /// <summary>
+        /// Deterministic 0..1 hash. Not an RNG — it takes no state and advances nothing, which is
+        /// precisely why it is safe to call from inside the forest loop (UNITY_PORT_NOTES [rng-lockstep]).
+        ///
+        /// PUBLIC because it is the project's canonical index hash: every builder that wants
+        /// per-instance variation must go through something like this rather than reach for a
+        /// System.Random, and having one shared implementation is what keeps that rule easy to follow.
+        /// </summary>
+        public static float Hash01(int n)
         {
             uint h = (uint)n * 2654435761u;
             h ^= h >> 15;

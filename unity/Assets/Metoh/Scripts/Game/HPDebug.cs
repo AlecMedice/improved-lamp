@@ -212,7 +212,7 @@ namespace Metoh.Game
                 lines.AppendLine($"      cam parent {me.DbgCamParent}   moving {(me.OwnMoving ? "yes" : "no")}");
             }
             lines.AppendLine();
-            lines.AppendLine("COST LEVERS — in the order §7 says to pull them");
+            lines.AppendLine("COST LEVERS — in the order [perf] says to pull them");
             lines.AppendLine($"  [1] bloom        {OnOff(_bloom)}   (most expensive single effect)");
             lines.AppendLine($"  [2] prop lights  {OnOff(_propLights)}");
             lines.AppendLine($"  [3] undergrowth  {OnOff(_undergrowth)}");

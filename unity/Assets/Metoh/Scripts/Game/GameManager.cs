@@ -87,7 +87,7 @@ namespace Metoh.Game
         private const double PingLifetime = 35;
         private const int MaxPings = 12;
 
-        // --- Casting tracks — the searchers' second win path (CHARACTER_FUNC_DEV §8) ---
+        // --- Casting tracks — the searchers' second win path (CHARACTER_FUNC_DEV [workflow]) ---
         // Yeti does NOT shed evidence. It leaves TRACKS; a plaster cast is something a person makes
         // from one. Some prints land in ground soft and deep enough to be worth working (`Castable`),
         // only a few are live at a time (newer ones override older), and only MARA carries the kit.
@@ -123,7 +123,7 @@ namespace Metoh.Game
         /// </summary>
         private const double TreeHairCooldown = 7;
 
-        // --- Dropped proof piles (CHARACTER_FUNC_DEV §8, "still open" → shipped) ---
+        // --- Dropped proof piles (CHARACTER_FUNC_DEV [workflow], "still open" → shipped) ---
         // A grab used to DELETE what the victim was carrying. It now spills it on the ground instead,
         // which turns the worst moment in a searcher's night into a decision for everyone else rather
         // than a silent subtraction. Crucially Yeti cannot destroy a pile — same rule as the duffel
@@ -1441,6 +1441,10 @@ namespace Metoh.Game
         private void RpcRoared(Vector3 pos)
         {
             HPHud.NotifyRoar(pos);
+            // The roar POSE rides this same RPC rather than a message of its own — every client
+            // already receives this, and an animation that needed its own packet would be a second
+            // source of truth for an event the match has already agreed on.
+            HPPlayer.PlayRoarPose();
             // Positional so it carries beyond the freeze radius and you can tell WHERE it came from.
             // The roaring Yeti already heard its own roar up close when it pressed the button.
             var me = HPPlayer.Local;

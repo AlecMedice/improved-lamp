@@ -12,9 +12,12 @@ renamed — web visuals are abandoned; the Unity build carries the snow re-theme
 Read `docs/` for the full picture — every file there is current, nothing is a stale plan:
 - `GAME_DESIGN.md` — the GDD, source of truth for rules · `STORY.md` — world + the five characters
 - `CHARACTER_FUNC_DEV.md` — searcher specialties, the evidence/casting system, the duffel
-- `ROADMAP.md` — phases · `July19Work.md` — the Unity port's build log (historical record)
+- `ROADMAP.md` — phases (the Unity port's old build log `July19Work.md` was deleted 2026-08-05 —
+  it is in git history if you ever need it; `Metoh_migration.md` is the current record)
 - `UNITY_PORT_NOTES.md` — Unity traps, conventions and remaining work;
-  **read before touching the Unity build**
+  **read before touching the Unity build**. Its sections are cited by **bracketed id**
+  (`[rng-lockstep]`, `[materials]`, `[bodies]`), never by number — cite the id, never the position.
+  (Other docs keep their own `§`-numbering; `GAME_DESIGN.md` §7.7 is unaffected.)
 
 This file is the fast orientation + conventions.
 
@@ -225,9 +228,18 @@ Shared (`shared/sim/`) — dependency‑free deterministic sim, imported by both
   (`MeshUtil` does this; hand‑built meshes have to do it themselves) or it silently renders flat.
   But "materials, not mesh density" is **only true of surfaces, not silhouettes** — at night, fogged,
   the outline is nearly all the player gets, so shapes that read as primitives (stacked cones, scaled
-  spheres) do have to be rebuilt. See `UNITY_PORT_NOTES.md` §5b and **§5c**. Anything that varies
-  per‑instance in the forest must be hashed from an index, **never drawn from an RNG stream** (§3c).
+  spheres, capsules) do have to be rebuilt. See `UNITY_PORT_NOTES.md` [materials], **[legibility]** and **[bodies]**. Anything
+  that varies per‑instance must be hashed from an index, **never drawn from an RNG stream** ([rng-lockstep]).
   The web build keeps the original flat look.
+- **Characters are jointed procedural bodies** (`Avatar.cs` over `MeshUtil.Lathe/Limb/Blob`) — a
+  hierarchy of separate meshes moved by transform, no rig and no skinning, because an `.fbx` would break
+  "clone it and it runs". The animation layer reads **only already‑replicated state** (speed, yaw,
+  `Status`, `Crouched`, `Filming`, `GrabberObjectId`) and adds **no SyncVar and no RPC** — keep it that
+  way; a cosmetic desync is still a desync. Gait phase advances with **ground covered, not time**, or
+  the feet skate whenever a speed multiplier changes. Full rationale in [bodies].
+- **Weather** (`Weather.cs`) is bootstrapped from `WorldBuilder.Awake` and follows `Camera.main`, so the
+  **title cinematic gets the same snow the match does**. `TitleActors.cs` stages avatars in the title
+  shots; they touch no networking and are destroyed the moment a connection comes up.
 - Colyseus **0.15** schema uses **legacy decorators** — server `tsconfig` has
   `experimentalDecorators: true`, `useDefineForClassFields: false`. Don't "modernize" these.
 - Light intensities are physically‑based‑ish and **tuned by eye** — expect to nudge.
