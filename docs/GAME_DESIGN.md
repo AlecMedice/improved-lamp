@@ -33,6 +33,7 @@
 - **Strengths:** ~1.2× searcher speed and better night vision.
 - **Roar (right-click):** an AoE fear blast (~25m) that **freezes** nearby searchers for 30s. ~25s cooldown.
 - **Grab (left-click):** grab a **frozen** searcher to incapacitate them for 60s — **drag them anywhere** and **erase the team's footage** *(Unity build: spills their carried proof as a recoverable pile instead — see §2.1)*. Left-click again to drop them.
+  > **Superseded in the Unity build (2026-08-01).** The hold is a **timer**, not a toggle: a grab hauls for `CarrySeconds` (6s) and the **server** drops them. A second click is refused rather than treated as a release. Owner call — with a fixed carry both sides know how long the haul lasts, so a rescue can be timed against it, where the toggle put the decision on the Yeti every time and gave the searcher nothing to read. The remaining time replicates as `HPPlayer.CarryEndsIn` and shows on the Yeti's prompt — **a timer nobody can see is just a shorter grab**, so the readout is part of the mechanic, not decoration. The web build keeps the toggle.
 - **Cave network (fast travel):** the caves form a tunnel network. In a cave mouth, open the **map (`M`) and click a destination cave** to emerge there — flank the team or escape a stakeout. (~2s cooldown.)
 - **The trail problem:** Yeti **leaves a trail** — footprints and broken branches — that hunters follow. Moving more = a longer, fresher trail; standing still hides you.
 - **Senses:** sees who is currently **filming** (their recording light) and which searchers are **frozen** (a grab target) vs **incapacitated**.
@@ -102,7 +103,7 @@ The hunt is **3 nights**, each a compressed **8pm → 8am** (`NIGHT_SECONDS`, da
 | `W A S D` | Move |
 | Mouse | Look |
 | `RMB` | **Roar** — freeze nearby searchers (~25m) for 30s (~25s cooldown) |
-| `LMB` | **Grab** a frozen searcher → incapacitate + drag + erase footage; click again to drop |
+| `LMB` | **Grab** a frozen searcher → incapacitate + drag + erase footage; click again to drop *(Unity: a 6s timed haul, no manual drop — §2.2)* |
 | `M` | Toggle the **map**; in a cave mouth, **click a cave to fast-travel** there |
 | `Shift` | Sprint (drains stamina) |
 | `Space` | Leap / climb *(planned)* |
@@ -130,6 +131,7 @@ The hunt is **3 nights**, each a compressed **8pm → 8am** (`NIGHT_SECONDS`, da
 ### 7.4 Roar → grab → incapacitate (Yeti's offense) — *implemented*
 - **Roar** (`RMB`, `ROAR_COOLDOWN`): every active searcher within `ROAR_RADIUS` is **frozen** for `FREEZE_SECONDS` — they can look but not move or film.
 - **Grab** (`LMB`): grabs the nearest **frozen** searcher within `GRAB_RADIUS` → **incapacitated** for `INCAP_SECONDS` (their screen fades to black, Yeti **drags** them by walking), and the **team's `videosCaptured` is wiped to 0**. Left-click again drops them (they stay incapacitated where left).
+  > **Unity build:** the drop is on a server timer (`GameManager.CarrySeconds`), not a second click, and the victim trails `DragTrailDistance` **behind** the Yeti rather than riding its exact position. Dragging someone onto the grabber's own coordinates was a real bug: players carry no colliders and movement is the shared sim, so nothing separated them afterwards and a release left the searcher standing inside the Yeti.
 - **Recovery:** after `INCAP_SECONDS` the searcher recovers to active but is **slowed** (`PLAYER.slowFactor`) for `SLOW_SECONDS`. Not eliminated — Yeti wins only by surviving the nights.
 
 ### 7.5 Stamina & exhaustion — *implemented*

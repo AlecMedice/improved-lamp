@@ -24,8 +24,21 @@ namespace Metoh.Game
         private const float ShadowDistanceHigh = 55f;
         private const float ShadowDistanceLow = 30f;
 
-        /// <summary>Render scale at or below which we drop to the cheap look.</summary>
-        private const float LowTierScale = 0.7f;
+        /// <summary>
+        /// Render scale at or above which the expensive lighting is switched on.
+        ///
+        /// **This used to be a bug, and it hid the entire realism pass.** The test was
+        /// `HighDetail = renderScale > 0.7f` while the shipping default was *exactly* 0.7 — so the
+        /// comparison came out false on a clean install and the game booted into the cheap tier every
+        /// single time. Hard shadows and a 30 m shadow distance were not a fallback anyone had chosen;
+        /// they were what everybody got, and the soft shadows the material pass was tuned against had
+        /// never once been on screen.
+        ///
+        /// The threshold now sits at 0.8, strictly BETWEEN the two scales anyone actually runs (0.7
+        /// cheap, 1.0 native), so no default can ever land on the boundary again. Never set this equal
+        /// to a value the slider can produce.
+        /// </summary>
+        private const float HighTierScale = 0.8f;
 
         private static bool _appliedOnce;
 
@@ -39,7 +52,7 @@ namespace Metoh.Game
             if (urp == null) return;
 
             urp.renderScale = Mathf.Clamp(scale, 0.4f, 1f);
-            HighDetail = urp.renderScale > LowTierScale;
+            HighDetail = urp.renderScale >= HighTierScale;
 
             // Shadow distance is the cheapest big lever on a shadow budget: cost scales with the
             // volume the cascades have to cover, not with what ends up on screen.

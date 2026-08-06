@@ -49,6 +49,18 @@ namespace Metoh.Game
         private const float RoarHeardRange = 90f;
         /// <summary>Seconds a heard roar keeps influencing decisions.</summary>
         private const float RoarMemory = 8f;
+        /// <summary>
+        /// How close a downed teammate has to be for the bot to notice them unprompted — walking up
+        /// on a body. Beyond this it needs to have been TOLD (see <see cref="OnTeammateTaken"/>).
+        ///
+        /// Before this existed, TryRevive scanned every player on the map with no range limit, so one
+        /// grab pulled the entire CPU team in from wherever they were — which handed the Yeti the
+        /// whole team around one body, and is most of why a bot team read as aimless.
+        /// </summary>
+        private const float DownSpotRange = 35f;
+        /// <summary>How long a "teammate taken" call-out stays actionable. Past this the trip is
+        /// likely to arrive after they've come round on their own anyway.</summary>
+        private const float TakenMemory = 25f;
 
         // --- fear / spacing (first-guess) ------------------------------------------
         /// <summary>Inside this the Yeti is a threat to run from, not a subject to film.</summary>
@@ -87,6 +99,8 @@ namespace Metoh.Game
         // Memory.
         private Vector3 _lastRoarAt;
         private float _roarHeardAt = -999f;
+        private HPPlayer _takenTeammate;      // who the last call-out was about
+        private float _takenHeardAt = -999f;  // when it came in
         private Vector3 _exploreGoal;
         private float _exploreUntil;
         private float _torchWantedAt;   // last time something made the torch worth burning
@@ -175,6 +189,11 @@ namespace Metoh.Game
         /// <summary>A downed teammate is a hard interrupt — they are out of the match until someone comes.</summary>
         private bool TryRevive(Vector3 pos)
         {
+            // A bot goes to a body it KNOWS about: one close enough to have walked up on, or one the
+            // team called out (OnTeammateTaken) recently enough that the trip is still worth making.
+            // The unbounded map-wide scan this replaced meant every grab summoned the whole team.
+            bool calloutLive = _takenTeammate != null && Time.time - _takenHeardAt < TakenMemory;
+
             HPPlayer downed = null;
             float bestD2 = float.MaxValue;
             foreach (var p in HPPlayer.All)
@@ -182,13 +201,15 @@ namespace Metoh.Game
                 if (p == null || p == _self || p.IsYeti) continue;
                 if (p.Status.Value != HPPlayer.StatusIncap) continue;
                 float d2 = Flat2(p.transform.position, pos);
+                bool known = d2 <= DownSpotRange * DownSpotRange || (calloutLive && p == _takenTeammate);
+                if (!known) continue;
                 if (d2 < bestD2) { bestD2 = d2; downed = p; }
             }
             if (downed == null) return false;
 
-            // TODO: this walks in from any distance. It should weigh the trip against the incap timer
-            // (arriving after they self-recover is wasted), and should hang back while the Yeti is
-            // still standing over them — reviving under the monster just donates a second victim.
+            // Still shallow, and still worth fixing: this doesn't weigh the walk against the incap
+            // timer (arriving after they self-recover is a wasted trip), and it doesn't hang back
+            // while the Yeti stands over them — reviving under the monster donates a second victim.
             SetTorch(true);
             DbgState = "REVIVE";
             if (bestD2 <= WorkReach * WorkReach)
@@ -369,6 +390,25 @@ namespace Metoh.Game
         public void OnHeardRoar(Vector3 at)
         {
             if (Flat2(at, transform.position) > RoarHeardRange * RoarHeardRange) return;
+            _lastRoarAt = at;
+            _roarHeardAt = Time.time;
+        }
+
+        /// <summary>
+        /// The team's call-out that <paramref name="victim"/> has been taken. Range-free on purpose —
+        /// unlike a roar, which you have to be near enough to hear, this is the team knowing one of
+        /// them stopped answering, and that reaches everyone.
+        ///
+        /// It grants KNOWLEDGE, not orders. All it does is make this teammate eligible for the REVIVE
+        /// rung; whether the rung actually wins the frame is still the ladder's decision, and a bot
+        /// that is fleeing, or carrying proof it hasn't banked, will keep doing that.
+        /// </summary>
+        public void OnTeammateTaken(HPPlayer victim, Vector3 at)
+        {
+            _takenTeammate = victim;
+            _takenHeardAt = Time.time;
+            // A grab means the Yeti is exactly there, which is worth knowing on its own — it is the
+            // most reliable position fix the team ever gets on it.
             _lastRoarAt = at;
             _roarHeardAt = Time.time;
         }

@@ -48,6 +48,24 @@ namespace Metoh.Game
         private const double FreezeSeconds = 30;
         /// <summary>Reach to grab a frozen hunter. Public for the CPU bot, same reason as RoarRadius.</summary>
         public const double GrabRadius = 3.5;
+        /// <summary>
+        /// How long a grab hauls its victim before the server drops them automatically.
+        ///
+        /// The hold is a TIMER, not a toggle: a grab starts the carry and nothing either player does
+        /// ends it early. The toggle it replaced (press grab again to let go) put the decision on the
+        /// Yeti every single time and gave the searcher nothing to read — with a fixed carry both
+        /// sides know exactly how long the haul lasts, so the team can time a rescue against it.
+        /// Public because the CPU brain paces its haul against the same number.
+        /// </summary>
+        public const double CarrySeconds = 6;
+        /// <summary>
+        /// How far behind the Yeti a dragged searcher trails. Must be greater than zero: the drag used
+        /// to move the victim onto the grabber's exact position, which left both bodies at identical
+        /// coordinates. Nothing separates them there — players carry no colliders, movement is the
+        /// shared sim — so on release the searcher was standing inside the Yeti and it read as both of
+        /// them being frozen in place. Trailing behind is also just what dragging looks like.
+        /// </summary>
+        public const float DragTrailDistance = 2.2f;
         private const double IncapSeconds = 60;
         private const double SlowSeconds = 30;
         // (The Yeti charge burst was removed 2026-07-19 — owner call. Yeti simply SPRINTS now,
@@ -248,6 +266,8 @@ namespace Metoh.Game
         private readonly Dictionary<HPPlayer, double> _incapUntil = new Dictionary<HPPlayer, double>();
         private readonly Dictionary<HPPlayer, double> _slowUntil = new Dictionary<HPPlayer, double>();
         private readonly Dictionary<HPPlayer, HPPlayer> _grabbedBy = new Dictionary<HPPlayer, HPPlayer>();
+        /// <summary>When each carried victim is dropped. Server-owned — see <see cref="CarrySeconds"/>.</summary>
+        private readonly Dictionary<HPPlayer, double> _carryUntil = new Dictionary<HPPlayer, double>();
         private readonly Dictionary<HPPlayer, double> _dazzleFill = new Dictionary<HPPlayer, double>();
         private readonly Dictionary<HPPlayer, double> _dazzledUntil = new Dictionary<HPPlayer, double>();
         private readonly Dictionary<HPPlayer, double> _roarReadyAt = new Dictionary<HPPlayer, double>();
@@ -472,6 +492,14 @@ namespace Metoh.Game
 
             ResetMatchState(players);
 
+            // The seed is the first thing any reproduction attempt needs — the world is rolled per
+            // hosting session, so without it a bug found in this forest is in a forest that no longer
+            // exists. Paste it into the title screen's dev field to get this map back.
+            var w = WorldBuilder.World;
+            HPLog.Event("MATCH", $"start — {players.Count} players, seed {(w != null ? w.Seed.ToString() : "?")}, " +
+                                 $"yeti {(yeti != null ? yeti.PlayerName.Value + (yeti.IsBot ? " (CPU)" : " (human)") : "NONE")}, " +
+                                 $"ai {YetiBot.AiMode}, nights {TotalNights.Value}");
+
             var searcherIds = new List<string>();
             foreach (var p in players)
             {
@@ -542,6 +570,9 @@ namespace Metoh.Game
             var players = LivePlayers();
             RefillNightlyCharges(players);
             PlaceForNight(players);
+            HPLog.Event("NIGHT", $"night {NightNumber.Value}/{TotalNights.Value} begins — " +
+                                 $"proof {StoredProof}/{VideosRequired.Value}");
+            HPLog.Flush();
         }
 
         /// <summary>
@@ -556,8 +587,10 @@ namespace Metoh.Game
                 _frozenUntil.Remove(p);
                 _incapUntil.Remove(p);
                 _slowUntil.Remove(p);
+                _carryUntil.Remove(p);
+                ReleaseCarriedBy(p); // if this was the Yeti dragging someone
                 _grabbedBy.Remove(p);
-                RemoveByValue(_grabbedBy, p); // if this was the Yeti dragging someone
+                RemoveByValue(_grabbedBy, p);
                 _recording.Remove(p);
                 _reviveIntent.Remove(p);
                 if (p.Status.Value != HPPlayer.StatusActive) p.Status.Value = HPPlayer.StatusActive;
@@ -587,12 +620,29 @@ namespace Metoh.Game
             if (sender == null || !sender.IsHost || MatchPhase.Value != PhaseResults) return;
             var players = LivePlayers();
             ResetMatchState(players);
+            ResetDevLevers();
             foreach (var p in players)
             {
                 p.Role.Value = HPPlayer.RoleSearcher;
                 p.TargetTeleport(p.Owner, CampSpot(), 0f);
             }
             MatchPhase.Value = PhaseLobby;
+        }
+
+        /// <summary>
+        /// Put the F3 CPU-Yeti levers back to shipped defaults when a match ends.
+        ///
+        /// They are static, so within one Play session they otherwise outlive the match that set
+        /// them: finish on RANDOM at 0.5x, start again, and the bot appears broken when in fact a
+        /// switch was left flipped. Reset happens on the way back to the LOBBY rather than at match
+        /// start on purpose — setting a mode in the lobby and having it survive into the match you
+        /// are about to play is the whole point of being able to set it.
+        /// </summary>
+        private static void ResetDevLevers()
+        {
+            YetiBot.AiMode = YetiBot.Mode.Hunt;
+            YetiBot.Paused = false;
+            YetiBot.SpeedMul = 1f;
         }
 
         private void ResetMatchState(List<HPPlayer> players)
@@ -615,6 +665,7 @@ namespace Metoh.Game
             _incapUntil.Clear();
             _slowUntil.Clear();
             _grabbedBy.Clear();
+            _carryUntil.Clear();
             _dazzleFill.Clear();
             _dazzledUntil.Clear();
             _roarReadyAt.Clear();
@@ -694,6 +745,10 @@ namespace Metoh.Game
             if (_elapsed < Get(_roarReadyAt, bf)) return;
             Esc e = CurrentEsc();
             _roarReadyAt[bf] = _elapsed + RoarCooldown * e.RoarCd;
+            // Counted inside the freeze loop, not by scanning for frozen players afterwards: a sweep
+            // would also count anyone still frozen from an EARLIER roar and report them as this
+            // roar's catch, which is exactly the number a play-test log gets read for.
+            int froze = 0;
             foreach (var h in LivePlayers())
             {
                 if (h.IsYeti || h.Status.Value != HPPlayer.StatusActive) continue;
@@ -701,8 +756,13 @@ namespace Metoh.Game
                 {
                     h.Status.Value = HPPlayer.StatusFrozen;
                     _frozenUntil[h] = _elapsed + FreezeSeconds * e.Freeze;
+                    froze++;
                 }
             }
+            HPLog.Event("ROAR", $"{bf.PlayerName.Value} roared at ({bf.transform.position.x:0}," +
+                                $"{bf.transform.position.z:0}) — froze {froze}, " +
+                                $"cooldown {RoarCooldown * e.RoarCd:0}s");
+
             RpcRoared(bf.transform.position);
 
             // CPU searchers get the roar as a server-side event rather than through the RPC: the
@@ -713,7 +773,7 @@ namespace Metoh.Game
             foreach (var h in LivePlayers())
             {
                 if (h.IsYeti || !h.IsBot) continue;
-                h.GetComponent<SearcherBot>()?.OnHeardRoar(bf.transform.position);
+                h.SearcherBrain?.OnHeardRoar(bf.transform.position);
             }
         }
 
@@ -722,17 +782,10 @@ namespace Metoh.Game
             if (MatchPhase.Value != PhasePlaying || !bf.IsYeti) return;
             if (_elapsed < Get(_dazzledUntil, bf)) return; // blinded — can't grab
 
-            // Dragging someone already? This drops them where they are.
-            bool released = false;
-            var toRelease = new List<HPPlayer>();
-            foreach (var kv in _grabbedBy) if (kv.Value == bf) toRelease.Add(kv.Key);
-            foreach (var victim in toRelease)
-            {
-                _grabbedBy.Remove(victim);
-                victim.GrabberObjectId.Value = -1;
-                released = true;
-            }
-            if (released) return;
+            // Already hauling someone? The carry is on a timer now (CarrySeconds), so a second press
+            // is not a release — it's just refused. One victim at a time, and the drop is the
+            // server's call, which means neither side can cut the haul short.
+            foreach (var kv in _grabbedBy) if (kv.Value == bf) return;
 
             HPPlayer best = null;
             double bestD = GrabRadius * GrabRadius;
@@ -752,7 +805,26 @@ namespace Metoh.Game
             _frozenUntil.Remove(best);
             _incapUntil[best] = _elapsed + IncapSeconds;
             _grabbedBy[best] = bf;
+            _carryUntil[best] = _elapsed + CarrySeconds;
             best.GrabberObjectId.Value = bf.ObjectId;
+            HPLog.Event("GRAB", $"{bf.PlayerName.Value} grabbed {best.PlayerName.Value} " +
+                                $"at ({best.transform.position.x:0},{best.transform.position.z:0}) — " +
+                                $"carry {CarrySeconds:0}s, incap {IncapSeconds:0}s");
+
+            // Tell the TEAM someone was taken. A searcher who was across the valley has no way to
+            // know otherwise — the victim simply stops answering — and a rescue that can't start
+            // until somebody happens to walk past the body isn't a rescue.
+            //
+            // This is an ALERT, not a summons: it says what happened and where, and each searcher
+            // decides for itself. Nothing here orders anyone to go.
+            RpcSearcherTaken(best.PlayerName.Value, best.transform.position, best.ObjectId);
+            foreach (var h in LivePlayers())
+            {
+                // Bots get it server-side for the same reason they get the roar that way: the RPC is
+                // a client concern and a bot has no client to receive it.
+                if (h.IsYeti || !h.IsBot || h == best) continue;
+                h.SearcherBrain?.OnTeammateTaken(best, best.transform.position);
+            }
             // A grab SPILLS everything this searcher was carrying — it doesn't destroy it. The pack
             // bursts where they went down and the proof lies there, recoverable, until it goes cold.
             // Proof already stored in the duffel is untouchable, because the duffel is.
@@ -1048,6 +1120,21 @@ namespace Metoh.Game
             if (HPAudio.Instance != null) HPAudio.Instance.PlayAt(HPAudio.EvidenceDestroyed, at, 0.6f, 22f);
         }
 
+        /// <summary>
+        /// A teammate has been taken. Searchers only — the Yeti was there, and does not need a
+        /// notification describing what it just did. The victim doesn't get one either; their screen
+        /// is already fading and they know.
+        /// </summary>
+        [ObserversRpc]
+        private void RpcSearcherTaken(string who, Vector3 at, int victimId)
+        {
+            // Identity by ObjectId, not by name: two players can pick the same name, and the one
+            // person who must NOT get this toast is the victim.
+            var me = HPPlayer.Local;
+            if (me == null || me.IsYeti || me.ObjectId == victimId) return;
+            HPHud.NotifySearcherTaken(who, at);
+        }
+
         [ObserversRpc]
         private void RpcProofRecovered(Vector3 at, int count)
         {
@@ -1227,6 +1314,8 @@ namespace Metoh.Game
             _roarReadyAt.Remove(p);
             _chargeReadyAt.Remove(p);
             _lastTrack.Remove(p);
+            _lastPrint.Remove(p);  // holds a strong ref to a destroyed player otherwise — one per leave
+            _carryUntil.Remove(p); // UpdateCarry would drop it next tick anyway; don't make it notice
             _markReadyAt.Remove(p);
             _treeHairReadyAt.Remove(p);
             _collectIntent.Remove(p);
@@ -1235,6 +1324,7 @@ namespace Metoh.Game
 
             // As a value: anyone reviving the leaver stops; anyone the leaver was dragging is freed.
             RemoveByValue(_reviveIntent, p);
+            ReleaseCarriedBy(p); // must run BEFORE the mapping goes, or the victims can't be found
             RemoveByValue(_grabbedBy, p);
 
             if (!base.IsServerStarted || MatchPhase.Value != PhasePlaying) return;
@@ -1266,6 +1356,9 @@ namespace Metoh.Game
         {
             var players = LivePlayers();
             ResetMatchState(players); // clears every per-player dict + despawns clues/piles/pings
+            ResetDevLevers();         // the OTHER way back to the lobby — must match ServerReturnToLobby
+            HPLog.Event("MATCH", $"aborted — {reason}");
+            HPLog.Flush();
             foreach (var pl in players)
             {
                 pl.Role.Value = HPPlayer.RoleSearcher;
@@ -1440,6 +1533,7 @@ namespace Metoh.Game
             DiscoverCaves(hunters);
             UpdateCasting(dt);
             UpdateRevives(dt, hunters);
+            UpdateCarry();
             UpdateStatuses();
             UpdateDazzle(dt, hunters, yetis);
             UpdateFilming(dt, hunters, yetis);
@@ -1449,7 +1543,13 @@ namespace Metoh.Game
                 // Proof is footage PLUS physical evidence — either path, or any mix, gets there.
                 if (StoredProof >= VideosRequired.Value) Winner.Value = WinnerHunters;
                 else if (nightsComplete) Winner.Value = WinnerYeti;
-                if (Winner.Value != WinnerNone) MatchPhase.Value = PhaseResults;
+                if (Winner.Value != WinnerNone)
+                {
+                    MatchPhase.Value = PhaseResults;
+                    HPLog.Event("MATCH", $"over — {(Winner.Value == WinnerHunters ? "SEARCHERS" : "YETI")} win " +
+                                         $"on night {NightNumber.Value}, proof {StoredProof}/{VideosRequired.Value}");
+                    HPLog.Flush();
+                }
             }
         }
 
@@ -1690,10 +1790,12 @@ namespace Metoh.Game
                     target.ReviveProgress01.Value = 0f;
                     _incapUntil.Remove(target);
                     _grabbedBy.Remove(target);
+                    _carryUntil.Remove(target); // revived mid-haul: the carry ends with the incap
                     target.GrabberObjectId.Value = -1;
                     _slowUntil[target] = _elapsed + SlowSeconds;
                     _reviveProgress.Remove(target);
                     doneIntents.Add(reviver);
+                    HPLog.Event("REVIVE", $"{reviver.PlayerName.Value} revived {target.PlayerName.Value}");
                 }
                 else
                 {
@@ -1730,6 +1832,86 @@ namespace Metoh.Game
             }
         }
 
+        /// <summary>
+        /// Run the carry timers, and drag the victims that nothing else drags.
+        ///
+        /// A HUMAN victim hauls itself: its owning client mirrors the grabber in OwnerUpdate, because
+        /// the NetworkTransform is client-authoritative and a position written here would simply be
+        /// overwritten by the owner on the next send. A BOT victim has no owner and no OwnerUpdate, so
+        /// nothing moved it at all — a grabbed CPU searcher just stayed where it fell while the Yeti
+        /// walked off still "holding" it. The server drags those directly, which is the same split
+        /// ServerBotDrive already uses for ordinary bot movement.
+        /// </summary>
+        private void UpdateCarry()
+        {
+            if (_carryUntil.Count == 0) return;
+
+            List<HPPlayer> drop = null;
+            foreach (var kv in _carryUntil)
+            {
+                HPPlayer victim = kv.Key;
+                if (victim == null || !_grabbedBy.TryGetValue(victim, out HPPlayer grabber) || grabber == null)
+                {
+                    (drop ??= new List<HPPlayer>()).Add(victim);
+                    continue;
+                }
+                if (_elapsed >= kv.Value) { (drop ??= new List<HPPlayer>()).Add(victim); continue; }
+
+                victim.CarryEndsIn.Value = (float)(kv.Value - _elapsed);
+                if (victim.IsBot) victim.ServerDragTo(DragTrailPoint(grabber));
+            }
+
+            if (drop == null) return;
+            foreach (var victim in drop) ReleaseCarry(victim, "carry expired");
+        }
+
+        /// <summary>
+        /// Where a dragged victim rides: <see cref="DragTrailDistance"/> behind the grabber, on the
+        /// ground. Shared by the server (bot victims) and the owning client (human victims) so both
+        /// agree on the same spot and the release never leaves anyone inside anyone.
+        /// </summary>
+        public static Vector3 DragTrailPoint(HPPlayer grabber)
+        {
+            Vector3 g = grabber.transform.position;
+            Vector3 back = grabber.transform.forward;
+            back.y = 0f;
+            back = back.sqrMagnitude > 1e-4f ? back.normalized : Vector3.forward;
+            Vector3 at = g - back * DragTrailDistance;
+            var world = WorldBuilder.World;
+            if (world != null) at.y = (float)world.GetHeight(at.x, at.z);
+            return at;
+        }
+
+        /// <summary>
+        /// Free everyone <paramref name="grabber"/> is hauling. Call this BEFORE the grabber's entries
+        /// are pulled out of <see cref="_grabbedBy"/> — that map is the only record of who it holds,
+        /// so afterwards there is nothing left to look up and the carry timer would outlive the Yeti.
+        /// </summary>
+        private void ReleaseCarriedBy(HPPlayer grabber)
+        {
+            List<HPPlayer> victims = null;
+            foreach (var kv in _grabbedBy) if (kv.Value == grabber) (victims ??= new List<HPPlayer>()).Add(kv.Key);
+            if (victims == null) return;
+            foreach (var v in victims) ReleaseCarry(v, "grabber gone");
+        }
+
+        /// <summary>End a carry. Clears the link but leaves the incapacitation running — being put
+        /// down is not being revived.</summary>
+        private void ReleaseCarry(HPPlayer victim, string why)
+        {
+            _carryUntil.Remove(victim);
+            if (victim == null) return;
+            _grabbedBy.TryGetValue(victim, out HPPlayer grabber);
+            _grabbedBy.Remove(victim);
+            if (victim.GrabberObjectId.Value != -1) victim.GrabberObjectId.Value = -1;
+            if (victim.CarryEndsIn.Value != 0f) victim.CarryEndsIn.Value = 0f;
+
+            double left = Get(_incapUntil, victim) - _elapsed;
+            HPLog.Event("DROP", $"{(grabber != null ? grabber.PlayerName.Value : "?")} dropped " +
+                                $"{victim.PlayerName.Value} at ({victim.transform.position.x:0}," +
+                                $"{victim.transform.position.z:0}) — {why}; {left:0}s incap left");
+        }
+
         private void UpdateStatuses()
         {
             foreach (var p in LivePlayers())
@@ -1752,8 +1934,10 @@ namespace Metoh.Game
                         p.Status.Value = HPPlayer.StatusActive;
                         _incapUntil.Remove(p);
                         _grabbedBy.Remove(p);
+                        _carryUntil.Remove(p);
                         p.GrabberObjectId.Value = -1;
                         _slowUntil[p] = _elapsed + SlowSeconds;
+                        HPLog.Event("RECOVER", $"{p.PlayerName.Value} came round — slowed {SlowSeconds:0}s");
                     }
                     else p.StatusEndsIn.Value = (float)(Get(_incapUntil, p) - _elapsed);
                 }

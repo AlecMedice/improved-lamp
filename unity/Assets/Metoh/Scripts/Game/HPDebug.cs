@@ -52,14 +52,6 @@ namespace Metoh.Game
         // the other one is active?" — is answered by a peak, not by a sample.
         private float _peakDx, _peakDy, _peakResetAt;
 
-        /// <summary>
-        /// Mirror the look readout to the Console while the overlay is open.
-        ///
-        /// The on-screen panel is anchored at (8,8), which is useless if the Game view is scrolled or
-        /// scaled — the panel then sits outside the visible area and the numbers can't be read at all.
-        /// The Console is never clipped, and its output can be copied into a bug report verbatim.
-        /// </summary>
-        private float _nextLogAt;
 
         private void Update()
         {
@@ -81,9 +73,35 @@ namespace Metoh.Game
             // pressing this does nothing rather than desyncing its own clock.
             if (kb.nKey.wasPressedThisFrame && GameManager.Instance != null) GameManager.Instance.DevSkipNight();
 
-            // Toggle the CPU Yeti between the aggressive (prowls toward you) and passive (wanders,
-            // only engages if you walk into it) brains — the latter is the original, kept for testing.
-            if (kb.pKey.wasPressedThisFrame) YetiBot.AggressiveProwl = !YetiBot.AggressiveProwl;
+            // --- CPU Yeti dev controls. These exist because "the Yeti just beelines at me" and "the
+            // Yeti got stuck" are both unfalsifiable at full speed: you cannot tell tracking from
+            // omniscience while being chased, and you cannot inspect a thing that is running at you.
+            // Freeze it, halve it, or change what it is allowed to know, and both become answerable.
+            if (kb.oKey.wasPressedThisFrame)
+            {
+                YetiBot.Paused = !YetiBot.Paused;
+                HPLog.Event("DEV", $"yeti paused: {YetiBot.Paused}");
+            }
+            if (kb.kKey.wasPressedThisFrame)
+            {
+                // A toggle, not a ramp: the question is "is it still on me at half speed", and two
+                // values answer it. 0.5 is slow enough to walk away from deliberately.
+                YetiBot.SpeedMul = YetiBot.SpeedMul < 0.999f ? 1f : 0.5f;
+                HPLog.Event("DEV", $"yeti speed: {YetiBot.SpeedMul:0.00}x");
+            }
+            if (kb.pKey.wasPressedThisFrame)
+            {
+                YetiBot.AiMode = (YetiBot.Mode)(((int)YetiBot.AiMode + 1) % 3);
+                HPLog.Event("DEV", $"yeti AI mode: {YetiBot.AiMode}");
+            }
+            // Per-bot movement trace to the Console. J, not B — B is the binoculars action, and these
+            // dev keys are read IN ADDITION to the game's own input, not instead of it, so a key that
+            // collides fires both.
+            if (kb.jKey.wasPressedThisFrame)
+            {
+                HPPlayer.BotDriveTrace = !HPPlayer.BotDriveTrace;
+                HPLog.Event("DEV", $"bot drive trace: {HPPlayer.BotDriveTrace}");
+            }
 #endif
         }
 
@@ -102,16 +120,10 @@ namespace Metoh.Game
                 }
             }
 
-            if (_open && me != null && Time.unscaledTime >= _nextLogAt)
-            {
-                _nextLogAt = Time.unscaledTime + 0.5f;
-                Debug.Log($"[look] delta({me.DbgLookDelta.x:0.0},{me.DbgLookDelta.y:0.0}) " +
-                          $"peak/s x{_peakDx:0.0} y{_peakDy:0.0} | " +
-                          $"yaw {me.DbgYawDeg:0.0}->body {me.DbgBodyYawDeg:0.0} | " +
-                          $"pitch {me.DbgPitchDeg:0.0}->cam {me.DbgCamPitchDeg:0.0} | " +
-                          $"moving {me.OwnMoving} camParent {me.DbgCamParent} " +
-                          (me.DbgLookGated ? "GATED" : ""));
-            }
+            // (The half-second [look] Console mirror lived here. It belonged to the stuck-look-axis
+            // hunt, which was fixed by moving the camera write into LateUpdate — and it fired twice a
+            // second for as long as the overlay was open, which is precisely while frame cost is
+            // being measured. The on-screen LOOK block below still shows every one of those numbers.)
 
             float ms = Time.unscaledDeltaTime * 1000f;
             _smoothedMs = Mathf.Lerp(_smoothedMs, ms, 0.08f);
@@ -207,9 +219,14 @@ namespace Metoh.Game
             lines.AppendLine($"  [4] shadows      {OnOff(_shadows)}");
             lines.AppendLine();
             lines.AppendLine("  [N] skip to next night (host only)");
-            lines.AppendLine($"  [P] yeti AI fallback prowl: {(YetiBot.AggressiveProwl ? "ON (walks to you when it has no track)" : "OFF (sight/hearing/tracks only)")}");
             lines.AppendLine();
-            lines.Append("[F3] closes  ·  renderScale lives in the Esc pause menu");
+            lines.AppendLine("CPU YETI");
+            lines.AppendLine($"  [O] pause      {(YetiBot.Paused ? "PAUSED (frozen, can't grab)" : "running")}");
+            lines.AppendLine($"  [K] speed      {YetiBot.SpeedMul:0.00}x");
+            lines.AppendLine($"  [P] ai mode    {AiModeLabel()}");
+            lines.AppendLine($"  [J] drive trace {OnOff(HPPlayer.BotDriveTrace)} (per-bot movement → Console; noisy)");
+            lines.AppendLine();
+            lines.Append($"[F3] closes  ·  renderScale lives in the Esc pause menu  ·  log → {LogLabel()}");
 
             string text = lines.ToString();
             var size = _style.CalcSize(new GUIContent(text));
@@ -224,6 +241,28 @@ namespace Metoh.Game
 
         private static string OnOff(bool b) => b ? "ON " : "off";
 
+        /// <summary>Spell out what each AI mode actually changes — the mode name alone doesn't say
+        /// which of the bot's information sources it just took away.</summary>
+        private static string AiModeLabel()
+        {
+            switch (YetiBot.AiMode)
+            {
+                case YetiBot.Mode.Hunt:  return "HUNT   (knows roughly where you are — the beeline)";
+                case YetiBot.Mode.Track: return "TRACK  (sight/hearing/snow prints only)";
+                default:                 return "RANDOM (roams; engages only if it senses you)";
+            }
+        }
+
+        /// <summary>Just the file name — the full path is long and it's written to the Console once
+        /// at startup, which is where you'd copy it from anyway.</summary>
+        private static string LogLabel()
+        {
+            string p = HPLog.Path;
+            if (string.IsNullOrEmpty(p)) return "off";
+            int i = p.LastIndexOfAny(new[] { '/', '\\' });
+            return i >= 0 ? "Logs/" + p.Substring(i + 1) : p;
+        }
+
         /// <summary>Where the Yeti is relative to you — a compass heading + distance, or "none".</summary>
         private static string YetiLine()
         {
@@ -232,7 +271,7 @@ namespace Metoh.Game
             if (bf == null) return "yeti: NONE spawned";
 
             string tag = bf.IsBot ? "CPU" : "human";
-            var brain = bf.GetComponent<YetiBot>();
+            var brain = bf.YetiBrain;
             string ai = brain != null ? "  ai:" + brain.DbgState : "  ai:NO-BRAIN";
             if (me == null) return $"yeti: {tag}{ai}";
 
@@ -256,7 +295,7 @@ namespace Metoh.Game
             foreach (var p in HPPlayer.All)
             {
                 if (p == null || p.IsYeti || !p.IsBot) continue;
-                var brain = p.GetComponent<SearcherBot>();
+                var brain = p.SearcherBrain;
                 string who = p.CharacterName.Value != "" ? p.CharacterName.Value.Split(' ')[0] : "bot";
                 string carried = p.CarriedTotal > 0 ? $"+{p.CarriedTotal}" : "";
                 parts.Add($"{who}:{(brain != null ? brain.DbgState : "NO-BRAIN")}{carried}");

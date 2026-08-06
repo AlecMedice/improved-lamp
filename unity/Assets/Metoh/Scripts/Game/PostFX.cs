@@ -53,9 +53,16 @@ namespace Metoh.Game
             tone.mode.Override(TonemappingMode.ACES);
 
             _colorAdjustments = profile.Add<ColorAdjustments>();
-            _colorAdjustments.postExposure.Override(0f);
-            _colorAdjustments.saturation.Override(-6f); // slightly desaturated dusk palette
-            _colorAdjustments.contrast.Override(12f);   // snow without contrast is a flat grey field
+            _colorAdjustments.postExposure.Override(BaseExposure);
+            // Saturation pulled back toward neutral (was -6). A near-monochrome palette was fighting
+            // the one thing the world has to distinguish its surfaces with: the basin is blue, the
+            // trail is warm, the tents and prayer flags are the only saturated things out there, and
+            // desaturating the frame was quietly spending all of that.
+            _colorAdjustments.saturation.Override(-2f);
+            // Contrast up from 12. With the terrain now spanning bare rock to open snowpack there is
+            // finally a real range in the image to expand; at 12 the new dark end was being lifted
+            // back toward the same mid-grey everything already sat in.
+            _colorAdjustments.contrast.Override(18f);
 
             // SPLIT TONING — cool shadows, warm highlights. This is the cheapest realism win in the
             // whole pass and it is pure grading, not lighting: real snow at night is lit by two
@@ -137,10 +144,21 @@ namespace Metoh.Game
             ApplyExposure();
         }
 
+        /// <summary>
+        /// Baseline exposure for gameplay, in stops.
+        ///
+        /// The scene was lit and graded to sit right at the bottom of the display range, which reads
+        /// as "I can't see anything" rather than as dread — the difference being that dread needs you
+        /// to *almost* make something out. A third of a stop is small enough that nothing becomes
+        /// safe and large enough to lift the darks off the floor, where all the shadow detail the
+        /// soft-shadow and AO work produces was previously being clipped to black and thrown away.
+        /// </summary>
+        private const float BaseExposure = 0.35f;
+
         private void ApplyExposure()
         {
             if (_colorAdjustments == null) return;
-            float ev = 0f;
+            float ev = BaseExposure;
             if (_titleMode) ev += 1.15f;      // menu backdrop
             if (_yetiVision) ev += 0.9f;   // predator eyes
             if (_nightVision) ev += 2.0f;     // image intensifier — a big lift, it's the whole point

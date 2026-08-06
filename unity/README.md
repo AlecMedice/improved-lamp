@@ -59,8 +59,7 @@ robocopy "<repo>\csharp\Metoh.Sim"   "C:\Users\amedi\Metoh_port\Assets\Metoh\Sim
 ```
 
 The live project is `C:\Users\amedi\Metoh_port` — a separate tree from this repo, which carries no
-`.meta` or `Library/`. It is a **new** folder as of the Metoh rebrand: the previous live project
-(`C:\Users\amedi\Mothman_port`) belongs to the abandoned `mothman_port` branch and is left alone.
+`.meta` or `Library/`. It is a **new** folder as of the Metoh rebrand.
 
 Robocopy exit codes below 8 mean success. Verify without opening Unity by smoke-compiling against
 `Library/ScriptAssemblies` — see `UNITY_PORT_NOTES.md` §8; it has caught real errors repeatedly.

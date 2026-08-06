@@ -47,6 +47,14 @@ namespace Metoh.Game
         public readonly SyncVar<bool> Filming = new SyncVar<bool>(false);
         public readonly SyncVar<float> FilmProgress = new SyncVar<float>(0f);
         public readonly SyncVar<int> GrabberObjectId = new SyncVar<int>(-1);
+        /// <summary>
+        /// Seconds left on the haul while this player is being carried; 0 otherwise.
+        ///
+        /// Replicated because the timed carry's entire justification is that BOTH sides can read it —
+        /// a fixed haul the team can time a rescue against. A timer nobody can see is just a shorter
+        /// grab, so this is part of the mechanic, not a HUD nicety.
+        /// </summary>
+        public readonly SyncVar<float> CarryEndsIn = new SyncVar<float>(0f);
         public readonly SyncVar<bool> WantsYeti = new SyncVar<bool>(false);
         /// <summary>DEV: the persona this player asked to be dealt ("" = normal random deal).</summary>
         public readonly SyncVar<string> DevSpecialty = new SyncVar<string>("");
@@ -284,7 +292,13 @@ namespace Metoh.Game
                 var grabber = FindByObjectId(GrabberObjectId.Value);
                 if (grabber != null)
                 {
-                    transform.position = Vector3.Lerp(transform.position, grabber.transform.position, Time.deltaTime * 10f);
+                    // Trail BEHIND the grabber, never onto it. Homing on grabber.transform.position —
+                    // what this did originally — parked both bodies at identical coordinates, and
+                    // since players carry no colliders and movement is the shared sim, nothing pushes
+                    // them apart again: on release you were left standing inside the Yeti, which
+                    // reads as both of you being stuck.
+                    Vector3 goal = GameManager.DragTrailPoint(grabber);
+                    transform.position = Vector3.Lerp(transform.position, goal, Time.deltaTime * 10f);
                     SyncSimTo(transform.position);
                 }
             }
@@ -778,6 +792,11 @@ namespace Metoh.Game
             if (IsYeti) speedMul = esc;               // per-night escalation only
             else if (Slowed.Value) speedMul = Sim.Player.SlowFactor;
 
+            // DEV (F3): the CPU Yeti's speed lever. Applied here, inside the modifiers the shared sim
+            // already takes, so a slowed bot is slowed by the sim rather than by a second movement
+            // path that could drift from it. Only ever touches a bot — a human Yeti is unaffected.
+            if (IsYeti && _isBot) speedMul *= YetiBot.SpeedMul;
+
             return new StepModifiers
             {
                 SpeedMul = speedMul,
@@ -1067,6 +1086,20 @@ namespace Metoh.Game
             _sim.Vy = 0;
         }
 
+        /// <summary>
+        /// Server-side drag for a victim with no owner (a CPU searcher). ServerBotDrive refuses to
+        /// move anything that isn't <see cref="StatusActive"/> — correct for walking, but it meant a
+        /// grabbed bot was never hauled anywhere: the Yeti "carried" it while its body stayed put.
+        /// This writes the transform directly, the same way ServerBotDrive does, and keeps the sim in
+        /// step so the bot resumes from where it was actually dropped.
+        /// </summary>
+        public void ServerDragTo(Vector3 goal)
+        {
+            if (!_isBot) return;
+            transform.position = Vector3.Lerp(transform.position, goal, Time.deltaTime * 10f);
+            SyncSimTo(transform.position);
+        }
+
         /// <summary>Sim yaw from the replicated body rotation (server uses this for aim cones).</summary>
         public float SimYawFromTransform()
         {
@@ -1141,17 +1174,32 @@ namespace Metoh.Game
             // and swapping roles between matches has to swap brains rather than stack them.
             if (IsYeti)
             {
-                var searcherBrain = GetComponent<SearcherBot>();
-                if (searcherBrain != null) Destroy(searcherBrain);
-                if (GetComponent<YetiBot>() == null) gameObject.AddComponent<YetiBot>();
+                if (SearcherBrain != null) Destroy(SearcherBrain);
+                SearcherBrain = null;
+                if (YetiBrain == null) YetiBrain = gameObject.AddComponent<YetiBot>();
             }
             else
             {
-                var yetiBrain = GetComponent<YetiBot>();
-                if (yetiBrain != null) Destroy(yetiBrain);
-                if (GetComponent<SearcherBot>() == null) gameObject.AddComponent<SearcherBot>();
+                if (YetiBrain != null) Destroy(YetiBrain);
+                YetiBrain = null;
+                if (SearcherBrain == null) SearcherBrain = gameObject.AddComponent<SearcherBot>();
             }
         }
+
+        /// <summary>
+        /// This bot's brain, held rather than fetched. Host-side only — a pure client never adds one,
+        /// so these stay null there exactly as the old GetComponent calls returned null.
+        ///
+        /// They exist because the F3 overlay read them with GetComponent from inside OnGUI, which
+        /// Unity runs at least twice a frame (Layout and Repaint) — so the panel whose job is to
+        /// report the frame cost was adding a per-player component lookup to every frame it measured.
+        /// </summary>
+        public YetiBot YetiBrain { get; private set; }
+        public SearcherBot SearcherBrain { get; private set; }
+
+        /// <summary>DEV (F3 `[J]`): per-bot movement trace to the Console. Off by default — see
+        /// ServerBotDrive for why it can't be left on with five bots in the match.</summary>
+        public static bool BotDriveTrace;
 
         /// <summary>
         /// One host tick of bot movement. The brain supplies a <see cref="MoveInput"/> (direction via
@@ -1181,16 +1229,22 @@ namespace Metoh.Game
             if (!Mathf.Approximately(Stamina.Value, (float)_sim.Stamina)) Stamina.Value = (float)_sim.Stamina;
             if (!Mathf.Approximately(Battery.Value, (float)_sim.Battery)) Battery.Value = (float)_sim.Battery;
 
-            // DEV diagnostic (throttled): pinpoints where movement breaks if the bot ever stalls.
+            // DEV diagnostic (throttled), OFF by default: pinpoints where movement breaks if a bot
+            // ever stalls.
             //  simMoved 0     -> StepPlayer isn't moving it (input.W false, speedMul 0, world issue)
             //  simMoved > 0   -> the sim IS moving; if it still looks stuck, something overrides the
             //                    transform after this write (a live NetworkTransform).
-            if (Time.time >= _botLogAt)
+            //
+            // Gated because it is PER BOT: written when the Yeti was the only one, it now fires for
+            // five, and an editor Debug.Log captures a stack trace every time. Turn it on from the
+            // F3 overlay only while actually chasing a stall.
+            if (BotDriveTrace && Time.time >= _botLogAt)
             {
                 _botLogAt = Time.time + 1.5f;
                 float simMoved = ((float)_sim.X - before.x) * ((float)_sim.X - before.x) +
                                  ((float)_sim.Z - before.y) * ((float)_sim.Z - before.y);
-                Debug.Log($"[bot] W={input.W} speedMul={mods.SpeedMul:0.00} simMoved={Mathf.Sqrt(simMoved):0.000}/frame " +
+                Debug.Log($"[bot] {PlayerName.Value} W={input.W} speedMul={mods.SpeedMul:0.00} " +
+                          $"simMoved={Mathf.Sqrt(simMoved):0.000}/frame " +
                           $"grounded={_sim.Grounded} pos=({_sim.X:0},{_sim.Z:0})");
             }
             return _lastStep;

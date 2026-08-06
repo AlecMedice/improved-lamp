@@ -89,10 +89,8 @@ namespace Metoh.Game
         /// <summary>Seconds to retreat after being dazzled — long enough that the searcher's beam wins
         /// them real distance, short enough that it comes back.</summary>
         private const float DazzleBreakSeconds = 3.5f;
-        /// <summary>How long to haul a grabbed searcher before dropping them.</summary>
-        private const float DragSeconds = 6f;
-        /// <summary>Stop dragging early once this far from the duffel — the point is made.</summary>
-        private const float DragClearOfDuffel = 70f;
+        // (How long a haul lasts is GameManager.CarrySeconds now — the server owns the carry timer,
+        // and the bot's own DragSeconds/DragClearOfDuffel early-drop went with the toggle release.)
 
         // --- target preference (first-guess) ---------------------------------------
         /// <summary>Score bonus for a searcher carrying proof — worth ~25 m of extra walk.</summary>
@@ -113,7 +111,6 @@ namespace Metoh.Game
         private const float WanderRadius = 120f;
 
         private HPPlayer _self;
-        private float _dbgAt; // throttle for the [botAI] guard trace
         // MUST be built in Awake, never as a field initializer: NavMeshPath's constructor calls
         // InitializeNavMeshPath, which Unity forbids from a MonoBehaviour constructor. C# compiles
         // field initializers into the constructor in declaration order, so a throw here abandons
@@ -145,8 +142,6 @@ namespace Metoh.Game
         private float _travelThinkAt;   // next time we're allowed to consider a crevasse hop
         private float _breakOffUntil;   // retreating from a flashlight beam until this time
         private Vector3 _breakOffDir;   // the direction we bolted, held so the retreat is a line not a jitter
-        private float _dragUntil;       // hauling a grabbed searcher until this time
-        private bool _wasDragging;      // edge-detect the grab so the haul timer starts once
 
         private void Awake()
         {
@@ -156,25 +151,42 @@ namespace Metoh.Game
 
         private void Update()
         {
-            // DEV trace (throttled): says exactly which guard the brain dies at, since the F3 line
-            // shows it never sets a state. Remove once the bot is confirmed hunting.
-            bool log = Time.time >= _dbgAt;
-            if (log) _dbgAt = Time.time + 1f;
-
             // Host-authoritative and match-only. Clients hold a remote copy of the bot and never think
             // for it; the lobby and results screens are inert.
-            if (!InstanceFinder.IsServerStarted) { if (log) Debug.Log("[botAI] bail: not server-started"); return; }
-            if (_self == null) { if (log) Debug.Log("[botAI] bail: _self null"); return; }
-            if (!_self.IsBot) { if (log) Debug.Log("[botAI] bail: not flagged bot"); return; }
+            //
+            // Each guard reports itself through DbgState rather than through the Console. It used to
+            // log a throttled line every second forever ("remove once the bot is confirmed hunting" —
+            // it is), which in the editor means a stack-trace capture and a Console row every second
+            // per bot, and there are five bots now. The overlay and the play-test log both read
+            // DbgState, so nothing is lost. Literals only: LateUpdate compares by reference.
+            if (!InstanceFinder.IsServerStarted) { DbgState = "off: not server"; return; }
+            if (_self == null) return; // no DbgState to set — the brain has no player
+            if (!_self.IsBot) { DbgState = "off: not a bot"; return; }
             var gm = GameManager.Instance;
-            if (gm == null) { if (log) Debug.Log("[botAI] bail: no GameManager"); return; }
-            if (gm.MatchPhase.Value != GameManager.PhasePlaying) { if (log) Debug.Log($"[botAI] bail: phase={gm.MatchPhase.Value}"); return; }
-            if (gm.IntermissionActive) { if (log) Debug.Log("[botAI] bail: intermission"); return; }
-            if (_self.Status.Value != HPPlayer.StatusActive) { if (log) Debug.Log($"[botAI] bail: status={_self.Status.Value}"); return; }
-            if (log) Debug.Log("[botAI] running past all guards");
-
+            if (gm == null) { DbgState = "off: no manager"; return; }
+            if (gm.MatchPhase.Value != GameManager.PhasePlaying) { DbgState = "off: not playing"; return; }
+            if (gm.IntermissionActive) { DbgState = "off: intermission"; return; }
+            if (_self.Status.Value != HPPlayer.StatusActive) { DbgState = "off: not active"; return; }
             float dt = Mathf.Min(Time.deltaTime, 0.1f);
+
+            // The hearing sampler runs BEFORE the pause check, and this ordering is load-bearing. It
+            // measures speed as (distance since last sample) / dt. Skipping it while paused freezes
+            // _lastPos but not dt, so the first frame after unpausing divides a whole pause's worth of
+            // travel by one frame — every searcher reads as sprinting and the bot "hears" the entire
+            // map the instant you let it go. That defeats the point of pausing to watch it hunt.
             UpdateHeardSpeeds(dt);
+
+            // DEV freeze (F3). After the guards and before any steering: perception and the state
+            // machine below never run, so the bot holds position and holds its last state — which is
+            // what makes it inspectable. Abilities stop with it, so a paused Yeti standing next to you
+            // cannot grab you. It is still driven with a null input so the shared sim keeps ticking:
+            // otherwise stamina neither drains nor recovers and it resumes as winded as it paused.
+            if (Paused)
+            {
+                DbgState = "PAUSED";
+                _self.ServerBotDrive(new MoveInput { W = false, Dt = dt });
+                return;
+            }
 
             Vector3 pos = transform.position;
             HPPlayer seen = Perceive(pos);
@@ -190,32 +202,24 @@ namespace Metoh.Game
                 _quarry = null; // memory expired or they broke well clear — back to prowling
             }
 
-            // DRAG — a grab landed and we're hauling someone. Take them AWAY from the duffel before
-            // letting go: a body dropped at camp is a two-second rescue, a body dropped in the dark
-            // costs the team a search. Outranks everything below because the victim is already caught.
-            bool dragging = IsDragging();
-            // Start the haul clock on the frame the grab lands, not on every frame after it — without
-            // the edge-detect the timer reads as already expired and the bot drops them instantly.
-            if (dragging && !_wasDragging) _dragUntil = Time.time + DragSeconds;
-            _wasDragging = dragging;
-
-            if (dragging)
+            // DRAG — a grab landed and we're hauling someone. Take them AWAY from the duffel: a body
+            // dropped at camp is a two-second rescue, a body dropped in the dark costs the team a
+            // search. Outranks everything below because the victim is already caught.
+            //
+            // WHEN the haul ends is not the bot's call any more. GameManager.CarrySeconds runs the
+            // carry and drops the victim itself, so the brain only decides which way to walk while it
+            // lasts — and the second ServerBotGrab that used to release is gone, because a second
+            // grab is now refused rather than treated as a drop.
+            if (IsDragging())
             {
-                if (Time.time >= _dragUntil || FarEnoughFromDuffel(pos))
-                {
-                    _self.ServerBotGrab(); // second grab = release, per TryGrab
-                }
-                else
-                {
-                    Vector3 away = pos - WorldBuilder.DuffelPosition();
-                    away.y = 0f;
-                    if (away.sqrMagnitude < 1f) away = transform.forward;
-                    DbgState = "DRAG";
-                    Vector3 dragGoal = pos + away.normalized * 40f;
-                    Repath(dragGoal);
-                    SteerAlongPath(pos, dragGoal, sprint: false); // dragging is a walk, not a sprint
-                    return;
-                }
+                Vector3 away = pos - WorldBuilder.DuffelPosition();
+                away.y = 0f;
+                if (away.sqrMagnitude < 1f) away = transform.forward;
+                DbgState = "DRAG";
+                Vector3 dragGoal = pos + away.normalized * 40f;
+                Repath(dragGoal);
+                SteerAlongPath(pos, dragGoal, sprint: false); // dragging is a walk, not a sprint
+                return;
             }
 
             // DAZZLED — a searcher is holding a beam on us. Roar and grab are locked server-side, so
@@ -248,9 +252,10 @@ namespace Metoh.Game
                 DbgState = seen != null ? "HUNT" : "SEARCH";
                 SteerAlongPath(pos, goal, sprint: d > SprintBeyond);
             }
-            else if (FollowTrack(pos))
+            // TRACK — handled inside FollowTrack (it steers and sets DbgState). Random mode skips it:
+            // "random" has to mean it isn't seeking at all, and reading prints is seeking.
+            else if (AiMode != Mode.Random && FollowTrack(pos))
             {
-                // TRACK — handled inside FollowTrack (it steers and sets DbgState).
             }
             else
             {
@@ -260,9 +265,9 @@ namespace Metoh.Game
                 // is coarse and refreshed slowly (ProwlRepick) with positional jitter, so it lags your
                 // actual movement — you can still shake it by breaking line of sight and repositioning,
                 // but you can't just stand at camp forever and never be found.
-                // Aggressive by default; the F3 overlay can switch this off to restore the ORIGINAL
-                // passive behavior (wander only, engage solely if you walk into perception) for tests.
-                HPPlayer prey = AggressiveProwl ? NearestSearcherRaw() : null;
+                // Only Mode.Hunt does this. Track and Random both drop to the wander below, and the
+                // difference between them is whether FollowTrack above was allowed to run.
+                HPPlayer prey = AiMode == Mode.Hunt ? NearestSearcherRaw() : null;
                 if (prey != null)
                 {
                     if (Time.time >= _prowlUntil)
@@ -301,16 +306,70 @@ namespace Metoh.Game
         public string DbgState { get; private set; } = "—";
 
         /// <summary>
-        /// DEV toggle (F3): allow the omniscient fallback PROWL — walking at a searcher's true position
-        /// when there is no track to follow and nothing perceived.
-        ///
-        /// Turning it OFF is the honest-perception build: the bot then relies purely on sight, hearing
-        /// and snow prints, and a team that stays on the packed trails can genuinely lose it. That is
-        /// arguably the better game, and worth play-testing both ways — the reason it defaults ON is
-        /// that with no prowl at all, a group hiding motionless in camp is never found and the night
-        /// just runs out. Static so it applies to every bot and survives a reseed.
+        /// Write state TRANSITIONS to the play-test log. The overlay shows what the bot is doing right
+        /// now; the log has to answer "what was it doing thirty seconds ago, when the tester says it
+        /// got stuck" — and only the transitions carry that. HPLog.Change drops the repeats, so this
+        /// costs one string compare a frame.
         /// </summary>
-        public static bool AggressiveProwl = true;
+        private void LateUpdate()
+        {
+            if (_self == null) return;
+
+            // Compare the cheap parts FIRST. Formatting the line unconditionally and letting
+            // HPLog.Change discard the duplicate would allocate a string every frame, which on the
+            // integrated GPU this is tuned for is exactly the kind of steady GC churn §7 warns about.
+            if (ReferenceEquals(DbgState, _loggedState) && AiMode == _loggedMode &&
+                Paused == _loggedPaused && Mathf.Approximately(SpeedMul, _loggedSpeed)) return;
+            _loggedState = DbgState;
+            _loggedMode = AiMode;
+            _loggedPaused = Paused;
+            _loggedSpeed = SpeedMul;
+
+            HPLog.Change("yeti.ai", "AI", $"{DbgState} (mode {AiMode}{(Paused ? ", PAUSED" : "")}" +
+                                          $"{(SpeedMul < 0.999f ? $", {SpeedMul:0.00}x" : "")})");
+        }
+
+        private string _loggedState;
+        private Mode _loggedMode = (Mode)(-1); // never a real mode, so the first frame always logs
+        private bool _loggedPaused;
+        private float _loggedSpeed = -1f;
+
+        /// <summary>How the bot decides where to go when it has nothing perceived and no track.</summary>
+        public enum Mode
+        {
+            /// <summary>Omniscient fallback: walk at a searcher's true position. This is the one that
+            /// reads as "it beelines straight at me" — it always knows roughly where you are.</summary>
+            Hunt = 0,
+            /// <summary>Honest perception only — sight, hearing and snow prints. Break line of sight
+            /// and stay on the packed trails and it genuinely loses you.</summary>
+            Track = 1,
+            /// <summary>Roam at random and never seek. Engages only if you walk into its senses.
+            /// Useful for testing everything that is not the chase.</summary>
+            Random = 2,
+        }
+
+        /// <summary>
+        /// DEV (F3): which brain the CPU Yeti is running. Static so it applies to every bot and
+        /// survives a reseed.
+        ///
+        /// Defaults to <see cref="Mode.Hunt"/> because with no fallback at all a team hiding
+        /// motionless in camp is never found and the night just runs out — but Hunt is also why the
+        /// bot can feel like it is homing on you through the forest, so <see cref="Mode.Track"/> is
+        /// the one to play-test against. Track is arguably the better game.
+        /// </summary>
+        public static Mode AiMode = Mode.Hunt;
+
+        /// <summary>DEV (F3): freeze the bot where it stands. It keeps sensing and its state machine
+        /// keeps resolving — only the movement and the abilities stop, so you can walk up to it and
+        /// read what it thinks it is doing.</summary>
+        public static bool Paused;
+
+        /// <summary>DEV (F3): scale the bot's movement speed. 0.5 makes a chase slow enough to watch
+        /// and to out-walk deliberately, which is how you tell "it tracked me" from "it caught me".</summary>
+        public static float SpeedMul = 1f;
+
+        /// <summary>Back-compat for anything still asking the old yes/no question.</summary>
+        public static bool AggressiveProwl => AiMode == Mode.Hunt;
 
         // --- tracking --------------------------------------------------------------
 
@@ -414,13 +473,6 @@ namespace Metoh.Game
                 if (p.GrabberObjectId.Value == _self.ObjectId) return true;
             }
             return false;
-        }
-
-        private bool FarEnoughFromDuffel(Vector3 pos)
-        {
-            Vector3 d = pos - WorldBuilder.DuffelPosition();
-            d.y = 0f;
-            return d.sqrMagnitude > DragClearOfDuffel * DragClearOfDuffel;
         }
 
         // --- perception ------------------------------------------------------------

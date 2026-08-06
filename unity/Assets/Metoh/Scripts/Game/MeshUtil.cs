@@ -58,6 +58,186 @@ namespace Metoh.Game
             return TaperedCylinder(radius, 0.02f, height, segments);
         }
 
+        /// <summary>
+        /// A conifer crown as ONE lathed mesh with a tiered, jagged, drooping profile.
+        ///
+        /// WHY THIS REPLACED THREE STACKED CONES. The realism pass argued that the low-poly geometry
+        /// was not the problem and materials were, and that was right about surfaces and wrong about
+        /// SILHOUETTE. Three smooth cones stacked on a stick is a shape no tree has ever had, and at
+        /// night — fogged, backlit, seen at 60 m — the silhouette is very nearly the only information
+        /// reaching the player. A material cannot fix an outline. That specific shape, a stack of
+        /// perfect cones, is also about as legible a period marker as exists in 3D: it is what trees
+        /// looked like when a cone was all the triangles you could afford.
+        ///
+        /// Three things make this read as a fir, and none of them cost much:
+        /// - **Tiers.** Real conifers grow in whorls, so the outline steps outward at each tier
+        ///   instead of running smoothly to the tip. This is the single biggest cue.
+        /// - **Jag.** Every vertex radius is nudged by a deterministic hash, so no two boughs end at
+        ///   the same distance and the outline breaks up. A perfectly circular tree reads as a
+        ///   revolved shape, which is exactly what it is.
+        /// - **Droop.** Bough tips hang, proportional to how far they reach.
+        ///
+        /// <paramref name="variant"/> picks a deterministic shape from the hash — build a handful and
+        /// deal them out so a stand of trees isn't one tree stamped 2,400 times. It must NOT come from
+        /// an RNG stream: the forest's stream is in lockstep with the collider builder's
+        /// (UNITY_PORT_NOTES §3c) and drawing one extra number here would offset every tree after it.
+        /// </summary>
+        public static Mesh Conifer(float height, float baseRadius, int rings, int segments, int tiers, int variant)
+        {
+            rings = Mathf.Max(rings, 3);
+            segments = Mathf.Max(segments, 4);
+
+            var verts = new Vector3[rings * segments + 1];
+            var uvs = new Vector2[rings * segments + 1];
+
+            for (int r = 0; r < rings; r++)
+            {
+                // t runs base(0) -> tip(1). The last ring stops short of the apex, which is its own
+                // single vertex, so the tip comes to an actual point rather than a tiny flat disc.
+                float t = r / (float)rings;
+
+                // Envelope: opens quickly off the trunk, then tapers. Starting at zero closes the
+                // bottom of the crown onto the trunk, so there is no hole to cap and nothing to see
+                // up into from below.
+                float open = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(t / 0.14f));
+                float env = open * Mathf.Pow(1f - t, 0.85f);
+
+                // Whorls: within each tier the crown is widest at the bottom and narrows upward, so
+                // the profile steps rather than running as one straight taper.
+                float w = Mathf.Repeat(t * tiers, 1f);
+                float tier = Mathf.Lerp(1f, 0.66f, w);
+
+                float ringR = baseRadius * env * tier;
+
+                for (int s = 0; s < segments; s++)
+                {
+                    float a = s / (float)segments * Mathf.PI * 2f;
+
+                    // Per-vertex jag. Hashed from (variant, ring, segment) so it is stable for a given
+                    // variant and completely independent of any RNG stream.
+                    float jag = Hash01(variant * 9176 + r * 131 + s * 17) * 0.34f + 0.80f;
+                    float rr = ringR * jag;
+
+                    // Bough droop, strongest where the branch reaches furthest.
+                    float reach = baseRadius > 1e-4f ? rr / baseRadius : 0f;
+                    float droop = -reach * reach * height * 0.055f;
+
+                    int i = r * segments + s;
+                    verts[i] = new Vector3(Mathf.Cos(a) * rr, t * height + droop, Mathf.Sin(a) * rr);
+                    // V in world-ish metres so needle grain doesn't stretch on a tall tree, matching
+                    // TaperedCylinder's convention.
+                    uvs[i] = new Vector2(s / (float)segments, t * height);
+                }
+            }
+
+            int tip = rings * segments;
+            verts[tip] = new Vector3(0f, height, 0f);
+            uvs[tip] = new Vector2(0.5f, height);
+
+            var tris = new System.Collections.Generic.List<int>(rings * segments * 6);
+            for (int r = 0; r < rings - 1; r++)
+            {
+                for (int s = 0; s < segments; s++)
+                {
+                    int s2 = (s + 1) % segments;
+                    int a = r * segments + s, b = r * segments + s2;
+                    int c = (r + 1) * segments + s, d = (r + 1) * segments + s2;
+                    // Wound so the faces point outward — get this backwards and the tree is
+                    // backface-culled into an invisible hole in the forest.
+                    tris.Add(a); tris.Add(c); tris.Add(d);
+                    tris.Add(a); tris.Add(d); tris.Add(b);
+                }
+            }
+            for (int s = 0; s < segments; s++) // apex fan
+            {
+                int s2 = (s + 1) % segments;
+                tris.Add((rings - 1) * segments + s); tris.Add(tip); tris.Add((rings - 1) * segments + s2);
+            }
+
+            var mesh = new Mesh();
+            mesh.vertices = verts;
+            mesh.uv = uvs;
+            mesh.triangles = tris.ToArray();
+            mesh.RecalculateNormals();
+            mesh.RecalculateTangents();
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        /// <summary>
+        /// An irregular boulder — a lathed sphere pushed around by hashed noise.
+        ///
+        /// Every rock in the game was <c>PrimitiveType.Sphere</c> scaled flat. A sphere is the one
+        /// shape the eye identifies instantly and never mistakes for stone, so the cave mouths (which
+        /// the whole fast-travel network depends on being recognisable) read as a heap of grey
+        /// beachballs. Deforming the radius costs nothing at these counts and there are only a few
+        /// dozen of them in the world.
+        /// </summary>
+        public static Mesh Rock(float radius, int rings, int segments, int variant)
+        {
+            rings = Mathf.Max(rings, 3);
+            segments = Mathf.Max(segments, 4);
+
+            var verts = new Vector3[(rings + 1) * (segments + 1)];
+            var uvs = new Vector2[(rings + 1) * (segments + 1)];
+
+            for (int r = 0; r <= rings; r++)
+            {
+                float phi = r / (float)rings * Mathf.PI;      // 0..pi, pole to pole
+                float sp = Mathf.Sin(phi), cp = Mathf.Cos(phi);
+                for (int s = 0; s <= segments; s++)
+                {
+                    float theta = s / (float)segments * Mathf.PI * 2f;
+
+                    // Two scales of lumps: broad facets, then a finer grit. Hashed on the WRAPPED
+                    // segment index so the seam at theta=2pi matches the one at 0 — otherwise every
+                    // rock has a visible crack down one side.
+                    int sw = s % segments;
+                    float broad = Hash01(variant * 7717 + (r / 2) * 97 + (sw / 2) * 13);
+                    float fine = Hash01(variant * 3391 + r * 53 + sw * 7);
+                    float rr = radius * (0.78f + broad * 0.30f + fine * 0.12f);
+
+                    int i = r * (segments + 1) + s;
+                    verts[i] = new Vector3(sp * Mathf.Cos(theta) * rr, cp * rr, sp * Mathf.Sin(theta) * rr);
+                    uvs[i] = new Vector2(s / (float)segments * radius * 2f, r / (float)rings * radius * 2f);
+                }
+            }
+
+            var tris = new System.Collections.Generic.List<int>(rings * segments * 6);
+            for (int r = 0; r < rings; r++)
+            {
+                for (int s = 0; s < segments; s++)
+                {
+                    int a = r * (segments + 1) + s, b = a + 1;
+                    int c = (r + 1) * (segments + 1) + s, d = c + 1;
+                    tris.Add(a); tris.Add(c); tris.Add(b);
+                    tris.Add(b); tris.Add(c); tris.Add(d);
+                }
+            }
+
+            var mesh = new Mesh();
+            mesh.vertices = verts;
+            mesh.uv = uvs;
+            mesh.triangles = tris.ToArray();
+            mesh.RecalculateNormals();
+            mesh.RecalculateTangents();
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        /// <summary>
+        /// Deterministic 0..1 hash. Not an RNG — it takes no state and advances nothing, which is
+        /// precisely why it is safe to call from inside the forest loop (UNITY_PORT_NOTES §3c).
+        /// </summary>
+        private static float Hash01(int n)
+        {
+            uint h = (uint)n * 2654435761u;
+            h ^= h >> 15;
+            h *= 2246822519u;
+            h ^= h >> 13;
+            return (h & 0xffffff) / (float)0xffffff;
+        }
+
         /// <summary>Flat ellipse disc in the XZ plane (fan). Used for the lake surface.</summary>
         public static Mesh EllipseDisc(float rx, float rz, int segments)
         {

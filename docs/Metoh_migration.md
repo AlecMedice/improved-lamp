@@ -22,10 +22,9 @@ Owner-approved decisions (do NOT re-litigate):
 3. **Visual re-theme in Unity ONLY.** The web client keeps its forest visuals (identifiers renamed only); web visuals are abandoned.
 4. **One new mechanic ships with the migration: Deep snow & trails** (spec in Commit 5).
 5. New title: **Metoh**. Room class: **MountainRoom**, room id `"mountain"`, scene `Mountain.unity`.
-6. **`mothman_port` is abandoned.** That branch (6 commits, ~7k lines: an Appalachia/Point
-   Pleasant reskin, `MothmanBot.cs`, a wings/gaze creature kit) was an earlier attempt at this
-   same BIGFOOT-overlap problem. Nothing is salvaged from it; it stays in git and on origin as a
-   record. The plan below was drafted without knowledge of it — hence the corrections in Risks.
+6. **A separate earlier branch existed for this same BIGFOOT-overlap problem**, unknown to the
+   plan below when it was drafted — hence the corrections in Risks. It has since moved to its own
+   standalone repo and no longer lives in this one.
 
 ## The three gates (run exactly as written)
 
@@ -239,7 +238,7 @@ Gates A, B (new vitest case), C (regen golden + mirrored test).
 - `docs/CHARACTER_FUNC_DEV.md` — terminology pass (plaster casts → snow casts).
 - `docs/ROADMAP.md` — touch-ups; note parity-regen events.
 - `docs/BIGFOOT_DEPTH.md` — **delete** (its premise is the BIGFOOT-overlap decision this migration resolves); port any still-relevant depth ideas into GAME_DESIGN.md first.
-- `docs/UNITY_PORT_NOTES.md` — sync paths in §8 (**live project is `C:\Users\amedi\Mothman_port`** — doc is stale), three-trees list (`unity/Assets/Metoh/{Scripts,Shaders}`, `csharp/Metoh.Sim`), `Metoh.exe` cmdline, menu names, add the client-auth deep-snow caveat to §0.
+- `docs/UNITY_PORT_NOTES.md` — sync paths in §8 (doc is stale on the live project path), three-trees list (`unity/Assets/Metoh/{Scripts,Shaders}`, `csharp/Metoh.Sim`), `Metoh.exe` cmdline, menu names, add the client-auth deep-snow caveat to §0.
 - `README.md`, `CLAUDE.md` — full rewrite (orientation, message contract with `yetiSpeedMul` + `"snowprint"`, room `"mountain"`, run instructions).
 - `client/index.html` + `ui/Briefing.ts` — copy strings.
 - `docs/July19Work.md` — **leave as-is** (explicit historical record); it's the one allowed grep hit.
@@ -251,14 +250,12 @@ Gates A, B (new vitest case), C (regen golden + mirrored test).
 ## Risks / gotchas (read before starting)
 
 1. **Owner must re-sync the live Unity project after Commit 2 — into a NEW folder.** The repo has
-   no `.meta`/`Library`; the playable copy is a SEPARATE tree at `C:\Users\amedi\Mothman_port`.
-   **Correction to the original plan:** that tree is not the Bigfoot build this doc assumed. It is
-   the **Mothman** build — `MothmanBot.cs`, `SignText.cs`, `Screech`/`Gaze` cues, the Point Pleasant
-   palette, and no `BigfootBot.cs` at all. The plan's original instruction ("delete the old
-   `Assets/HollowPines/` and copy the new trees over") would therefore overwrite the abandoned
-   Mothman build in place. Instead: **set up a fresh `C:\Users\amedi\Metoh_port`** and leave
-   `Mothman_port` untouched as a working record. Steps: create the new Unity project, copy the
-   three trees in, run **Metoh → Set Up Game Scene (Mountain)** (scene/prefabs/SceneIds/
+   no `.meta`/`Library`; the existing playable copy was a SEPARATE tree belonging to an unrelated
+   earlier build (not the Bigfoot build this doc assumed, and with no `BigfootBot.cs` at all). The
+   plan's original instruction ("delete the old `Assets/HollowPines/` and copy the new trees over")
+   would therefore have overwritten that unrelated build in place. Instead: **set up a fresh
+   `C:\Users\amedi\Metoh_port`** and leave the old tree untouched. Steps: create the new Unity
+   project, copy the three trees in, run **Metoh → Set Up Game Scene (Mountain)** (scene/prefabs/SceneIds/
    AssetPathHashes all regenerate together — that's why the PrefabDir change is safe), rebuild
    `Metoh.exe`. Old builds can never talk to new ones. **Give the owner click-by-click steps when
    reaching that point** (they're new to Unity).
@@ -273,7 +270,7 @@ Gates A, B (new vitest case), C (regen golden + mirrored test).
 ## Verification checklist
 
 1. Gates A+B green after every commit; Gate C ends `PARITY OK` after Commits 1, 2, 5.
-2. `grep -ri "bigfoot\|hollowpines\|hollow.pines" --exclude-dir=node_modules --exclude-dir=bin --exclude-dir=obj --exclude-dir=dist --exclude-dir=.git .` → zero hits outside `docs/July19Work.md` and this file. `dist/` and `.git` must be excluded too: `client/dist/` exists locally as an untracked build artifact and currently holds stale Mothman-era bundles, and `.git` holds old commit messages — all three would otherwise show as false hits.
+2. `grep -ri "bigfoot\|hollowpines\|hollow.pines" --exclude-dir=node_modules --exclude-dir=bin --exclude-dir=obj --exclude-dir=dist --exclude-dir=.git .` → zero hits outside `docs/July19Work.md` and this file. `dist/` and `.git` must be excluded too: `client/dist/` exists locally as an untracked build artifact and currently holds stale pre-rebrand bundles, and `.git` holds old commit messages — all three would otherwise show as false hits.
 3. Web smoke (throwaway `client/_smoke.mjs`, per CLAUDE.md pattern): yeti + searcher join; roar/grab/film; winner `"yeti"`; off-trail searcher measurably slower; snowprint clues appear in state.
 4. Unity solo (owner play-test): snow world with legible packed trails, prayer flags/basecamp/crevasses, "DEEP SNOW" pill + slow off-trail, ice-crack + tarn-groan audio, title "METOH", `Metoh.exe`.
 5. Unity two-instance: snow prints appear behind the searcher, visible only in the Yeti instance (+ glow under `V`); Yeti unaffected by deep snow; grab/dazzle/film/revive intact.
@@ -329,10 +326,10 @@ Recorded because these are failure *shapes* worth recognising again, not just fi
    bounds, speed-gate token bucket, collision pushout, feet clamp — but never re-runs `stepPlayer`,
    so the drift slow is applied entirely client-side, exactly as in Unity. A hacked client can be
    "not slowed", never "faster than legitimate". Same trust level `lakeHunterFactor` has always had.
-4. **The live Unity project was not what the plan assumed.** It described `C:\Users\amedi\Mothman_port`
-   as the Bigfoot build and told the owner to delete `Assets/HollowPines/` inside it. That tree is
-   the **Mothman** build from the abandoned `mothman_port` branch. Re-sync now targets a **fresh**
-   `C:\Users\amedi\Metoh_port`, leaving the Mothman build intact.
+4. **The live Unity project was not what the plan assumed.** The plan described the existing live
+   project folder as the Bigfoot build and told the owner to delete `Assets/HollowPines/` inside
+   it. That tree was actually an unrelated earlier build. Re-sync now targets a **fresh**
+   `C:\Users\amedi\Metoh_port`, leaving the old project folder intact.
 5. **`IceCrack` had one call site, not the two listed** — `ClueMarker.OnStartClient`, where the clue
    drop actually makes its noise.
 6. **The Gate C `ts-node` invocation does not run on this machine.** `tsx` from `server/node_modules`

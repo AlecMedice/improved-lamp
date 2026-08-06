@@ -61,10 +61,43 @@ namespace Metoh.Game
         private static readonly Color LakeCol = MeshUtil.Rgb(0x9fc4d8);    // frozen tarn
         private static readonly Color DriftCol = MeshUtil.Rgb(0xdde7ee);   // undergrowth: wind-piled snow
         private static readonly Color ScreeCol = MeshUtil.Rgb(0x565c66);   // undergrowth: shattered rock
-        // Packed snow. Must stay clearly lighter than GroundCol: in Commit 5 the trail network stops
-        // being decoration and becomes the surface that is NOT knee-deep, so a player has to be able
-        // to see where it ends.
-        private static readonly Color TrailCol = MeshUtil.Rgb(0xaebac4);
+
+        // --- the ground's value range ------------------------------------------------------------
+        //
+        // These four are picked TOGETHER, as a spread rather than as individual colours, because the
+        // complaint that started this pass was "everything looks the same" and that is a statement
+        // about range, not about hue. Before, ground/trail/drift all sat inside the top fifth of the
+        // value scale and the whole world came out as one bright grey. Now: bare rock at ~0x4a anchors
+        // the dark end, packed trail at ~0x94, basin drift at ~0xa8, open snowpack at ~0xc9. Roughly
+        // 2.7 stops between the darkest and lightest ground in the game, which is what gives the eye
+        // something to judge shape and distance by.
+        //
+        // Hue does work here too, and it is doing something specific: the basin is pushed BLUE (deep
+        // snow, sky-lit, in its own shadow) while the trail is pushed WARM-neutral (packed, scuffed,
+        // trodden). They are close in value, so hue is what keeps them apart — and telling those two
+        // apart is a live gameplay question, since one of them slows you down and the other doesn't.
+
+        /// <summary>Wind-stripped rock on the steep ground. The dark anchor the whole palette needs.</summary>
+        private static readonly Color RockBareCol = MeshUtil.Rgb(0x4a4f57);
+
+        /// <summary>
+        /// The deep-snow basin floor (<c>Movement.DeepSnowDepth</c>'s zone). Deliberately blue and
+        /// clearly darker than open snowpack — this is the ~⅓ of the map that halves your speed, and
+        /// until this pass it was completely invisible. A routing choice you cannot see is an ambush,
+        /// not a choice.
+        /// </summary>
+        private static readonly Color BasinCol = MeshUtil.Rgb(0xa8bccf);
+
+        /// <summary>
+        /// Packed trail snow. **Darker than <see cref="GroundCol"/>, and the comment that used to sit
+        /// here claiming it "must stay clearly lighter" was wrong on both counts** — the value shipped
+        /// was already darker, and darker is also what real trodden snow does (compacted, scuffed,
+        /// less air in it to scatter light back). What the trail actually needs is CONTRAST against
+        /// open snow, in either direction, because Commit 5 turned this network into the surface that
+        /// is not knee-deep and a player has to be able to see where it ends. Pushed further down to
+        /// make that separation unmistakable, and kept warm so it never reads as basin drift.
+        /// </summary>
+        private static readonly Color TrailCol = MeshUtil.Rgb(0x94a0ab);
 
         /// <summary>
         /// Terrain height above which trees read as snow-caked: all-light crowns, and the top cone
@@ -84,7 +117,7 @@ namespace Metoh.Game
         /// undersides of branches, ledges and figures never go dead, which is what actually sells a
         /// surface as snow rather than as white plastic.
         /// </summary>
-        private const float AmbientBounce = 0.85f;
+        private const float AmbientBounce = 1.0f;
 
         /// <summary>
         /// The evidence duffel beside the RV — the only place proof becomes permanent, and the one
@@ -324,19 +357,68 @@ namespace Metoh.Game
         }
 
         /// <summary>
-        /// The snowpack surface. Two normal layers at different scales: a base grain that survives to
-        /// mid distance, and a much finer detail layer that keeps structure underfoot after the base
-        /// has tiled out. Smoothness is deliberately high for a "rough" material — packed snow is
-        /// mildly specular, and that specular lobe broken up by fine normals is exactly what produces
-        /// the glitter that says snow rather than white paint.
+        /// The snowpack surface — <c>Metoh/Snowpack</c>, which blends snow against wind-stripped rock
+        /// by SLOPE and tints the deep-snow basin.
+        ///
+        /// This replaces a single flat URP/Lit colour stretched over all 800 m. Two normal layers were
+        /// never the problem; one albedo was. A normal map varies the LIGHTING of a surface, but the
+        /// surface still has exactly one colour, so at any distance past a few metres the whole map
+        /// averages back to the same grey and there is nothing left to read the land by. Slope-driven
+        /// rock puts genuine dark values back on the ridges and gully walls, which is what snow
+        /// country actually looks like and what makes terrain shape legible at range.
+        ///
+        /// The drift constants come straight from the sim rather than being retyped here, so the tint
+        /// can never disagree with the slow it is advertising.
         /// </summary>
         private static Material SnowMaterial()
         {
-            return MeshUtil.Surface(
-                GroundCol, smoothness: 0.42f,
-                normal: ProcTex.SnowNormal, normalScale: 0.75f,
-                tiling: 1f / 6f,                       // one grain repeat every ~6 m
-                detailNormal: ProcTex.SnowDetailNormal, detailTiling: 1f / 0.7f);
+            var shader = Shader.Find("Metoh/Snowpack");
+            if (shader == null)
+            {
+                // Same rule as the sky: never fail silently into something that looks like a choice.
+                Debug.LogWarning("[WorldBuilder] Metoh/Snowpack shader not found — falling back to flat " +
+                                 "snow (no rock, no basin tint). Is Shaders/Snowpack.shader synced?");
+                return MeshUtil.Surface(
+                    GroundCol, smoothness: 0.42f,
+                    normal: ProcTex.SnowNormal, normalScale: 0.75f,
+                    tiling: 1f / 6f,
+                    detailNormal: ProcTex.SnowDetailNormal, detailTiling: 1f / 0.7f);
+            }
+
+            var m = new Material(shader);
+            m.SetColor("_BaseColor", GroundCol);
+            m.SetColor("_RockColor", RockBareCol);
+            m.SetColor("_DriftColor", BasinCol);
+            m.SetTexture("_BumpMap", ProcTex.SnowNormal);
+            m.SetTexture("_RockMap", ProcTex.RockNormal);
+            m.SetTexture("_DetailMap", ProcTex.SnowDetailNormal);
+
+            // Tilings are in METRES PER REPEAT (the terrain's UVs are world metres), so these read as
+            // real sizes: a 6 m snow grain, a 4 m rock fracture, a 0.7 m grain underfoot.
+            m.SetFloat("_SnowTiling", 6f);
+            m.SetFloat("_RockTiling", 4f);
+            m.SetFloat("_DetailTiling", 0.7f);
+            m.SetFloat("_SnowNormalScale", 0.75f);
+            m.SetFloat("_RockNormalScale", 1.1f);
+            m.SetFloat("_DetailScale", 0.6f);
+            m.SetFloat("_SnowSmoothness", 0.42f);
+            m.SetFloat("_RockSmoothness", 0.12f);
+
+            // Slope thresholds in GRADIENT units (rise/run). This terrain runs 0..~0.4, so 0.17→0.34
+            // bares the top ~15% of slopes: ridge shoulders and gully walls go to rock, everything
+            // walkable stays snow. Raise _SlopeStart if the map ends up feeling too rocky.
+            m.SetFloat("_SlopeStart", 0.17f);
+            m.SetFloat("_SlopeEnd", 0.34f);
+            m.SetFloat("_SlopeJitter", 0.4f);
+
+            // The deep-snow basin, straight from the sim's own numbers (Movement.DeepSnowDepth).
+            m.SetFloat("_DriftHeight", (float)Sim.Player.DriftHeight);
+            m.SetFloat("_DriftDepth", (float)Sim.Player.DriftDepth);
+            m.SetFloat("_DriftStrength", 0.65f);
+
+            m.SetFloat("_MacroTiling", 42f);
+            m.SetFloat("_MacroStrength", 0.22f);
+            return m;
         }
 
         // --- Forest --------------------------------------------------------------
@@ -353,6 +435,9 @@ namespace Metoh.Game
         /// </summary>
         private const int ForestGrid = 8;
 
+        /// <summary>How many distinct crown shapes are dealt across the forest. See BuildForest.</summary>
+        private const int TreeVariants = 4;
+
         private void BuildForest()
         {
             // MUST mirror WorldData.BuildColliders' rand() call order exactly so the rendered trees
@@ -362,10 +447,36 @@ namespace Metoh.Game
             var rand = Rng.Mulberry32(World.Seed ^ 0x9e3779b9u);
             double half = Sim.World.Size / 2 - 6;
 
-            Mesh trunk = MeshUtil.TaperedCylinder(0.4f, 0.22f, 3f, 7);
-            Mesh cone1 = MeshUtil.Cone(2.0f, 3.2f, 8);
-            Mesh cone2 = MeshUtil.Cone(1.5f, 2.6f, 8);
-            Mesh cone3 = MeshUtil.Cone(1.0f, 2.0f, 8);
+            // --- the tree shapes -------------------------------------------------------------
+            //
+            // FOUR VARIANTS OF EACH, dealt by a hash of the tree index. A forest is not one tree
+            // repeated, and at 2,400 copies the repetition is obvious even through fog — you start
+            // recognising individual trees, which destroys any sense that the valley is a place
+            // rather than a texture. Four is enough that the eye stops finding the pattern, and it
+            // costs four meshes rather than four draw calls because they all combine into the same
+            // per-chunk mesh anyway.
+            //
+            // Detail scales with the quality tier. Note the LOW tier is actually CHEAPER than the
+            // three cones it replaces (77 tris vs 96), so the cheap path got faster and better at
+            // once; the high tier spends 153 tris on a silhouette worth having.
+            int cRings = HPQuality.HighDetail ? 9 : 6;
+            int cSegs = HPQuality.HighDetail ? 9 : 7;
+            int tSegs = HPQuality.HighDetail ? 8 : 6;
+
+            Mesh trunk = MeshUtil.TaperedCylinder(0.4f, 0.22f, 3f, tSegs);
+            var crowns = new Mesh[TreeVariants];
+            var crownsStunted = new Mesh[TreeVariants];
+            for (int v = 0; v < TreeVariants; v++)
+            {
+                // Height and width wander per variant so the stand has a mix of lean spires and
+                // squatter, broader trees rather than one silhouette at four random scales.
+                float h = 6.2f + (v % 2) * 1.1f - (v / 2) * 0.5f;
+                float r = 2.15f - (v % 2) * 0.25f + (v / 2) * 0.18f;
+                crowns[v] = MeshUtil.Conifer(h, r, cRings, cSegs, tiers: 4 + v % 2, variant: v);
+                // Above the snowline: shorter and broader, weighed down and wind-stunted by altitude.
+                crownsStunted[v] = MeshUtil.Conifer(h * 0.66f, r * 1.08f, Mathf.Max(cRings - 2, 3), cSegs,
+                    tiers: 3, variant: v + 64);
+            }
 
             int cells = ForestGrid * ForestGrid;
             var trunkC = NewCombineBuckets(cells);
@@ -391,17 +502,21 @@ namespace Metoh.Game
 
                 int cell = CellOf(x, z);
                 trunkC[cell].Add(CI(trunk, pos, rotQ, scale));
-                // Snowline. Above it every crown is the pale snow-laden material and the top cone is
-                // dropped, so high ground reads as stunted and white; below, crowns alternate as
-                // before. Both are pure material/mesh CHOICES driven by the already-computed height —
-                // no rand() call is added, moved or skipped, so the tree stream stays in lockstep
-                // with WorldData.BuildColliders (UNITY_PORT_NOTES 3c). The treeIndex % 2 alternation
-                // was never an RNG draw either, which is why it is safe to override here.
+                // Snowline. Above it every crown is the pale snow-laden material and the shape is the
+                // stunted variant, so high ground reads as wind-beaten and white; below, crowns
+                // alternate as before. All of this is pure material/mesh CHOICE driven by the
+                // already-computed height and index — no rand() call is added, moved or skipped, so
+                // the tree stream stays in lockstep with WorldData.BuildColliders (UNITY_PORT_NOTES
+                // §3c). The treeIndex % 2 alternation was never an RNG draw either, which is why it
+                // is safe to key off it here.
                 bool aboveSnowline = y >= SnowlineHeight;
-                var crowns = (aboveSnowline || treeIndex % 2 != 0) ? crownLightC : crownDarkC;
-                crowns[cell].Add(CI(cone1, pos + Vector3.up * (2.2f * (float)s), rotQ, scale));
-                crowns[cell].Add(CI(cone2, pos + Vector3.up * (4.0f * (float)s), rotQ, scale));
-                if (!aboveSnowline) crowns[cell].Add(CI(cone3, pos + Vector3.up * (5.6f * (float)s), rotQ, scale));
+                var crownBucket = (aboveSnowline || treeIndex % 2 != 0) ? crownLightC : crownDarkC;
+                // Deal a shape. Mixing in the cell index as well as the tree index stops neighbouring
+                // trees (which are adjacent in the stream) from marching through the variants in the
+                // same order and forming a visible repeat down a slope.
+                int variant = (treeIndex * 7 + cell * 3) % TreeVariants;
+                Mesh crown = aboveSnowline ? crownsStunted[variant] : crowns[variant];
+                crownBucket[cell].Add(CI(crown, pos + Vector3.up * (1.5f * (float)s), rotQ, scale));
                 treeIndex++;
             }
 
@@ -577,7 +692,13 @@ namespace Metoh.Game
         /// </summary>
         private void BuildTrails()
         {
-            var mat = MeshUtil.Surface(TrailCol, 0.30f, ProcTex.SnowNormal, 0.55f, 1f / 4f);
+            // Packed and scuffed, so duller than the open snowpack it cuts through — the smoothness
+            // difference is a second cue on top of the albedo one, and it survives at grazing angles
+            // where albedo contrast washes out.
+            var mat = MeshUtil.Surface(TrailCol, 0.22f, ProcTex.SnowNormal, 0.55f, 1f / 4f);
+            // Local, NOT a field: Build() runs again on every reseed, and a counter that survived the
+            // rebuild would hand each session a different trail-colour assignment for the same world.
+            int pathIndex = 0;
             foreach (var path in World.Paths)
             {
                 var verts = new List<Vector3>();
@@ -624,6 +745,44 @@ namespace Metoh.Game
                 mesh.RecalculateTangents();
                 mesh.RecalculateBounds();
                 NewMeshGo("Trail", mesh, mat);
+                BuildTrailMarkers(path, pathIndex++);
+            }
+        }
+
+        /// <summary>
+        /// Marker masts along a trail, every few waypoints.
+        ///
+        /// These do two jobs at once. They make the packed corridor findable from off it — the trail
+        /// network is the only ground that isn't knee-deep, so being unable to locate it from 60 m
+        /// away in the trees made an entire movement mechanic hard to actually use. And they give the
+        /// open valley a grid of fixed reference points, which is the other half of the "everything
+        /// looks the same" problem: the horizon range tells you which WAY you are facing, and these
+        /// tell you where you are.
+        ///
+        /// Every mast on one trail carries the same identity colour, so a trail is followable by
+        /// colour: you can tell you are still on the one you started on rather than a crossing path.
+        /// </summary>
+        private void BuildTrailMarkers(ForestPath path, int index)
+        {
+            // Every third waypoint. Paths step PathGen.StepLength (26 m), so that is a mast roughly
+            // every 78 m — close enough to catch sight of the next one, far enough not to fence the
+            // trail in with poles.
+            for (int i = 2; i < path.Pts.Count; i += 3)
+            {
+                double px = path.Pts[i].X, pz = path.Pts[i].Z;
+                // Set to one side of the lane so it never stands in the walking line.
+                Vec2 prev = path.Pts[i - 1];
+                double dx = px - prev.X, dz = pz - prev.Z;
+                double len = System.Math.Sqrt(dx * dx + dz * dz);
+                if (len < 1e-4) continue;
+                double ox = -dz / len * (path.HalfWidth + 0.8);
+                double oz = dx / len * (path.HalfWidth + 0.8);
+
+                var at = new Vector3((float)(px + ox), (float)World.GetHeight(px + ox, pz + oz), (float)(pz + oz));
+                var root = new GameObject("TrailMarker");
+                root.transform.parent = transform;
+                root.transform.position = at;
+                BuildMarkerMast(root.transform, Vector3.zero, 5.2f, index % FlagCols.Length);
             }
         }
 
@@ -784,7 +943,27 @@ namespace Metoh.Game
             // Hut body — must stay within the collider box the sim owns.
             AddBox(root, "Hut", new Vector3(0, 1.5f, 0), new Vector3(6.6f, 2.5f, 2.3f), MeshUtil.Rgb(0x8a7a62));
             AddBox(root, "Sill", new Vector3(0, 1.0f, 0), new Vector3(6.65f, 0.35f, 2.32f), MeshUtil.Rgb(0x5f513f));
-            AddBox(root, "SnowCap", new Vector3(0, 2.82f, 0), new Vector3(6.7f, 0.28f, 2.5f), MeshUtil.Rgb(0xe8f0f5));
+
+            // A PITCHED roof, replacing the flat slab that used to sit on top. Nobody builds a flat
+            // roof where it snows, and more to the point the camp is the one silhouette every player
+            // navigates home by — a plain rectangle reads as a placeholder from the moment you can
+            // see it. Two canted slabs cost two boxes and give the whole basecamp a recognisable
+            // outline against the sky. The roof overhangs the collider box, which is fine: the box is
+            // what you bump into and the eaves are 2.9 m up, well over head height.
+            for (int side = -1; side <= 1; side += 2)
+            {
+                var pitch = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                Object.Destroy(pitch.GetComponent<UnityEngine.Collider>());
+                pitch.name = "Roof";
+                pitch.transform.SetParent(root.transform, false);
+                pitch.transform.localPosition = new Vector3(0f, 3.02f, side * 0.72f);
+                pitch.transform.localRotation = Quaternion.Euler(side * 34f, 0f, 0f);
+                pitch.transform.localScale = new Vector3(7.1f, 0.22f, 1.95f);
+                pitch.GetComponent<MeshRenderer>().sharedMaterial =
+                    MeshUtil.Surface(MeshUtil.Rgb(0xe8f0f5), 0.40f, ProcTex.SnowNormal, 0.7f, 1.6f);
+            }
+            AddBox(root, "RidgeBeam", new Vector3(0, 3.58f, 0), new Vector3(7.2f, 0.16f, 0.22f), MeshUtil.Rgb(0x5f513f));
+
             AddBox(root, "Window", new Vector3(1.6f, 1.9f, 0), new Vector3(1.6f, 0.7f, 2.34f), MeshUtil.Rgb(0xffd98a), emissive: MeshUtil.Rgb(0xffb24d), glow: 1.4f);
 
             // Two A-frame tents in expedition orange, pitched clear of the hut's collider box.
@@ -801,6 +980,12 @@ namespace Metoh.Game
 
             AddBox(root, "Crate1", new Vector3(-2.4f, 0.35f, 1.9f), new Vector3(0.9f, 0.7f, 0.9f), MeshUtil.Rgb(0x6f6250));
             AddBox(root, "Crate2", new Vector3(-1.4f, 0.28f, 2.1f), new Vector3(0.7f, 0.55f, 0.7f), MeshUtil.Rgb(0x7d6f5b));
+
+            // The tallest mast in the valley, over the one place searchers have to get back to.
+            // The camp's lamps are the brightest things on the map and still vanish into the fog by
+            // ~120 m; a 10.5 m mast clears the treeline and is visible as a silhouette from anywhere
+            // with a sightline, which is what "navigate home" actually needs.
+            BuildMarkerMast(root.transform, new Vector3(-3.2f, 0f, 2.6f), 10.5f, 1);
 
             var lamp = new GameObject("PorchLamp").AddComponent<Light>();
             lamp.transform.parent = root.transform;
@@ -883,6 +1068,7 @@ namespace Metoh.Game
             // Near-black, unlit-looking interior so the opening reads as depth rather than a surface.
             var voidMat = MeshUtil.Lit(MeshUtil.Rgb(0x06121c));
 
+            int caveIndex = 0;
             foreach (var cave in World.Caves)
             {
                 double dl = System.Math.Sqrt(cave.X * cave.X + cave.Z * cave.Z);
@@ -897,14 +1083,12 @@ namespace Metoh.Game
                 root.transform.parent = transform;
                 root.transform.SetPositionAndRotation(centre, faceRot);
 
-                // The hillside the cave is cut into — a squashed dome sitting BEHIND the opening.
-                var mound = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                Object.Destroy(mound.GetComponent<UnityEngine.Collider>());
-                mound.name = "Mound";
+                // The icefall the crevasse is cut into — irregular now rather than a stretched sphere,
+                // which is what it read as from any angle that showed its outline against the sky.
+                var mound = NewMeshGo("Mound", MeshUtil.Rock(1f, 9, 14, caveIndex + 3), rock);
                 mound.transform.SetParent(root.transform, false);
                 mound.transform.localPosition = new Vector3(0f, 1.1f, -3.4f);
                 mound.transform.localScale = new Vector3(13f, 7.2f, 11f);
-                mound.GetComponent<MeshRenderer>().sharedMaterial = rock;
 
                 // The opening: a dark recess set into the mound's front face.
                 var mouth = GameObject.CreatePrimitive(PrimitiveType.Sphere);
@@ -932,27 +1116,81 @@ namespace Metoh.Game
                 Boulder(darkRock, cave.X + dx * 4.2 - px * 1.1, cave.Z + dz * 4.2 - pz * 1.1, 0.5);
                 Boulder(darkRock, cave.X + dx * 2.9 - px * 2.0, cave.Z + dz * 2.9 - pz * 2.0, 0.6);
 
-                // Cold light bleeding out of the throat, so it's findable at night.
+                // --- this crevasse's own identity ---------------------------------------------
+                //
+                // Every mouth used to be built identically, which made the fast-travel network a set
+                // of interchangeable grey lumps: you could recognise "a crevasse" instantly and never
+                // tell WHICH one, so nobody could say where they were and the map was the only way to
+                // know. A marker mast in one of five colours turns each into a place with a name —
+                // "the red mouth" — which is what a landmark actually is. The colours are the lung-ta
+                // five, so the world's existing visual language covers it rather than needing a new
+                // one, and the mast is tall enough to clear the treeline and be picked out at range.
+                int ident = caveIndex % FlagCols.Length;
+                Color identCol = MeshUtil.Rgb(FlagCols[ident]);
+                BuildMarkerMast(root.transform, new Vector3(0f, 0f, 4.6f), 7.5f, ident);
+
+                // The throat's glow carries the same colour, so the identity still reads at night
+                // when the mast is only a silhouette. Blended well toward the original cold blue —
+                // this is a cue, not a disco.
                 var glow = new GameObject("CrevasseGlow").AddComponent<Light>();
                 glow.transform.parent = root.transform;
                 glow.transform.localPosition = new Vector3(0f, 1.4f, 1.6f);
                 glow.type = LightType.Point;
-                glow.color = MeshUtil.Rgb(0x7fc0e8);
-                glow.range = 14f;
-                glow.intensity = 1.8f;
+                glow.color = Color.Lerp(MeshUtil.Rgb(0x7fc0e8), identCol, 0.35f);
+                glow.range = 16f;
+                glow.intensity = 2.0f;
+                caveIndex++;
             }
         }
 
+        /// <summary>
+        /// A tall marker mast strung with prayer flags — the game's navigation beacon.
+        ///
+        /// Deliberately THIN (7 cm), which is what makes it defensible as render-only geometry in a
+        /// world where collision lives in the shared sim and this pole is invisible to it. The
+        /// undergrowth rule is that anything tall enough to hide a player must be a real collider
+        /// (see BuildUndergrowth); a mast is tall but you cannot hide behind a broom handle, and
+        /// walking through one is a far smaller sin than having nothing on the map to steer by.
+        ///
+        /// <paramref name="ident"/> selects the flag colour that runs top-down from that index, so a
+        /// mast reads as "the red one" from a distance and as a full lung-ta string up close.
+        /// </summary>
+        private void BuildMarkerMast(Transform parent, Vector3 localPos, float height, int ident)
+        {
+            var mast = NewMeshGo("MarkerMast", MeshUtil.TaperedCylinder(0.075f, 0.05f, height, 5),
+                MeshUtil.Surface(MeshUtil.Rgb(0x6b5b47), 0.14f, ProcTex.BarkNormal, 0.8f, 1.2f));
+            mast.transform.SetParent(parent, false);
+            mast.transform.localPosition = localPos;
+
+            // Flags up the top two-thirds, starting on this mast's identity colour so the dominant
+            // colour at the top is the one that names it.
+            for (int f = 0; f < 6; f++)
+            {
+                var col = MeshUtil.Rgb(FlagCols[(ident + f) % FlagCols.Length]);
+                var flag = NewMeshGo("MastFlag", MeshUtil.UnitCube(), MeshUtil.Emissive(col, col, 0.35f));
+                flag.transform.SetParent(parent, false);
+                flag.transform.localPosition = localPos + Vector3.up * (height * (0.94f - f * 0.10f));
+                flag.transform.localRotation = Quaternion.Euler(0f, f * 26f, 0f);
+                flag.transform.localScale = new Vector3(0.55f, 0.36f, 0.03f);
+            }
+        }
+
+        /// <summary>
+        /// A boulder. Irregular now rather than a scaled sphere — see <see cref="MeshUtil.Rock"/> for
+        /// why that mattered more than it sounds. Rotated off-axis too, because a flattened sphere
+        /// sitting perfectly level is still recognisably a flattened sphere however lumpy its surface.
+        /// </summary>
         private void Boulder(Material rock, double x, double z, double r)
         {
-            var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-            go.name = "Boulder";
-            Object.Destroy(go.GetComponent<UnityEngine.Collider>()); // sim owns collision, not PhysX
-            go.GetComponent<MeshRenderer>().sharedMaterial = rock;
-            go.transform.parent = transform;
+            // Hashed from the position, so a given world always gets the same rocks and no RNG stream
+            // is touched (UNITY_PORT_NOTES §3c).
+            int variant = Mathf.Abs((int)(x * 73.3 + z * 149.7)) % 8;
+            var go = NewMeshGo("Boulder", MeshUtil.Rock((float)r, 7, 10, variant), rock);
             float y = (float)World.GetHeight(x, z);
-            go.transform.position = new Vector3((float)x, y + (float)r * 0.75f, (float)z);
-            go.transform.localScale = new Vector3((float)r * 2.2f, (float)r * 1.7f, (float)r * 2.2f);
+            go.transform.position = new Vector3((float)x, y + (float)r * 0.55f, (float)z);
+            go.transform.rotation = Quaternion.Euler(variant * 7f - 24f, variant * 43f, variant * 5f - 18f);
+            // Kept squat: these read as half-buried, which is what a rock in snow looks like.
+            go.transform.localScale = new Vector3(1.15f, 0.82f, 1.15f);
         }
 
         // --- the lookout tower + its ladder (searchers climb it; binoculars live up top) ------------
@@ -1109,9 +1347,12 @@ namespace Metoh.Game
 
         private static readonly MoonNight[] MoonNights =
         {
-            new MoonNight { Phase = -0.90f, ArcStart = 0.00f, PeakElev = 68f, Light = 0.42f },
-            new MoonNight { Phase = -0.35f, ArcStart = 0.12f, PeakElev = 60f, Light = 0.34f },
-            new MoonNight { Phase = 0.05f, ArcStart = 0.24f, PeakElev = 52f, Light = 0.24f },
+            // Light values raised ~30% in the legibility pass, keeping the same night-to-night RATIO
+            // (0.55 / 0.45 / 0.33 is the old 0.42 / 0.34 / 0.24 scaled) so the escalation curve the
+            // difficulty was tuned against is untouched — only the floor moved.
+            new MoonNight { Phase = -0.90f, ArcStart = 0.00f, PeakElev = 68f, Light = 0.55f },
+            new MoonNight { Phase = -0.35f, ArcStart = 0.12f, PeakElev = 60f, Light = 0.45f },
+            new MoonNight { Phase = 0.05f, ArcStart = 0.24f, PeakElev = 52f, Light = 0.33f },
         };
 
         /// <summary>
@@ -1227,6 +1468,14 @@ namespace Metoh.Game
             }
 
             _skyMat = new Material(shader);
+
+            // The horizon range is SEEDED FROM THE WORLD, which makes it a real landmark rather than
+            // wallpaper: every client in a session sees the same peaks in the same compass directions
+            // (the seed is replicated), so "regroup under the notch" means the same thing to all six
+            // players — while a different session gets a different skyline and can't be navigated from
+            // memory. Set here rather than per-frame because it only changes when the world does.
+            _skyMat.SetFloat(SkyRidgeSeedId, (World.Seed % 100000u) / 1000f);
+
             RenderSettings.skybox = _skyMat;
             var cam = Camera.main;
             if (cam != null) cam.clearFlags = CameraClearFlags.Skybox;
@@ -1256,15 +1505,25 @@ namespace Metoh.Game
 
         private static readonly SkyKey[] SkyKeys =
         {
-            // Re-themed for altitude: every key shifted blue, ambient up ~20% and fog density down
-            // ~10% because snowpack bounces moonlight instead of swallowing it like forest floor,
-            // and stars lifted at dusk/dawn since thin cold air holds far less haze than the valley
-            // did. NightSky.shader needs no edit — it is driven entirely from these keys.
-            new SkyKey(0.00f, 0x354060, 0x3e4257, 0x4d4359, 0.00675f, 0.30f, 0.18f), // dusk
-            new SkyKey(0.25f, 0x121c33, 0x162336, 0x222b3e, 0.00900f, 0.38f, 0.72f), // nightfall
-            new SkyKey(0.60f, 0x0a1220, 0x0b1526, 0x161f30, 0.01125f, 0.42f, 1.00f), // deep night
-            new SkyKey(0.88f, 0x121c33, 0x172438, 0x222b3e, 0.00945f, 0.36f, 0.76f), // pre-dawn
-            new SkyKey(1.00f, 0x445068, 0x4e5566, 0x595267, 0.00720f, 0.26f, 0.18f), // dawn
+            // Re-themed for altitude: every key shifted blue, and fog density down ~10% because
+            // snowpack bounces moonlight instead of swallowing it like forest floor, with stars
+            // lifted at dusk/dawn since thin cold air holds far less haze than the valley did.
+            // NightSky.shader needs no edit — it is driven entirely from these keys.
+            //
+            // AMBIENT AND MOON RAISED ~40% / ~25% in the legibility pass. This is a deliberate
+            // difficulty change and not only a look: moonlight is the only thing that lets a searcher
+            // cross the valley without burning battery, so this loosens the night a little. It was
+            // still the right call — the previous levels were dark enough that the terrain read as a
+            // uniform black-blue field, which meant every one of the contrast cues below (rock, basin,
+            // trail) was invisible no matter how well separated in albedo it was. There is no point
+            // owning a palette you cannot see. If night 3 now feels too survivable, take it back out
+            // of MoonNights[2].Light rather than out of ambient: losing the moon is the escalation the
+            // design already has, while flat ambient is what makes geometry read as cardboard.
+            new SkyKey(0.00f, 0x354060, 0x3e4257, 0x6a5d78, 0.00675f, 0.38f, 0.18f), // dusk
+            new SkyKey(0.25f, 0x121c33, 0x162336, 0x323e56, 0.00900f, 0.48f, 0.72f), // nightfall
+            new SkyKey(0.60f, 0x0a1220, 0x0b1526, 0x232f45, 0.01125f, 0.53f, 1.00f), // deep night
+            new SkyKey(0.88f, 0x121c33, 0x172438, 0x323e56, 0.00945f, 0.45f, 0.76f), // pre-dawn
+            new SkyKey(1.00f, 0x445068, 0x4e5566, 0x736a84, 0.00720f, 0.33f, 0.18f), // dawn
         };
 
         /// <summary>
@@ -1343,13 +1602,25 @@ namespace Metoh.Game
                 // Moonwash: a bright full moon drowns the fainter stars, a low half-moon doesn't.
                 // So night 3 trades moonlight for a visibly better sky — the escalation still has a
                 // payoff even though the moon never actually leaves.
-                float moonWash = Mathf.InverseLerp(0.14f, 0.42f, lit);
+                // Moonwash: a bright full moon drowns the fainter stars, a low half-moon doesn't.
+                // The 0.18..0.53 window tracks the raised moon levels — it used to be 0.14..0.42, and
+                // leaving it there after lifting the moon would have pinned every night at full wash,
+                // silently deleting night 3's darker-sky payoff.
+                float moonWash = Mathf.InverseLerp(0.18f, 0.53f, lit);
                 float stars = Mathf.Lerp(a.Stars, b.Stars, k) * Mathf.Lerp(1.40f, 1f, moonWash);
                 _skyMat.SetFloat(SkyStarsId, stars * (TitleMode ? 1.25f : 1f));
                 _skyMat.SetVector(SkyMoonDirId, _moonDir);
                 _skyMat.SetFloat(SkyMoonPhaseId, moonCfg.Phase);
-                _skyMat.SetFloat(SkyMoonBrightId, Mathf.Lerp(1.7f, 3.2f, Mathf.InverseLerp(0.14f, 0.42f, lit)));
+                _skyMat.SetFloat(SkyMoonBrightId, Mathf.Lerp(1.7f, 3.2f, moonWash));
                 _skyMat.SetFloat(SkyMoonGlowId, 0.8f);
+
+                // The distant range shares the palette, so it can never disagree with the air in
+                // front of it. Rock tracks the sky colour (kept dark — it is a silhouette first and a
+                // surface second); its snowfields track the moon, which is what makes the skyline
+                // visibly brighter on night 1 than on night 3.
+                _skyMat.SetColor(SkyRidgeColId, sky * 0.62f);
+                _skyMat.SetColor(SkyRidgeSnowId,
+                    Color.Lerp(sky, GroundCol, 0.60f) * Mathf.Lerp(0.55f, 1.05f, moonWash));
             }
             else
             {
@@ -1372,6 +1643,9 @@ namespace Metoh.Game
         private static readonly int SkyMoonBrightId = Shader.PropertyToID("_MoonBrightness");
         private static readonly int SkyMoonPhaseId = Shader.PropertyToID("_MoonPhase");
         private static readonly int SkyMoonGlowId = Shader.PropertyToID("_MoonGlow");
+        private static readonly int SkyRidgeSeedId = Shader.PropertyToID("_RidgeSeed");
+        private static readonly int SkyRidgeColId = Shader.PropertyToID("_RidgeColor");
+        private static readonly int SkyRidgeSnowId = Shader.PropertyToID("_RidgeSnowColor");
 
         // --- helpers ----------------------------------------------------------------
 

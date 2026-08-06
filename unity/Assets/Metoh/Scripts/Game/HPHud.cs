@@ -694,6 +694,39 @@ namespace Metoh.Game
             _toastGood = false;
         }
 
+        /// <summary>
+        /// A teammate has been grabbed. This is the team's only way to find out — the victim just
+        /// stops answering, and without a call-out a rescue can't begin until somebody happens to
+        /// walk past the body.
+        ///
+        /// It carries a bearing and a distance rather than only a name, because "Wren is down" tells
+        /// you nothing you can act on. It deliberately does NOT tell you to go: whether the trip is
+        /// worth it against the incap timer, and whether the Yeti is still standing over them, are
+        /// the decisions that make this interesting.
+        /// </summary>
+        public static void NotifySearcherTaken(string who, Vector3 at)
+        {
+            var me = HPPlayer.Local;
+            _toastAt = Time.time;
+            _toast = $"{who.ToUpperInvariant()} TAKEN";
+            if (me != null)
+            {
+                Vector3 d = at - me.transform.position;
+                float dist = new Vector2(d.x, d.z).magnitude;
+                _toast += $" — {dist:0} m {Bearing(d)}";
+            }
+            _toastGood = false;
+        }
+
+        /// <summary>Compass word for a world-space offset. World compass matches MapView: -X = East,
+        /// -Z = North.</summary>
+        private static string Bearing(Vector3 d)
+        {
+            float ang = (Mathf.Atan2(-d.x, -d.z) * Mathf.Rad2Deg + 360f) % 360f;
+            string[] names = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
+            return names[Mathf.RoundToInt(ang / 45f) % 8];
+        }
+
         /// <summary>A spilled pack picked back up — still unsaved, but back in the game.</summary>
         public static void NotifyProofRecovered(int count)
         {
@@ -1045,7 +1078,8 @@ namespace Metoh.Game
 
             if (me.IsYeti)
             {
-                // Dragging someone already? The grab key drops them.
+                // Carrying someone? There is no drop key any more — the server's carry timer ends it —
+                // so the line reports the countdown instead of offering a control that does nothing.
                 HPPlayer dragged = null, nearestFrozen = null;
                 float bestD = GrabPromptRange * GrabPromptRange;
                 foreach (var p in HPPlayer.All)
@@ -1057,7 +1091,7 @@ namespace Metoh.Game
                     if (d <= bestD) { bestD = d; nearestFrozen = p; }
                 }
 
-                if (dragged != null) prompt = $"LMB — drop {dragged.PlayerName.Value}";
+                if (dragged != null) prompt = $"carrying {dragged.PlayerName.Value} — {dragged.CarryEndsIn.Value:0.0}s";
                 else if (nearestFrozen != null) prompt = $"LMB — grab {nearestFrozen.PlayerName.Value}";
                 else
                 {
@@ -1215,7 +1249,8 @@ namespace Metoh.Game
             string flashAbility = HPKeybinds.Label(HPAction.Flash);
             string help = me.IsYeti
                 ? $"WASD move · mouse look · {jump} leap / hold near a boulder-hut-tower to CLIMB\n" +
-                  $"{sprint} SPRINT (faster than they are) · RMB ROAR (freeze) · LMB GRAB / drop\n" +
+                  $"{sprint} SPRINT (faster than they are) · RMB ROAR (freeze) · LMB GRAB\n" +
+                  $"a grab hauls them for {GameManager.CarrySeconds:0}s, then you drop them automatically\n" +
                   $"{senses} senses overlay · {map} map (crevasse fast-travel)\n" +
                   $"{crouch} CROUCH — half speed, but no tracks and no sound at all\n" +
                   "a GRAB spills their pack — you can't destroy evidence, but you can stand\n" +

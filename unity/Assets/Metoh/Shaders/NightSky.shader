@@ -28,6 +28,13 @@ Shader "Metoh/NightSky"
         _MoonBrightness ("Moon brightness", Range(0, 8)) = 2.4
         _MoonPhase      ("Moon phase (-1 full..1 new)", Range(-1, 1)) = -0.35
         _MoonGlow       ("Moon glow", Range(0, 3)) = 0.8
+
+        [Header(Horizon range)]
+        _RidgeSeed      ("Ridge seed", Float) = 0
+        _RidgeHeight    ("Ridge height (view-dir Y)", Range(0, 0.5)) = 0.19
+        _RidgeColor     ("Ridge rock colour", Color) = (0.10, 0.12, 0.18, 1)
+        _RidgeSnowColor ("Ridge snow colour", Color) = (0.62, 0.70, 0.82, 1)
+        _RidgeStrength  ("Ridge opacity", Range(0, 1)) = 1
     }
 
     SubShader
@@ -75,6 +82,12 @@ Shader "Metoh/NightSky"
             float  _MoonBrightness;
             float  _MoonPhase;
             float  _MoonGlow;
+
+            float  _RidgeSeed;
+            float  _RidgeHeight;
+            float4 _RidgeColor;
+            float4 _RidgeSnowColor;
+            float  _RidgeStrength;
 
             Varyings vert(Attributes v)
             {
@@ -124,6 +137,95 @@ Shader "Metoh/NightSky"
                 return star * present * tint * _StarBrightness;
             }
 
+            // ---------------------------------------------------------------- the horizon range
+            //
+            // WHY THE MOUNTAINS ARE IN THE SKYBOX. Same argument as the moon, one line up: fog is
+            // ExponentialSquared at ~0.009, so anything past ~150 m is gone. Real geometry for a
+            // distant range would be invisible, and pulling it close enough to see would put it inside
+            // the playable 800 m where players would walk into it. The skybox is the only place a
+            // horizon can exist here — it renders unfogged, behind everything, at no depth cost.
+            //
+            // WHY IT IS WORTH HAVING. In an 800 m valley of near-identical snow and conifers there is
+            // nothing to take a bearing from, so every direction reads the same and you cannot tell
+            // whether you have been somewhere before. A ridgeline fixes that with no gameplay change
+            // at all: it is an absolute compass that is visible from everywhere, it never moves, and
+            // "head toward the twin peaks" becomes something one player can say to another.
+
+            /// Periodic hash on an integer index. Wrapping the index is what lets the profile close
+            /// cleanly at due north instead of leaving a seam you can walk up to and see.
+            float RidgeHash(float i, float period)
+            {
+                i = fmod(fmod(i, period) + period, period);
+                return frac(sin(i * 12.9898 + _RidgeSeed * 78.233) * 43758.5453);
+            }
+
+            /// One octave of value noise around the compass, `period` cells to the full circle.
+            float RidgeOctave(float u, float period)
+            {
+                float f = u * period;
+                float i0 = floor(f);
+                float t = frac(f);
+                t = t * t * (3.0 - 2.0 * t);
+                return lerp(RidgeHash(i0, period), RidgeHash(i0 + 1.0, period), t);
+            }
+
+            /// Skyline height (in view-direction Y) for an azimuth u in 0..1 around the compass.
+            float RidgeProfile(float u)
+            {
+                // Broad massifs, then spurs, then a ridged octave for actual PEAKS. The fold
+                // (1 - |2v-1|) is what turns rolling hills into summits — without it the range reads
+                // as a low bank of cloud, which is worse than no horizon at all.
+                float broad = RidgeOctave(u, 5.0);
+                float spurs = RidgeOctave(u + 0.37, 13.0);
+                float fine = RidgeOctave(u + 0.71, 29.0);
+                float peaks = 1.0 - abs(fine * 2.0 - 1.0);
+
+                float h = broad * 0.58 + spurs * 0.27 + peaks * 0.15;
+                // Bias upward a little so the range never drops to a flat line anywhere on the compass.
+                return (0.28 + 0.72 * h) * _RidgeHeight;
+            }
+
+            /// Colour + coverage for the distant range along a view direction.
+            float4 HorizonRange(float3 dir, float3 moonDir, float3 skyCol)
+            {
+                // Azimuth as 0..1 around the compass.
+                float u = atan2(dir.x, dir.z) * 0.15915494 + 0.5; // 1/(2pi)
+                float ridge = RidgeProfile(u);
+
+                // Soft skyline edge, in view-Y units. Narrow — a distant ridge against a night sky is
+                // a hard edge, and blurring it is what makes painted backdrops look painted.
+                float mask = 1.0 - smoothstep(ridge - 0.004, ridge + 0.004, dir.y);
+                // Cut it off below the true horizon; the terrain covers that and drawing range there
+                // would show through gaps in the treeline as mountains UNDER the ground.
+                mask *= smoothstep(-0.02, 0.01, dir.y);
+                if (mask <= 0.001) return float4(0, 0, 0, 0);
+
+                // How far down the face we are: 0 at the skyline, 1 at the base.
+                float depth = saturate((ridge - dir.y) / max(ridge, 1e-4));
+
+                // Snow above the range's own snowline, with the line itself broken up per-azimuth so
+                // it doesn't read as a contour drawn across the whole massif.
+                float snowLine = 0.30 + RidgeOctave(u + 0.19, 9.0) * 0.22;
+                float snow = 1.0 - smoothstep(snowLine, snowLine + 0.30, depth);
+
+                // Moonlit faces. Only the azimuth matters at this distance — a range lit flatly from
+                // every side has no form, and this single term is what gives it any.
+                float2 toDir = normalize(dir.xz + 1e-5);
+                float2 toMoon = normalize(moonDir.xz + 1e-5);
+                float facing = saturate(dot(toDir, toMoon) * 0.5 + 0.5);
+                float lit = lerp(0.55, 1.30, facing);
+
+                float3 col = lerp(_RidgeColor.rgb, _RidgeSnowColor.rgb, snow) * lit;
+
+                // Aerial perspective: the base of the range dissolves into the same haze the fog is
+                // made of, so it sits IN the atmosphere instead of being pasted on top of it. This is
+                // the single term that decides whether a skybox horizon reads as distance or as a
+                // sticker, so it is deliberately strong.
+                col = lerp(col, skyCol, saturate(depth * 0.55 + 0.30));
+
+                return float4(col, mask * _RidgeStrength);
+            }
+
             float MilkyWayBand(float3 dir)
             {
                 // A soft band across the dome, roughly edge-on. Broken up so it doesn't read as a
@@ -153,8 +255,18 @@ Shader "Metoh/NightSky"
                 col += MilkyWayBand(dir) * _MilkyWay * _StarBrightness * float3(0.55, 0.60, 0.80) * 0.35;
                 col += StarField(dir);
 
-                // --- moon -------------------------------------------------------------
                 float3 md = normalize(_MoonDir.xyz);
+
+                // --- the distant range ------------------------------------------------
+                // AFTER the stars, and a lerp rather than an add: rock occludes the sky behind it.
+                // Adding it would leave stars visibly shining through the mountains, which is the
+                // giveaway that a horizon is painted on the sky rather than standing in front of it.
+                // Before the moon only for tidiness — the moon never drops below 35° elevation and the
+                // range tops out near 11°, so the two cannot overlap.
+                float4 range = HorizonRange(dir, md, col);
+                col = lerp(col, range.rgb, range.a);
+
+                // --- moon -------------------------------------------------------------
                 float cosAng = clamp(dot(dir, md), -1.0, 1.0);
                 float ang = acos(cosAng);
 

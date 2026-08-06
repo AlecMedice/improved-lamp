@@ -227,8 +227,8 @@ The web build caps its device pixel ratio (`QUALITY.pixelRatioCap`), so Three.js
 native resolution. **Unity does.** On integrated graphics at 2560×1600 that alone is the difference
 between choppy and smooth — fill rate scales with the *square* of resolution.
 
-`HPQuality` is the Unity counterpart: URP `renderScale` (default 0.7, live slider in the pause menu),
-MSAA off, shadow distance 50 → 35 m. If more is needed, in order: **bloom** in `PostFX` (full-screen,
+`HPQuality` is the Unity counterpart: URP `renderScale` (**default 1.0 since the legibility pass —
+see §5c**; live slider in the pause menu), MSAA off, shadow distance 55 → 30 m by tier. If more is needed, in order: **bloom** in `PostFX` (full-screen,
 multi-pass — the most expensive single effect), then the realtime point lights in `WorldBuilder`,
 then `UndergrowthCount`, then `World.TreeCount`. **Do not start with the IMGUI HUD** — it is not the
 bottleneck.
@@ -362,14 +362,10 @@ So the pass is a **material and lighting** pass:
 tier: anyone who has already pulled it down to buy frames is not silently charged for soft shadows
 and a 55 m shadow distance too.
 
-> **The one big win that is NOT in here, and cannot be.** Screen-space ambient occlusion is a URP
-> *Renderer Feature*, and it lives on the renderer asset — a `.asset` file the repo does not carry
-> (only `Scripts/` and `Shaders/` are tracked). It is the largest remaining realism gain, because AO
-> is what visually *grounds* objects: without it, props and figures read as hovering over the snow
-> rather than sitting in it. **Owner step, in the live project:** select the URP Renderer asset →
-> Add Renderer Feature → Screen Space Ambient Occlusion; intensity ~0.5, radius ~0.3, and set it to
-> `AfterOpaque` on integrated graphics. If it costs too much, halve the sample count before turning
-> it off.
+> **~~The one big win that is NOT in here, and cannot be.~~ Done 2026-08-01 — see §5c.** SSAO is a
+> URP *Renderer Feature* living on an untracked `.asset`, so it was written up here as a manual owner
+> step. It was never carried out, which is the whole problem with that format. It is now applied by
+> **Metoh → Configure Render Pipeline** (`Editor/RenderPipelineSetup.cs`) instead.
 
 Two things fixed in passing, both pre-existing: `SetTimeOfDay` re-asserted `LightShadows.Hard` every
 frame, so shadow quality could never actually be configured from anywhere; and the world leaked its
@@ -380,6 +376,80 @@ was survivable at a couple of dozen and is not at ~200 after per-chunk tinting.
 observed — expect to sit in `ProcTex` (normal strengths, tiling) and the smoothness numbers and tune
 by eye. The tiling scales in particular are the kind of thing that is obviously wrong the moment you
 look and impossible to guess.
+
+## 5c. The legibility pass — and why none of §5b had ever actually rendered
+
+Owner report, 2026-08-01, after the realism pass shipped: *"everything looks way too much the same…
+I want to be able to see things"* and *"it looks like a PS1 game"*. Both were true, and the second
+one had almost nothing to do with the art.
+
+**Two settings were cancelling the entire realism pass.**
+
+| What | Was | Why it mattered |
+|---|---|---|
+| `HPSettings.RenderScale` | `0.7` | The scene rendered at 70% of the panel and was upscaled. Soft edges, crawling stair-steps, and the fine normal-map grain §5b is built on dissolving before it reached a pixel. |
+| `HPQuality.HighDetail` | `renderScale > 0.7f` | The shipping default was *exactly* `0.7`, so this was **false on every clean install**. Soft shadows and the 55 m shadow distance were never on. Nobody had ever seen the expensive tier. |
+
+That is the lesson worth keeping: **a boundary condition set to the same value as a default is a
+switch that is always off**, and it fails silently as an art problem rather than as a bug. The
+threshold is now `>= 0.8`, deliberately *between* the two scales anyone runs. `RenderScale` defaults
+to `1.0`, and because it is a PlayerPref the code default alone would have changed nothing for an
+existing player — `HPSettings.SettingsVersion` migrates a saved `0.7` up once (and only `0.7`, so a
+considered `0.5` is left alone).
+
+**"Everything looks the same" was a value-range problem, not a hue problem.** Ground, trail and
+drift all sat in the top fifth of the value scale, and the terrain was a single flat colour over all
+800 m — a normal map varies a surface's *lighting*, but one albedo still averages back to one grey
+at any distance. Fixes, in descending order of how much they changed:
+
+- **`Shaders/Snowpack.shader`** — the ground is now snow blended against wind-stripped rock by
+  **slope**, which puts genuine dark values on ridges and gully walls and is what makes terrain shape
+  readable at range. Measure slope as the **gradient** (`length(n.xz)/n.y`), *not* `1 - n.y`: this
+  terrain is gentle enough that `1 - n.y` never leaves the bottom 6% of its range and no threshold in
+  it is tunable.
+- **The deep-snow basin is now visible.** `Movement.DeepSnowDepth` slows searchers over roughly a
+  third of the map and that zone was completely unmarked. The shader reads `Player.DriftHeight` /
+  `DriftDepth` directly — one source of truth, no second copy — so the tint can't disagree with the
+  slow it advertises. A routing choice you cannot see is an ambush, not a choice.
+- **Value range widened**: bare rock `0x4a4f57` → trail `0x94a0ab` → basin `0xa8bccf` → snowpack
+  `0xc9d6e2`. Hue separates the two middle ones (basin cold, trail warm) because they are close in
+  value and telling them apart is a live gameplay question.
+- Note the old `TrailCol` comment claimed it "must stay clearly lighter than `GroundCol`" while the
+  shipped value was **darker**. The comment was wrong; what the trail needs is contrast in *either*
+  direction, and darker is also what trodden snow does.
+
+**Landmarks.** A ridgeline now renders in `NightSky.shader`, seeded from the world seed. It has to
+live in the skybox for the same reason the moon does — fog kills anything past ~150 m, and real
+geometry close enough to see would be inside the playable area. It gives an absolute compass every
+player in a session shares. In-world: each crevasse gets an identity colour (mast + throat glow) so
+the fast-travel network is *nameable* instead of five interchangeable grey lumps, trail masts carry
+one colour per trail, and camp has the tallest mast on the map.
+
+> Marker masts are **render-only**, which is a deliberate exception to the undergrowth rule in
+> `BuildUndergrowth` ("anything tall enough to hide a player belongs in the sim"). A 7 cm pole hides
+> nobody. Do not use this as precedent for anything with width.
+
+**Light level raised** — ambient ~40%, moon ~30% (ratios between nights preserved), `AmbientBounce`
+to 1.0, and a +0.35 stop base exposure. This is a real difficulty change: moonlight is what lets
+searchers move without burning battery. It was still right, because at the old levels every contrast
+cue above was invisible regardless of how well separated it was in albedo. **If night 3 now feels
+too survivable, take it out of `MoonNights[2].Light`, not out of ambient** — losing the moon is the
+escalation the design already has; flat ambient is what makes geometry read as cardboard.
+
+**Geometry** (the part §5b was wrong about). §5b argued the problem was materials and not models,
+and that was right about *surfaces* and wrong about *silhouettes*. Three smooth cones stacked on a
+stick is a shape no tree has, and at night — fogged, backlit, at 60 m — the outline is very nearly
+all the information reaching the player. `MeshUtil.Conifer` builds one tiered, jagged, drooping crown
+instead; `MeshUtil.Rock` replaces every scaled-sphere boulder. Both take a `variant` index hashed
+from the tree/cave index — **never from an RNG stream**, because the forest loop is in lockstep with
+`WorldData.BuildColliders` (§3c). The low detail tier is *cheaper* than the three cones it replaced
+(77 tris vs 96); the high tier spends 153.
+
+> **Unverified (editor), all of it.** Same standing caveat as §5b, plus two specific risks: the
+> `Metoh/Snowpack` shader has never been compiled by Unity (a compile failure falls back to
+> `URP/Lit`, which will look flat and *not* log a warning — the `Shader.Find` guard only catches a
+> missing file), and tree cost rose ~46% on the high tier at the same time render scale went to
+> native. If frames are short, the F3 levers in §7 order still apply.
 
 ## 6d. The CPU searchers (`SearcherBot`) — a shell, deliberately
 
@@ -410,9 +480,18 @@ that only optimises evidence walks into the Yeti's arms, and one that only avoid
 - **EXPLORE is random roam.** The single biggest gap. A real search would divide the map between
   teammates, sweep outward from camp, and prefer ground nobody has covered recently. Random roam is
   why a bot team reads as five people wandering rather than as a search party.
-- **No team coordination at all.** They do not spread out, call contact, converge on a downed
-  teammate deliberately, or stage a rescue. Wren's trail marks and the stakeout ping exist and go
-  unused (`ServerBotMark` / `ServerBotPing` are wired and never called).
+- **Almost no team coordination.** They do not spread out, or stage a rescue. Wren's trail marks and
+  the stakeout ping exist and go unused (`ServerBotMark` / `ServerBotPing` are wired and never
+  called). The one channel that does exist is the **grab call-out** (2026-08-01): a successful
+  `TryGrab` fires `RpcSearcherTaken` to human searchers and `SearcherBot.OnTeammateTaken` to CPU
+  ones, and REVIVE is now gated on *knowing* — a body within `DownSpotRange` (walked up on) or one a
+  live call-out named. Before that, REVIVE scanned every player with no range limit, so a single grab
+  summoned the entire CPU team from across the valley and handed the Yeti all of them around one
+  body. The call-out grants knowledge, **not orders**: nothing tells a bot to go, and a fleeing or
+  proof-carrying bot keeps doing that instead.
+  > Still unmeasured: with four bots all told at once, whether *several* now converge anyway. That
+  > is a tuning question (`TakenMemory`, and eventually whose job it is) rather than the structural
+  > bug it replaced, and it is visible in the play-test log as REVIVE transitions.
 - **FLEE always lights the torch and runs.** The actual stealth play — kill the light and break line
   of sight when it has *not yet* been seen — needs a "has it noticed me" estimate the shell lacks.
 - **REVIVE ignores the incap timer and the Yeti standing over the body**, so it will happily walk into
@@ -493,6 +572,33 @@ Two dev affordances exist specifically so a play-test produces *data* instead of
   Number keys flip the **cost levers live, in the §7 order**: `1` bloom, `2` prop lights,
   `3` undergrowth, `4` shadows. The point is that "it felt slow" doesn't distinguish four causes with
   four different fixes, and toggling beats rebuilding.
+- **CPU Yeti levers, same overlay.** `O` pauses the bot where it stands (it keeps its state, stops
+  moving, and cannot grab), `K` toggles its speed between `1.0x` and `0.5x`, and `P` cycles what it
+  is allowed to know:
+
+  | Mode | Fallback when nothing is perceived | Reads snow prints? |
+  |---|---|---|
+  | `HUNT` (default) | walks at a searcher's **true** position | yes |
+  | `TRACK` | none — wanders | yes |
+  | `RANDOM` | none — wanders | **no** |
+
+  These exist because the two most common play-test reports about the bot are unfalsifiable at full
+  speed. "It just beelines at me" is the `HUNT` fallback and is answered by pressing `P` — if it
+  still finds you on `TRACK`, it tracked you. "It got stuck" needs the thing to hold still while you
+  walk up to it, which is `O`. `K` separates *tracked* from merely *outran*.
+
+  `YetiBot.AiMode` replaced the old `AggressiveProwl` bool (kept as a read-only alias). All three are
+  **static**, so they apply to every bot and survive a reseed. `GameManager.ResetDevLevers` puts them
+  back on the way to the **lobby** — both routes there, `ServerReturnToLobby` *and* `AbortToLobby` —
+  rather than at match start, so a mode you set in the lobby survives into the match you set it for.
+- **`J` — per-bot movement trace** (`[bot]` lines to the Console). **Off by default**: it fires per
+  bot, and an editor `Debug.Log` captures a stack trace, so with five bots it was a steady tax on
+  every frame. Turn it on only while chasing a stall.
+
+  > The `[botAI]` guard trace is gone. It logged once a second forever ("remove once the bot is
+  > confirmed hunting" — it is), and each bail reason now shows up in `DbgState` as `off: <reason>`,
+  > which the overlay and the play-test log both already read. The `[look]` Console mirror is gone
+  > for the same reason: it fired twice a second precisely while the overlay was measuring frame cost.
 - **Seed pin** (title screen, under the dev persona strip). The forest is rolled per hosting session,
   so **a bug found in one map is otherwise unreproducible** — the map is gone when you restart. The
   overlay prints the live seed; paste it into the field to get that exact forest back. Blank/`0` =
@@ -500,6 +606,33 @@ Two dev affordances exist specifically so a play-test produces *data* instead of
 
 Note `4` writes `QualitySettings.shadowDistance`, the same knob `HPQuality` owns — re-applying
 settings from the pause menu will overwrite it. Fine for a dev toggle, just don't read it as sticky.
+
+## 7c. The play-test log (`HPLog`)
+
+`<project>/Logs/metoh-playtest.log`, with the run before it kept as `metoh-playtest.prev.log`. The
+path is printed to the Console at startup and the file name is shown in the F3 footer.
+
+It exists so play-test feedback can be *checked* rather than only believed. A report arrives as a
+sentence about a symptom several seconds after its cause ("the Yeti got stuck when it let go"), and
+answering it needs the timeline. Two line kinds share that timeline:
+
+- `EVENT` — gameplay moments: `MATCH` (with the **seed**), `NIGHT`, `ROAR`, `GRAB`, `DROP`,
+  `REVIVE`, `RECOVER`, `AI` (bot state *transitions*), `DEV` (an F3 lever moved).
+- `UNITY` — everything that reached the Console, so an exception sits next to the gameplay that
+  caused it. Errors and exceptions carry their stack; ordinary logs don't.
+
+Three things about it are deliberate and worth not undoing:
+
+- **It is not `Editor.log`.** That file is a build/import log with gameplay scattered through it, and
+  the running editor holds it open. `HPLog` opens its own file with `FileShare.ReadWrite`, so it can
+  be read live, from outside the editor, while a play-test is still running.
+- **Leaving Play mode is not a quit.** `Application.quitting` never fires in the editor, which is
+  where every play-test happens, so `Shutdown` is also hooked to `ExitingPlayMode` — otherwise the
+  last second of a session, usually the interesting one, dies in the buffer.
+- **`[look]` and `[bot]` are filtered out.** Both are throttled per-second heartbeats; unfiltered
+  they are most of the file.
+
+Buffered, flushed once a second and forced at night rollover and match end.
 
 ## 8. Workflow
 
@@ -509,11 +642,10 @@ settings from the pause menu will overwrite it. Fine for a dev toggle, just don'
   from `csharp/Metoh.Sim`, not from `unity/`). A sync script that only copies `Scripts/` will
   silently leave the shader or a new sim file behind, and the failure shows up as a magenta sky or a
   missing type rather than as a copy error.
-  > **The live project path has moved twice — check before you copy.** It is
-  > `C:\Users\amedi\Metoh_port`, created fresh for the Metoh rebrand. `C:\Users\amedi\Mothman_port`
-  > is the abandoned `mothman_port` branch's build and must not be overwritten;
-  > `C:\Users\amedi\HollowPines` no longer exists. The repo carries no `.meta` or `Library/`, so the
-  > live project is always a separate tree, never a checkout.
+  > **The live project path has moved before — check before you copy.** It is
+  > `C:\Users\amedi\Metoh_port`, created fresh for the Metoh rebrand; `C:\Users\amedi\HollowPines`
+  > no longer exists. The repo carries no `.meta` or `Library/`, so the live project is always a
+  > separate tree, never a checkout.
 - **Smoke-compile outside Unity** before handing over — a scratch csproj (netstandard2.1, LangVersion
   9, `ENABLE_INPUT_SYSTEM`, plus `UNITY_EDITOR` and `UnityEditor*.dll` for a second editor pass)
   against `Library/ScriptAssemblies/*.dll` and the Unity Managed DLLs. This has caught real errors
@@ -523,6 +655,11 @@ settings from the pause menu will overwrite it. Fine for a dev toggle, just don'
   error is usually several steps upstream of the reported one.
 - **Re-run "Metoh → Set Up Game Scene (Mountain)"** whenever the scene gains a component or a
   spawnable prefab. The scene has no hand-made content; rebuilding it costs nothing.
+- **Run "Metoh → Configure Render Pipeline" once per clone** (and after any URP upgrade). It adds the
+  SSAO renderer feature and sets HDR colour grading, a 32³ LUT and 4 shadow cascades. These live on
+  `.asset` files the repo does not track, so a fresh live project does not have them — and every one
+  of them is the kind of setting whose absence looks like an art problem rather than a missing step.
+  Idempotent, and it logs what it changed.
 - `Metoh.Sim` collides with UnityEngine on `Collider`/`Collision` — qualify them.
 - FishNet 4.7.2 does not compile on Unity 6000.5 unpatched; see [`../unity/fishnet-patches/`](../unity/fishnet-patches/README.md).
 

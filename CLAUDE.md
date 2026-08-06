@@ -6,9 +6,8 @@ Colyseus server, TypeScript everywhere**. Stylized low‑poly, smooth‑shaded, 
 
 **The project was re-themed from "Hollow Pines" (a Pacific-NW Bigfoot hunt) to Metoh in Aug 2026**,
 to escape overlap with the Steam game *BIGFOOT*. Plan and rationale: `docs/Metoh_migration.md`.
-Two things to know: the **web build keeps its forest visuals on purpose** (only identifiers were
-renamed — web visuals are abandoned; the Unity build carries the snow re-theme), and the
-`mothman_port` branch is an **abandoned** earlier attempt at the same problem — don't mine it.
+One thing to know: the **web build keeps its forest visuals on purpose** (only identifiers were
+renamed — web visuals are abandoned; the Unity build carries the snow re-theme).
 
 Read `docs/` for the full picture — every file there is current, nothing is a stale plan:
 - `GAME_DESIGN.md` — the GDD, source of truth for rules · `STORY.md` — world + the five characters
@@ -220,11 +219,15 @@ Shared (`shared/sim/`) — dependency‑free deterministic sim, imported by both
 ## Conventions / gotchas
 - TypeScript strict; small focused modules; match the surrounding comment density + naming.
 - Aesthetic: geometry stays **generated and low‑poly with smooth vertex normals** (no blocky/voxel);
-  fog + ACES tone mapping. **The Unity build is now aiming at realism** and gets there through
-  *materials*, not mesh density — procedural normal maps (`ProcTex.cs`), per‑class PBR response,
-  bounce‑weighted Trilight ambient, soft shadows, split toning. New Unity geometry must therefore
-  carry **UVs and tangents** (`MeshUtil` does this; hand‑built meshes have to do it themselves) or it
-  silently renders flat. See `UNITY_PORT_NOTES.md` §5b. The web build keeps the original flat look.
+  fog + ACES tone mapping. **The Unity build is now aiming at realism** through *materials* —
+  procedural normal maps (`ProcTex.cs`), per‑class PBR response, bounce‑weighted Trilight ambient,
+  soft shadows, split toning, SSAO. New Unity geometry must therefore carry **UVs and tangents**
+  (`MeshUtil` does this; hand‑built meshes have to do it themselves) or it silently renders flat.
+  But "materials, not mesh density" is **only true of surfaces, not silhouettes** — at night, fogged,
+  the outline is nearly all the player gets, so shapes that read as primitives (stacked cones, scaled
+  spheres) do have to be rebuilt. See `UNITY_PORT_NOTES.md` §5b and **§5c**. Anything that varies
+  per‑instance in the forest must be hashed from an index, **never drawn from an RNG stream** (§3c).
+  The web build keeps the original flat look.
 - Colyseus **0.15** schema uses **legacy decorators** — server `tsconfig` has
   `experimentalDecorators: true`, `useDefineForClassFields: false`. Don't "modernize" these.
 - Light intensities are physically‑based‑ish and **tuned by eye** — expect to nudge.
