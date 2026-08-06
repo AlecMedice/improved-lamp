@@ -1,9 +1,10 @@
 name: CI
 
 # Runs the same gates as CLAUDE.md's "verify your work" section on every PR and on
-# pushes to main: the client typechecks + bundles, and the server typechecks (which
+# pushes to main: the client typechecks + bundles, the server typechecks (which
 # also guards shared/ purity, since shared/sim is imported by both sides) and runs the
-# vitest suite (shared-sim determinism + server anti-cheat helpers).
+# vitest suite (shared-sim determinism + server anti-cheat helpers), and the C# parity
+# harness proves Metoh.Sim still matches the TypeScript sim it was ported from.
 on:
   push:
     branches: [main]
@@ -42,3 +43,27 @@ jobs:
       - run: npm ci
       - run: npm run typecheck # tsc --noEmit (also guards shared/ purity)
       - run: npm test # vitest run (sim determinism + anti-cheat validation)
+
+  parity:
+    name: parity — C# sim matches the TypeScript sim
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      # tsx (used to run the generator) ships in the server's dev dependencies.
+      - run: npm ci
+        working-directory: server
+      # Regenerate the fixture from the REAL TypeScript sim, then fail if it differs from the
+      # committed one. This is the check that actually matters: a stale golden.json would let the
+      # harness below pass while both sides had drifted away from shared/sim together.
+      - run: ./server/node_modules/.bin/tsx csharp/parity/gen-golden.ts
+      - name: golden.json is up to date with shared/sim
+        run: git diff --exit-code -- csharp/parity/golden.json
+      - run: dotnet run --project csharp/Parity # must end "PARITY OK"

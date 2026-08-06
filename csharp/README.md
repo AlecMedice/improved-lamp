@@ -1,4 +1,4 @@
-# Hollow Pines — C# sim port (migration phase R3)
+# Metoh — C# sim port (migration phase R3)
 
 A faithful C# port of the deterministic simulation in [`shared/sim/`](../shared/sim) — the **game
 logic that survives the Unity move** (movement physics, collision, terrain, world generation, RNG,
@@ -8,7 +8,7 @@ TypeScript sim; the host and clients will run identical physics under FishNet
 
 ```
 csharp/
-  HollowPines.Sim/     engine-agnostic C# sim (drop straight into a Unity Assets/ folder)
+  Metoh.Sim/     engine-agnostic C# sim (drop straight into a Unity Assets/ folder)
   Parity/              console harness — golden cross-check + mirrored vitest invariants
   parity/golden.json   golden values dumped from the REAL TypeScript sim (the source of truth)
   parity/gen-golden.ts the regenerator for golden.json
@@ -16,7 +16,7 @@ csharp/
 
 ## Design constraints (why it ports cleanly)
 
-- **No `UnityEngine` dependency.** `HollowPines.Sim` references only `System.*`, so it compiles both
+- **No `UnityEngine` dependency.** `Metoh.Sim` references only `System.*`, so it compiles both
   in a plain .NET project (for the parity test) and inside Unity. Keep it that way.
 - **`double` everywhere**, because the TS sim uses `number` (IEEE-754 double). `float` would diverge
   on the first collision push-out. Use `float` only at the Unity transform boundary.
@@ -27,7 +27,7 @@ csharp/
 
 ## File map (TS → C#)
 
-| TypeScript (`shared/sim/`) | C# (`HollowPines.Sim/`) |
+| TypeScript (`shared/sim/`) | C# (`Metoh.Sim/`) |
 | --- | --- |
 | `math.ts` | `SimMath.cs` |
 | `rng.ts` | `Rng.cs` |
@@ -49,12 +49,12 @@ dotnet run --project csharp/Parity
 Two layers:
 1. **Golden cross-check** — reconstructs the TS golden scenarios in C# and asserts against
    `parity/golden.json` (dumped from the real TS sim): RNG stream, value noise, terrain, caves +
-   emerge points + `nearestCaveIndex`, colliders, world summary, hunter/Bigfoot trajectories, and the
+   emerge points + `nearestCaveIndex`, colliders, world summary, hunter/Yeti trajectories, and the
    specialty identity/getters/deals.
 2. **Mirrored property tests** — the behavioural invariants the maintained vitest suite pins
    (`server/test/sim.determinism.test.ts`, `sim.movement.test.ts`, `caves.test.ts`,
    `specialties.test.ts`), re-expressed in C#: world determinism, stamina exhaustion gate, battery
-   drain, the Endurance stamina ceiling, Bigfoot leap arc, NaN-safety at the edge, cave spacing, and
+   drain, the Endurance stamina ceiling, Yeti leap arc, NaN-safety at the edge, cave spacing, and
    the specialty deal.
 
 Integer / pure-arithmetic paths are checked **exactly**; `sin`/`cos`/`sqrt` paths use a 1e-9 epsilon

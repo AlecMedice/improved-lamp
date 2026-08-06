@@ -296,7 +296,7 @@
       "exhausted": false
     }
   ],
-  "bigfootTrajectory": [
+  "yetiTrajectory": [
     {
       "i": 5,
       "x": 28.46010809780155,
@@ -341,6 +341,86 @@
       "vy": 0,
       "grounded": true,
       "stamina": 87.99999999999983
+    }
+  ],
+  "deepSnowProbes": [
+    {
+      "label": "deep basin",
+      "x": -390,
+      "z": -390,
+      "h": -4.505662648068158,
+      "depth": 1,
+      "prints": true
+    },
+    {
+      "label": "feathered basin edge",
+      "x": -390,
+      "z": -360,
+      "h": -2.8473489408380006,
+      "depth": 0.5648992938920004,
+      "prints": true
+    },
+    {
+      "label": "scoured ridge — prints, no slow",
+      "x": -390,
+      "z": 132,
+      "h": 3.0429663983257096,
+      "depth": 0,
+      "prints": true
+    },
+    {
+      "label": "trail corridor",
+      "x": -258,
+      "z": 390,
+      "h": -4.597885828569907,
+      "depth": 0.263319307742258,
+      "prints": false
+    },
+    {
+      "label": "tarn ice",
+      "x": -177,
+      "z": -123,
+      "h": 1.4738553475449225,
+      "depth": 0,
+      "prints": false
+    },
+    {
+      "label": "camp clearing",
+      "x": 4,
+      "z": 4,
+      "h": 0,
+      "depth": 0,
+      "prints": false
+    }
+  ],
+  "driftTrajectory": [
+    {
+      "i": 9,
+      "x": -181.88441860187535,
+      "z": 103.24555296704014,
+      "feetY": -3.322848608152198,
+      "stamina": 90.99999999999994
+    },
+    {
+      "i": 19,
+      "x": -183.8849552977548,
+      "z": 100.32137658669218,
+      "feetY": -2.8756967550662953,
+      "stamina": 81.99999999999989
+    },
+    {
+      "i": 29,
+      "x": -185.90740228463616,
+      "z": 96.67799312208538,
+      "feetY": -2.1555009251659842,
+      "stamina": 72.99999999999983
+    },
+    {
+      "i": 39,
+      "x": -188.29878739256753,
+      "z": 93.18251520191917,
+      "feetY": -1.358489087970466,
+      "stamina": 63.99999999999978
     }
   ],
   "specialties": {
@@ -438,7 +518,7 @@
         "footstepVolumeMul": 1
       },
       {
-        "id": "bigfoot",
+        "id": "yeti",
         "reviveMul": 1,
         "staminaMax": 100,
         "staminaDrainMul": 1,

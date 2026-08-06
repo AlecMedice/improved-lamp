@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Hollow Pines</title>
+    <title>Metoh</title>
     <style>
       :root { --amber: #e8a062; --ink: #0c0d12; --red: #ff3b3b; }
       * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -203,7 +203,10 @@
           <svg class="hud-ico" viewBox="0 0 24 24" aria-label="Footage"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/></svg>
           <span id="footage">0 / 3</span> &nbsp;·&nbsp; <span id="net-status">connecting…</span></div>
       </div>
-      <div class="row"><div class="pill" id="ability" style="display:none"></div></div>
+      <div class="row">
+        <div class="pill" id="ability" style="display:none"></div>
+        <div class="pill" id="deepsnow-pill" style="display:none">DEEP SNOW</div>
+      </div>
       <div class="row">
         <div class="pill statpill" title="Flashlight battery">
           <svg class="hud-ico" viewBox="0 0 24 24" aria-label="Flashlight"><path d="M9 3h6l-1 4H10z"/><path d="M10 7h4v3l-1 11h-2l-1-11z"/><path d="M12 11v3"/></svg>
@@ -234,14 +237,14 @@
     <div id="status-banner"></div>
 
     <div id="map-overlay">
-      <div class="map-title">FOREST MAP</div>
+      <div class="map-title">MOUNTAIN MAP</div>
       <div id="map-frame"><canvas id="map-canvas" width="600" height="600"></canvas></div>
       <div id="map-legend">
         <span><i class="lg-self"></i>You</span>
         <span><i class="lg-team"></i>Team</span>
         <span><i class="lg-clue"></i>Tracks</span>
         <span><i class="lg-ping"></i>Ping</span>
-        <span><i class="lg-cave"></i>Cave</span>
+        <span><i class="lg-cave"></i>Crevasse</span>
         <span><i class="lg-camp"></i>Camp</span>
       </div>
       <div id="map-hint"></div>
@@ -249,34 +252,34 @@
     </div>
 
     <div id="start-overlay" class="overlay">
-      <h1>HOLLOW&nbsp;PINES</h1>
-      <p class="tag">Dusk falls over the Pacific Northwest. Five searchers hunt for proof that Bigfoot is real —
-        three solid videos win the night. One of you <em>is</em> Bigfoot. Catch them before the tape gets out.</p>
+      <h1>METOH</h1>
+      <p class="tag">Dusk falls on the high valley. Five searchers hunt for proof that the Yeti is real —
+        three solid videos win the night. One of you <em>is</em> the Yeti. Catch them before the tape gets out.</p>
       <div class="panel">
         <label for="name">Name</label>
         <input id="name" placeholder="Searcher" maxlength="16" />
         <label for="role">Role</label>
         <select id="role">
           <option value="searcher">Searcher (one of five)</option>
-          <option value="bigfoot">Bigfoot (the hunter)</option>
+          <option value="yeti">Yeti (the hunter)</option>
         </select>
         <button id="lobby-btn" class="btn">Multiplayer lobby</button>
-        <button id="start-btn" class="btn btn-ghost">Enter the forest (solo)</button>
+        <button id="start-btn" class="btn btn-ghost">Go up alone (solo)</button>
       </div>
       <p class="help">
         <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move &nbsp;·&nbsp; mouse look &nbsp;·&nbsp;
         <kbd>Shift</kbd> sprint &nbsp;·&nbsp; <kbd>F</kbd> flashlight &nbsp;·&nbsp;
-        hold <kbd>Right&nbsp;Mouse</kbd> to film Bigfoot &nbsp;·&nbsp; <kbd>M</kbd> map &nbsp;·&nbsp;
+        hold <kbd>Right&nbsp;Mouse</kbd> to film Yeti &nbsp;·&nbsp; <kbd>M</kbd> map &nbsp;·&nbsp;
         <kbd>Q</kbd> drop a stakeout ping &nbsp;·&nbsp; <kbd>Esc</kbd> release cursor<br />
-        Hunters: get 3 videos before Bigfoot survives 3 nights. Bigfoot: <kbd>Right-click</kbd> roar to freeze,
-        <kbd>Left-click</kbd> grab a frozen hunter, <kbd>M</kbd> in a cave to fast-travel.<br />
-        Follow the footprints and broken branches to find Bigfoot. No server? You'll still roam the woods solo.
+        Hunters: get 3 videos before Yeti survives 3 nights. Yeti: <kbd>Right-click</kbd> roar to freeze,
+        <kbd>Left-click</kbd> grab a frozen hunter, <kbd>M</kbd> in a crevasse to fast-travel.<br />
+        Follow the prints and broken crust to find the Yeti. No server? You'll still roam the valley solo.
       </p>
     </div>
 
     <div id="lobby-overlay" class="overlay">
       <h1>WAITING&nbsp;ROOM</h1>
-      <p class="tag">One of you will be chosen as Bigfoot when the host begins. The rest hunt for proof.</p>
+      <p class="tag">One of you will be chosen as the Yeti when the host begins. The rest hunt for proof.</p>
       <div class="panel">
         <div class="lobby-label">Expedition</div>
         <div id="lobby-players"></div>
@@ -305,7 +308,7 @@
         <div class="set-row">
           <div class="set-head"><b>Brightness</b><span id="set-brightness-val">100%</span></div>
           <input type="range" id="set-brightness" />
-          <div class="help" style="opacity:.5">Raise this if the forest is too dark to play.</div>
+          <div class="help" style="opacity:.5">Raise this if the night is too dark to play.</div>
         </div>
         <div class="set-row">
           <div class="set-head"><b>Master volume</b><span id="set-volume-val">85%</span></div>

@@ -22,6 +22,8 @@ import {
   caveEmergePoint,
   generatePaths,
   pathDepth,
+  deepSnowDepth,
+  leavesSnowPrints,
   buildColliders,
   makeWorld,
   stepPlayer,
@@ -111,14 +113,14 @@ const worldSummary = {
   firstLog: world.fallenLogs[0],
 };
 
-// 7) stepPlayer trajectories — a hunter sprinting forward, then a Bigfoot leaping and falling.
+// 7) stepPlayer trajectories — a hunter sprinting forward, then a Yeti leaping and falling.
 const mods: StepModifiers = { speedMul: 1, batteryDrainMul: 1, staminaDrainMul: 1 };
 
 const hg = world.getHeight(0, 0);
 const hunter: PlayerSimState = {
   x: 0, z: 0, feetY: hg, groundY: hg, vy: 0, grounded: true,
   yaw: 0, stamina: 100, exhausted: false, battery: 100, curEye: 1.7,
-  flashlightOn: true, isBigfoot: false, eyeHeight: 1.7,
+  flashlightOn: true, isYeti: false, eyeHeight: 1.7,
 };
 const inputWalk: MoveInput = {
   w: true, s: false, a: false, d: false, yaw: 0.6,
@@ -140,27 +142,61 @@ const bg = world.getHeight(30, 30);
 const bf: PlayerSimState = {
   x: 30, z: 30, feetY: bg, groundY: bg, vy: 0, grounded: true,
   yaw: 1.0, stamina: 100, exhausted: false, battery: 100, curEye: 2.4,
-  flashlightOn: false, isBigfoot: true, eyeHeight: 2.4,
+  flashlightOn: false, isYeti: true, eyeHeight: 2.4,
 };
 const inputLeap: MoveInput = {
   w: true, s: false, a: false, d: false, yaw: 1.0,
   jump: false, leap: true, climb: false, vault: false,
   sprint: false, crouch: false, dt: 1 / 20,
 };
-const bigfootTrajectory: any[] = [];
+const yetiTrajectory: any[] = [];
 for (let i = 0; i < 30; i++) {
   stepPlayer(bf, i === 0 ? inputLeap : { ...inputLeap, leap: false }, world, mods);
   if (i % 6 === 5) {
-    bigfootTrajectory.push({
+    yetiTrajectory.push({
       i, x: bf.x, z: bf.z, feetY: bf.feetY, vy: bf.vy, grounded: bf.grounded, stamina: bf.stamina,
     });
+  }
+}
+
+// 7b) deep snow — the drift-basin slow and the wider print zone.
+// These get their own probes because the hunter trajectory above CANNOT exercise them: it starts at
+// the origin, which is inside the camp clearing, and 40 sprint steps only carry it ~17 m, so it never
+// leaves the exempt zone. Regenerating after the mechanic landed produced a byte-identical file —
+// which looks like "no behaviour changed" and is really "the fixture never tested it".
+const deepSnowProbes = [
+  { label: "deep basin", x: -390, z: -390 },
+  { label: "feathered basin edge", x: -390, z: -360 },
+  { label: "scoured ridge — prints, no slow", x: -390, z: 132 },
+  { label: "trail corridor", x: -258, z: 390 },
+  { label: "tarn ice", x: -177, z: -123 },
+  { label: "camp clearing", x: 4, z: 4 },
+].map((p) => ({
+  ...p,
+  h: world.getHeight(p.x, p.z),
+  depth: deepSnowDepth(world, p.x, p.z),
+  prints: leavesSnowPrints(world, p.x, p.z),
+}));
+
+// A hunter sprinting through a drift basin, so the slow shows up in real trajectory values.
+const dh = world.getHeight(-180, 106);
+const drifted: PlayerSimState = {
+  x: -180, z: 106, feetY: dh, groundY: dh, vy: 0, grounded: true,
+  yaw: 0, stamina: 100, exhausted: false, battery: 100, curEye: 1.7,
+  flashlightOn: false, isYeti: false, eyeHeight: 1.7,
+};
+const driftTrajectory: any[] = [];
+for (let i = 0; i < 40; i++) {
+  stepPlayer(drifted, inputWalk, world, mods);
+  if (i % 10 === 9) {
+    driftTrajectory.push({ i, x: drifted.x, z: drifted.z, feetY: drifted.feetY, stamina: drifted.stamina });
   }
 }
 
 // 8) specialties — identity, getter table, and two DETERMINISTIC deals (seeded rng) the C# port reproduces.
 const specialtyIds = [...SPECIALTY_IDS];
 const characterNames = specialtyIds.map((id) => CHARACTER_NAME[id]);
-const getterProbe = ["endurance", "sound", "tracking", "photo", "analysis", "", "bigfoot"].map((id) => ({
+const getterProbe = ["endurance", "sound", "tracking", "photo", "analysis", "", "yeti"].map((id) => ({
   id,
   reviveMul: reviveMul(id), staminaMax: staminaMax(id), staminaDrainMul: staminaDrainMul(id),
   filmProgressMul: filmProgressMul(id), filmRangeMul: filmRangeMul(id), clueWindowMul: clueWindowMul(id),
@@ -173,7 +209,8 @@ const dealForced = dealSpecialties(dealSids, { c: "photo" }, mulberry32(999));
 
 const golden = {
   seed: SEED, rngStream, noiseSamples, terrainSamples, caves, caveEmerge, nearestProbes,
-  pathSummary, colliderSummary, worldSummary, hunterTrajectory, bigfootTrajectory,
+  pathSummary, colliderSummary, worldSummary, hunterTrajectory, yetiTrajectory,
+  deepSnowProbes, driftTrajectory,
   specialties: { specialtyIds, characterNames, getterProbe, dealSids, dealPlain, dealForced },
 };
 

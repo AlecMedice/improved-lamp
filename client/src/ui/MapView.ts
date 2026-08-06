@@ -10,20 +10,21 @@ export type MapData = {
   ownX: number;
   ownZ: number;
   yaw: number;
-  travelMode: boolean; // Bigfoot is in a cave mouth and may pick a destination
+  travelMode: boolean; // Yeti is in a cave mouth and may pick a destination
   currentCave: number; // index of the cave the player is standing in, or -1
   others: Dot[]; // teammates to show (already filtered by role)
   clues: Dot[]; // clue trail to show (already filtered by role)
+  prints: Dot[]; // searcher snow prints — Yeti only (already filtered by role)
   pings: Dot[]; // stakeout pings to show (already filtered by role)
   marks: Dot[]; // Wren's team-visible trail markers (already filtered by role)
-  bigfoot: boolean; // the local player is Bigfoot (drives the legend)
+  yeti: boolean; // the local player is Yeti (drives the legend)
 };
 
 // Fixed world landmarks drawn as labelled glyphs so the map reads for navigation.
 const TRAILHEAD_Z = -21; // -(baseCampRadius 16 + 5); matches Environment.buildTrailhead
 const LANDMARKS = [
   { x: 220, z: -230, kind: "tower" as const, label: "TOWER" },
-  { x: LAKE.x, z: LAKE.z, kind: "lake" as const, label: "LAKE" },
+  { x: LAKE.x, z: LAKE.z, kind: "lake" as const, label: "TARN" },
   // The RV + trailhead sit inside the camp clearing — draw their glyphs but let the CAMP label
   // speak for the cluster (stacked text here is unreadable at map scale).
   { x: RV.x, z: RV.z, kind: "rv" as const, label: "" },
@@ -33,7 +34,7 @@ const LANDMARKS = [
 
 /**
  * Full-screen top-down map (toggled with M). Shows the local player, base camp,
- * and caves for everyone; teammates + the clue trail for hunters. For Bigfoot in
+ * and caves for everyone; teammates + the clue trail for hunters. For Yeti in
  * a cave mouth, the caves become clickable fast-travel destinations.
  */
 export class MapView {
@@ -109,10 +110,10 @@ export class MapView {
       b.disabled = !selectable;
     });
     this.hint.textContent = d.travelMode
-      ? "Click a cave to emerge there"
+      ? "Click a crevasse to emerge there"
       : d.currentCave >= 0
-        ? "Cave system on cooldown…"
-        : "Bigfoot: stand in a cave mouth to fast-travel";
+        ? "Crevasse route on cooldown…"
+        : "Yeti: stand in a crevasse mouth to fast-travel";
 
     const ctx = this.ctx;
     ctx.clearRect(0, 0, S, S);
@@ -128,6 +129,19 @@ export class MapView {
 
     this.drawGrid(ctx);
     this.drawLandmarks(ctx);
+
+    // Searcher snow prints (Yeti only) — cold dots, no connecting line. Deliberately unlike the
+    // hunters' warm breadcrumb trail: several searchers print at once, so joining them up would
+    // draw lines between people who were never walking together.
+    if (d.prints.length) {
+      ctx.fillStyle = "rgba(130,190,235,0.85)";
+      for (const p0 of d.prints) {
+        const p = toMap(p0.x, p0.z);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
 
     // clue trail (hunters) — a fading breadcrumb line + dots
     if (d.clues.length) {
@@ -188,7 +202,7 @@ export class MapView {
 
     this.drawCompass(ctx);
     // Team/Ping/Tracks legend entries only mean something for hunters.
-    this.legendSpans.forEach((s, i) => { s.style.display = d.bigfoot && i >= 1 && i <= 3 ? "none" : ""; });
+    this.legendSpans.forEach((s, i) => { s.style.display = d.yeti && i >= 1 && i <= 3 ? "none" : ""; });
 
     // Frame border on top of everything.
     ctx.strokeStyle = "rgba(255,255,255,0.22)";

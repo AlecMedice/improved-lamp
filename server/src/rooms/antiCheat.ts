@@ -1,7 +1,7 @@
 /**
  * Pure server-authority helpers — the anti-cheat math the client can't be trusted to do.
- * Extracted from ForestRoom so the validation is unit-testable in isolation (no Colyseus lifecycle,
- * no network): given plain numbers/colliders in, a decision out. ForestRoom composes these with its
+ * Extracted from MountainRoom so the validation is unit-testable in isolation (no Colyseus lifecycle,
+ * no network): given plain numbers/colliders in, a decision out. MountainRoom composes these with its
  * per-session state (token buckets, timestamps). Keep them dependency-free apart from shared/sim.
  */
 import { lineBlocked, type Collider, type Vec2 } from "../../../shared/sim";
@@ -42,7 +42,7 @@ export function staminaCeiling(prev: number, regenPerSec: number, dtSec: number,
 }
 
 /**
- * Server-authoritative filming visibility, independent of the client's `inView`: Bigfoot must be within
+ * Server-authoritative filming visibility, independent of the client's `inView`: Yeti must be within
  * `range`, roughly in front of the hunter (aim cone from the replicated yaw, `dot >= aimCos`), and not
  * hidden behind a collider (line-of-sight). Mirrors the dazzle beam check — the pattern the room already
  * trusts. This is the hunter *win condition*, so it must not be forgeable.

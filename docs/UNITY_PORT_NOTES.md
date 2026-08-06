@@ -24,6 +24,15 @@ which is which, because it changes the size of the job:
   host-authoritative. Adopting it means moving `HPPlayer.StepSim` into a `[Replicate]` method and
   making `PlayerSimState` a reconcile struct. **When it lands, FishNet's tick loop owns the step
   cadence and the per-frame stepping in §7 reverts.**
+  > **Deep snow rides on this, and so does the web build.** The drift slow (`Movement.DeepSnowDepth`)
+  > is applied inside `StepPlayer`, i.e. by whoever simulates the player — which today is the owning
+  > client. A hacked client can ignore it. This is *not* a Unity-only caveat, which the migration
+  > plan originally assumed: `MountainRoom.applyMove` on the web build validates a move (bounds,
+  > speed-gate token bucket, collision pushout, feet clamp) but never re-runs `StepPlayer` either, so
+  > the web build is in exactly the same position. In both cases the speed gate still caps the
+  > result, so the exploit is "not slowed", never "faster than legitimate" — the same trust level
+  > `lakeHunterFactor` has always had. Adopting prediction closes it for Unity; the web build would
+  > need `applyMove` to re-simulate rather than validate.
 - **Lag compensation** for the filming/dazzle cone checks — FishNet ships `ColliderRollback`; the
   work is enabling it and rolling back at the right tick.
 
@@ -31,8 +40,8 @@ which is which, because it changes the size of the job:
 - **Session/lobby semantics** — ready-up rules, reconnection grace, rejoining with your prior role.
   *Partly done (2026-07-20):* a **disconnect handler** exists — `HPPlayer.OnStopServer` →
   `GameManager.ServerForgetPlayer`, which scrubs the leaver from every per-player dictionary (as key
-  AND as value: the teammate they were reviving, the Bigfoot dragging them) and **aborts the match to
-  the lobby** with an on-screen reason if it becomes unplayable (Bigfoot gone, or no searchers left).
+  AND as value: the teammate they were reviving, the Yeti dragging them) and **aborts the match to
+  the lobby** with an on-screen reason if it becomes unplayable (Yeti gone, or no searchers left).
   Still **not** done: reconnection grace and rejoining with your prior role/state — a leaver is gone
   for good, mid-match.
 
@@ -42,7 +51,7 @@ friend invites — revisit when shipping is actually on the table, not before.
 
 **Known bugs, unverified against the Unity build:**
 - ~~Fallen logs **slow** the player; the design calls for them to **block**.~~ **Fixed 2026‑07‑20.**
-  `Collision.ResolveLogs` pushes a *grounded hunter* out of the log capsule in both sims; Bigfoot
+  `Collision.ResolveLogs` pushes a *grounded hunter* out of the log capsule in both sims; Yeti
   strides over untouched and a vaulter is airborne, so the trunk passes beneath. The vault trigger
   moved to a **padded reach** (`Player.VaultReach`) — with the push-out in place a hunter can never
   stand inside a log, so a prompt tested at the bare radius would be one that could never appear.
@@ -115,7 +124,7 @@ Server-side aim cones (filming, dazzle) only ever dot with **forward**, so they 
 
 ## 3. The C# sim is parity-locked — fix around it, never through it
 
-`csharp/HollowPines.Sim` is verified against the TypeScript `shared/sim`. Do not "fix" gameplay by
+`csharp/Metoh.Sim` is verified against the TypeScript `shared/sim`. Do not "fix" gameplay by
 editing it. Ability tunables live in `GameManager` constants (precedent: Wren's mark, the flash, the
 battery gift, all the casting numbers). Presentation problems get renderer-side fixes.
 
@@ -125,7 +134,9 @@ rendered *underneath* it and the map looked flooded. Carving a basin into the te
 option: players stand on the sim's analytic height, so a visual-only basin leaves them walking on
 invisible ground above the water. The fix was a **terrain-conforming water sheet** — same coverage as
 `Collision.LakeDepth`, never above the land, and consistent with the rule that you wade rather than
-swim.
+swim. *(Since the Metoh re-theme the sheet is a frozen tarn — slick ice and breaking crust, with
+pressure ridges over it — but the geometry and the `LakeDepth` slow underneath it are unchanged, so
+this worked example still holds exactly.)*
 
 Related: trees stand *in* the lake because `WorldData.BuildColliders` skips only the camp clearing
 and cave mouths. `BuildForest` mirrors that RNG stream exactly, so skipping them visually would
@@ -173,7 +184,7 @@ Five separate "bugs" this session were working mechanics with missing or mislead
   *during* cooldown, so a ready ability showed nothing at all. Every ability now states itself in
   both states.
 - **"Cave system is lost"** — handler, map buttons and cooldown were all intact. The port had simply
-  dropped the on-screen cue telling Bigfoot a mouth was usable, making the whole network
+  dropped the on-screen cue telling Yeti a mouth was usable, making the whole network
   undiscoverable.
 - **START NEW GAME did nothing** — the click handler swallowed failures. It now checks
   `StartConnection()`'s bool, try/catches, `Debug.LogException`s, and shows the reason on screen.
@@ -216,8 +227,8 @@ The web build caps its device pixel ratio (`QUALITY.pixelRatioCap`), so Three.js
 native resolution. **Unity does.** On integrated graphics at 2560×1600 that alone is the difference
 between choppy and smooth — fill rate scales with the *square* of resolution.
 
-`HPQuality` is the Unity counterpart: URP `renderScale` (default 0.7, live slider in the pause menu),
-MSAA off, shadow distance 50 → 35 m. If more is needed, in order: **bloom** in `PostFX` (full-screen,
+`HPQuality` is the Unity counterpart: URP `renderScale` (**default 1.0 since the legibility pass —
+see §5c**; live slider in the pause menu), MSAA off, shadow distance 55 → 30 m by tier. If more is needed, in order: **bloom** in `PostFX` (full-screen,
 multi-pass — the most expensive single effect), then the realtime point lights in `WorldBuilder`,
 then `UndergrowthCount`, then `World.TreeCount`. **Do not start with the IMGUI HUD** — it is not the
 bottleneck.
@@ -236,10 +247,10 @@ the last two states parks the camera a full step (50 ms) in the past. `StepPlaye
 `dt`, so the owner steps **once per frame with the real frame delta** (hitch-clamped). This reverts
 when FishNet prediction is adopted (see §0), which owns the cadence itself.
 
-## 6b. Single-player / the CPU Bigfoot bot
+## 6b. Single-player / the CPU Yeti bot
 
 A legitimate **offline mode** (title → SINGLE PLAYER → PLAY AS SEARCHER): a lone human searcher vs a
-CPU Bigfoot, no internet. It's also the fastest solo test harness. Architecture, because it's a
+CPU Yeti, no internet. It's also the fastest solo test harness. Architecture, because it's a
 pattern worth reusing for future bots:
 
 **A bot is just an HPPlayer spawned with no owner.** `Spawn(nob, null)` → `base.IsOwner` is false on
@@ -251,18 +262,40 @@ client-authoritative `NetworkTransform` replicates the host's transform writes t
 (verified in FishNet source: `controlledByClient = clientAuth && Owner.IsActive` → false with no
 owner → the server moves and syncs it).
 
-**The brain (`BigfootBot`) is intent only** — a host-only `MonoBehaviour` added at runtime by
+**The brain (`YetiBot`) is intent only** — a host-only `MonoBehaviour` added at runtime by
 `ServerBecomeBot` (so the shared player prefab is untouched and it never needs stamping). It decides a
 direction + a couple of booleans; that's all. Its perception is the actual stealth game, not
 distance-clairvoyance: **sight** is line-of-sight-gated and far longer against a lit flashlight;
 **hearing** scales with the target's movement speed and is **silent for a crouching or still**
 searcher; then it **remembers** a last-known position and searches it before giving up. Tuning
-constants are all at the top of `BigfootBot.cs`.
+constants are all at the top of `YetiBot.cs`.
 
-**Roles are the normal deal.** The bot carries `WantsBigfoot = true` and the lone human `= false`, so
+**How it finds you is snow prints, not clairvoyance.** The first version closed the gap by walking at
+the nearest searcher's *true* position — omniscience with jitter on top. It now follows the
+`TypeSnowPrint` clues searchers leave off-trail, which only the Yeti can see, so its knowledge is the
+knowledge the fiction grants it. That makes the deep-snow mechanic cut both ways: stay on the packed
+trails or in camp and the bot has genuinely nothing to follow. States resolve in priority order —
+**DRAG** (haul a grabbed searcher away from the duffel before dropping them) → **DAZZLED** (break off
+and leave the beam, since roar/grab are locked anyway) → **HUNT** → **SEARCH** → **TRACK** (the
+freshest print, taking a crevasse if the trail is cold and far) → **PROWL** → **WANDER**. Target
+choice prefers whoever is carrying proof, then whoever is bogged in a drift. The roar is held unless
+it catches two or more, or the lone target is close enough that the grab should land.
+
+The omniscient prowl survives as the **last-resort floor** behind the F3 `[P]` toggle, and it is worth
+play-testing with it OFF: pure sight/hearing/tracks is arguably the better game, but with no prowl at
+all a team hiding motionless in camp is never found and the night just runs out.
+
+Two plumbing notes that are easy to trip over. `ClueMarker` registers in `All` on the **network**
+callbacks, not the client ones, because the bot reads that registry server-side — on a listen host the
+client callback runs too, which makes the difference invisible until it isn't. And crevasse
+fast-travel needed a bot path: `TargetTeleport` is a TargetRpc to an owning client, so
+`TryCaveTravel` now branches to `ServerBotTeleport` for a bot. Same guards, same authority, only the
+delivery differs.
+
+**Roles are the normal deal.** The bot carries `WantsYeti = true` and the lone human `= false`, so
 `DoStartMatch` hands the monster to the bot with no special-casing. A bot has no `Owner`, so it can't
 receive the `TargetTeleport` RPC — it's placed server-side by `ServerBotPlace`, which also spins up
-the brain once the role (and the sim's `IsBigfoot`) is settled. Solo auto-starts: `SpawnBigfootBot`
+the brain once the role (and the sim's `IsYeti`) is settled. Solo auto-starts: `SpawnYetiBot`
 runs at host load, then `TrySoloStart` (polled from `OnTick`, before the phase guard) waits for both
 players to appear in `HPPlayer.All` and calls `DoStartMatch` — no lobby.
 
@@ -278,16 +311,205 @@ never to walking through solid geometry.
 >   even in co-op (clients bake a mesh only the host uses — a perf item to gate later).
 > - **Does the bot actually move?** The owner-less-NetworkTransform-server-drive path is reasoned from
 >   source, not observed.
-> - **All AI tuning is first-guess** — sense ranges, hearing, sprint/grab distances, wander. Expect to
->   sit in `BigfootBot.cs` and tune once it's playable.
-> - **Play-as-Bigfoot is stubbed** (greyed on the menu) — it needs CPU *searchers*, the larger job
->   (routing + filming a five-strong team).
+> - **All AI tuning is first-guess** — sense ranges, hearing, sprint/grab distances, wander, and the
+>   whole tracking layer (print age window, freshness-vs-distance weighting, drag time, dazzle
+>   break-off). Expect to sit in `YetiBot.cs` and tune once it's playable.
+> - **Does print-tracking read as tracking?** The bot walking your trail is the intended feel, but
+>   whether it looks like a predator following spoor or like a magnet is a play-test question, and
+>   the freshness/distance weights are where that gets decided.
+> - **Play-as-Yeti is now live but early** — see §6d. The CPU searcher team exists as a working
+>   shell; whether it is any fun to hunt is completely unmeasured.
+
+## 5b. The realism pass — why it is materials, not models
+
+The brief was "more realistic 3D game instead of just polygons". The instinct is to blame the
+geometry, but the geometry was never the problem: a low-poly cone lit properly reads fine, and a
+high-poly one lit flat still reads as plastic. The actual cause was that **every surface in the game
+was `URP/Lit` with a flat base colour and smoothness 0.05**. A flat-shaded face takes one shade of
+light across its whole area and dies there — no microstructure, no specular break-up, nothing for the
+moon or a torch to catch. That is what "polygons" looks like.
+
+So the pass is a **material and lighting** pass:
+
+- **Procedural PBR maps** (`ProcTex.cs`). There is not one texture file in the repo and adding one
+  would break "clone it and it runs", so the maps are synthesized at load from tileable value noise —
+  snow grain, a finer snow detail layer, rock fracture, bark striation, ice pressure lines, canvas
+  weave, matted fur. ~256 KB and a few ms each, once. The noise is genuinely periodic (the lattice
+  hash wraps), because a non-tiling hash puts a visible seam every repeat across 800 m of terrain.
+- **UVs and tangents on every generated mesh.** This was the blocker, and it is worth stating plainly:
+  a normal map cannot bind without them, so no amount of material tuning would have done anything
+  until `MeshUtil` and the hand-built terrain/tarn/trail meshes carried both. `RecalculateTangents`
+  must follow the UVs, not precede them.
+- **Per-class response.** Snow is moderately smooth (its glitter is a microfacet effect, not a
+  colour); ice is the one genuinely glossy surface; rock, timber and fur are light sinks.
+- **Trilight ambient with a bright ground term.** The single most important lighting change. Flat
+  ambient lights every surface identically from every direction, which is precisely what flattens
+  geometry into cardboard. Standing on snowpack, a startling share of the light on your face has
+  bounced *up* — so the ground term is tinted toward the snow albedo and deliberately strong, and the
+  undersides of branches and figures stop going dead.
+- **Soft shadows** on the tier that can afford them. Hard shadows were defensible over a dark fogged
+  forest floor; over open snow they are one of the loudest "this is a game" tells.
+- **Split toning** — cool shadows, warm highlights. Pure grading, and the cheapest realism win here:
+  real snow at night is lit by two sources of very different colour, and the eye reads that
+  opposition as depth. A single ambient tint cannot produce it because the split happens across
+  luminance.
+- **Per-chunk colour jitter** on the forest. After flat shading, uniformity is the loudest tell:
+  2,400 trunks in exactly one brown reads as instancing. Free, because each chunk is already its own
+  draw and the SRP batcher batches by shader, not by material. Hashed from the cell index, never from
+  an RNG stream — it must not touch the tree/collider lockstep (§3c).
+
+**Cost is gated on the render-scale slider** (`HPQuality.HighDetail`), which now doubles as a detail
+tier: anyone who has already pulled it down to buy frames is not silently charged for soft shadows
+and a 55 m shadow distance too.
+
+> **~~The one big win that is NOT in here, and cannot be.~~ Done 2026-08-01 — see §5c.** SSAO is a
+> URP *Renderer Feature* living on an untracked `.asset`, so it was written up here as a manual owner
+> step. It was never carried out, which is the whole problem with that format. It is now applied by
+> **Metoh → Configure Render Pipeline** (`Editor/RenderPipelineSetup.cs`) instead.
+
+Two things fixed in passing, both pre-existing: `SetTimeOfDay` re-asserted `LightShadows.Hard` every
+frame, so shadow quality could never actually be configured from anywhere; and the world leaked its
+entire material set on every reseed (`new Material` is a native object Unity does not collect), which
+was survivable at a couple of dozen and is not at ~200 after per-chunk tinting.
+
+**Nothing in this pass has been seen.** Every value is reasoned from how the materials behave, not
+observed — expect to sit in `ProcTex` (normal strengths, tiling) and the smoothness numbers and tune
+by eye. The tiling scales in particular are the kind of thing that is obviously wrong the moment you
+look and impossible to guess.
+
+## 5c. The legibility pass — and why none of §5b had ever actually rendered
+
+Owner report, 2026-08-01, after the realism pass shipped: *"everything looks way too much the same…
+I want to be able to see things"* and *"it looks like a PS1 game"*. Both were true, and the second
+one had almost nothing to do with the art.
+
+**Two settings were cancelling the entire realism pass.**
+
+| What | Was | Why it mattered |
+|---|---|---|
+| `HPSettings.RenderScale` | `0.7` | The scene rendered at 70% of the panel and was upscaled. Soft edges, crawling stair-steps, and the fine normal-map grain §5b is built on dissolving before it reached a pixel. |
+| `HPQuality.HighDetail` | `renderScale > 0.7f` | The shipping default was *exactly* `0.7`, so this was **false on every clean install**. Soft shadows and the 55 m shadow distance were never on. Nobody had ever seen the expensive tier. |
+
+That is the lesson worth keeping: **a boundary condition set to the same value as a default is a
+switch that is always off**, and it fails silently as an art problem rather than as a bug. The
+threshold is now `>= 0.8`, deliberately *between* the two scales anyone runs. `RenderScale` defaults
+to `1.0`, and because it is a PlayerPref the code default alone would have changed nothing for an
+existing player — `HPSettings.SettingsVersion` migrates a saved `0.7` up once (and only `0.7`, so a
+considered `0.5` is left alone).
+
+**"Everything looks the same" was a value-range problem, not a hue problem.** Ground, trail and
+drift all sat in the top fifth of the value scale, and the terrain was a single flat colour over all
+800 m — a normal map varies a surface's *lighting*, but one albedo still averages back to one grey
+at any distance. Fixes, in descending order of how much they changed:
+
+- **`Shaders/Snowpack.shader`** — the ground is now snow blended against wind-stripped rock by
+  **slope**, which puts genuine dark values on ridges and gully walls and is what makes terrain shape
+  readable at range. Measure slope as the **gradient** (`length(n.xz)/n.y`), *not* `1 - n.y`: this
+  terrain is gentle enough that `1 - n.y` never leaves the bottom 6% of its range and no threshold in
+  it is tunable.
+- **The deep-snow basin is now visible.** `Movement.DeepSnowDepth` slows searchers over roughly a
+  third of the map and that zone was completely unmarked. The shader reads `Player.DriftHeight` /
+  `DriftDepth` directly — one source of truth, no second copy — so the tint can't disagree with the
+  slow it advertises. A routing choice you cannot see is an ambush, not a choice.
+- **Value range widened**: bare rock `0x4a4f57` → trail `0x94a0ab` → basin `0xa8bccf` → snowpack
+  `0xc9d6e2`. Hue separates the two middle ones (basin cold, trail warm) because they are close in
+  value and telling them apart is a live gameplay question.
+- Note the old `TrailCol` comment claimed it "must stay clearly lighter than `GroundCol`" while the
+  shipped value was **darker**. The comment was wrong; what the trail needs is contrast in *either*
+  direction, and darker is also what trodden snow does.
+
+**Landmarks.** A ridgeline now renders in `NightSky.shader`, seeded from the world seed. It has to
+live in the skybox for the same reason the moon does — fog kills anything past ~150 m, and real
+geometry close enough to see would be inside the playable area. It gives an absolute compass every
+player in a session shares. In-world: each crevasse gets an identity colour (mast + throat glow) so
+the fast-travel network is *nameable* instead of five interchangeable grey lumps, trail masts carry
+one colour per trail, and camp has the tallest mast on the map.
+
+> Marker masts are **render-only**, which is a deliberate exception to the undergrowth rule in
+> `BuildUndergrowth` ("anything tall enough to hide a player belongs in the sim"). A 7 cm pole hides
+> nobody. Do not use this as precedent for anything with width.
+
+**Light level raised** — ambient ~40%, moon ~30% (ratios between nights preserved), `AmbientBounce`
+to 1.0, and a +0.35 stop base exposure. This is a real difficulty change: moonlight is what lets
+searchers move without burning battery. It was still right, because at the old levels every contrast
+cue above was invisible regardless of how well separated it was in albedo. **If night 3 now feels
+too survivable, take it out of `MoonNights[2].Light`, not out of ambient** — losing the moon is the
+escalation the design already has; flat ambient is what makes geometry read as cardboard.
+
+**Geometry** (the part §5b was wrong about). §5b argued the problem was materials and not models,
+and that was right about *surfaces* and wrong about *silhouettes*. Three smooth cones stacked on a
+stick is a shape no tree has, and at night — fogged, backlit, at 60 m — the outline is very nearly
+all the information reaching the player. `MeshUtil.Conifer` builds one tiered, jagged, drooping crown
+instead; `MeshUtil.Rock` replaces every scaled-sphere boulder. Both take a `variant` index hashed
+from the tree/cave index — **never from an RNG stream**, because the forest loop is in lockstep with
+`WorldData.BuildColliders` (§3c). The low detail tier is *cheaper* than the three cones it replaced
+(77 tris vs 96); the high tier spends 153.
+
+> **Unverified (editor), all of it.** Same standing caveat as §5b, plus two specific risks: the
+> `Metoh/Snowpack` shader has never been compiled by Unity (a compile failure falls back to
+> `URP/Lit`, which will look flat and *not* log a warning — the `Shader.Find` guard only catches a
+> missing file), and tree cost rose ~46% on the high tier at the same time render scale went to
+> native. If frames are short, the F3 levers in §7 order still apply.
+
+## 6d. The CPU searchers (`SearcherBot`) — a shell, deliberately
+
+Title → SINGLE PLAYER → **PLAY AS YETI** spawns four CPU searchers and hands the human the monster.
+Construction is identical to the Yeti bot — server-owned `HPPlayer`s with no connection, flagged
+`WantsYeti = false` so the normal `DoStartMatch` deal gives them searcher roles and `DealSpecialties`
+gives each a distinct character with real specialty numbers. No special-casing: to the match they are
+just searchers who never send input. `ServerBecomeBot` picks the brain by role and is re-entrant, so a
+role swap between matches swaps brains instead of stacking them.
+
+**Every searcher action needed a bot entry point**, for the same reason the Yeti's did: a human's
+film / revive / collect / deposit / recover / flash / ping / mark all travel through `[ServerRpc]`,
+which needs an owning connection. `ServerBot*` pass-throughs land in the identical `GameManager`
+authority, so a CPU searcher is bound by the same range, cone, LOS, channel duration and cooldown
+rules a person is.
+
+**The ladder** (highest priority first, one rung owns each frame, and the F3 overlay prints which):
+FLEE → REVIVE → BANK → FILM → COLLECT → INVESTIGATE → EXPLORE.
+
+**Why a searcher is harder to write than the Yeti.** The Yeti's brain is a pursuit problem: one
+target, close the distance. A searcher's is a resource problem with a fear layer, and the pieces pull
+against each other — the torch is its only real sensor *and* a flare the Yeti sees from 80 m; carried
+proof is a debt that grows the longer it is held; filming means pointing yourself at the thing hunting
+you and standing still; and nobody wins alone, but clumping lets one roar take the whole team. A bot
+that only optimises evidence walks into the Yeti's arms, and one that only avoids it never wins.
+
+**What is genuinely shallow, in priority order for whoever fills it in:**
+- **EXPLORE is random roam.** The single biggest gap. A real search would divide the map between
+  teammates, sweep outward from camp, and prefer ground nobody has covered recently. Random roam is
+  why a bot team reads as five people wandering rather than as a search party.
+- **Almost no team coordination.** They do not spread out, or stage a rescue. Wren's trail marks and
+  the stakeout ping exist and go unused (`ServerBotMark` / `ServerBotPing` are wired and never
+  called). The one channel that does exist is the **grab call-out** (2026-08-01): a successful
+  `TryGrab` fires `RpcSearcherTaken` to human searchers and `SearcherBot.OnTeammateTaken` to CPU
+  ones, and REVIVE is now gated on *knowing* — a body within `DownSpotRange` (walked up on) or one a
+  live call-out named. Before that, REVIVE scanned every player with no range limit, so a single grab
+  summoned the entire CPU team from across the valley and handed the Yeti all of them around one
+  body. The call-out grants knowledge, **not orders**: nothing tells a bot to go, and a fleeing or
+  proof-carrying bot keeps doing that instead.
+  > Still unmeasured: with four bots all told at once, whether *several* now converge anyway. That
+  > is a tuning question (`TakenMemory`, and eventually whose job it is) rather than the structural
+  > bug it replaced, and it is visible in the play-test log as REVIVE transitions.
+- **FLEE always lights the torch and runs.** The actual stealth play — kill the light and break line
+  of sight when it has *not yet* been seen — needs a "has it noticed me" estimate the shell lacks.
+- **REVIVE ignores the incap timer and the Yeti standing over the body**, so it will happily walk into
+  a guarded down and donate a second victim.
+- **Specialties are dealt but never played.** Eli's flash, Sam's battery gift and Wren's marking are
+  all reachable (`ServerBotFlash`, `ServerBotSetReviveTarget`, …) and none are used, so every bot
+  currently plays the same generic searcher regardless of who it was dealt.
+
+> Bug this surfaced, worth remembering: `ServerBotDrive` deliberately skipped writing `Battery` on the
+> grounds that "the bot never lights a torch" — true while the only bot was the Yeti. CPU searchers do,
+> and a stale battery makes them invisible to Sam's spare-battery scan, which skips anyone at ≥ 99%.
+> When a second kind of bot appears, re-read the assumptions the first one baked in.
 
 ## 6c. The lookout ladder + binoculars (no parity change)
 
 The tower collider is **climbable** (`WorldData.Lookout`, `ClimbH = 9.5`), so the shared sim already
 holds any player standing on the platform at `base + 9.5` and stops pushing them out of the footprint
-up there — for every role. The only thing a searcher lacked was a way UP (Bigfoot scales it; searchers
+up there — for every role. The only thing a searcher lacked was a way UP (Yeti scales it; searchers
 can't). So the ladder is **entirely client-side** and touches nothing parity-locked:
 
 - `WorldBuilder.BuildTower` aligns the platform MESH top to `ClimbH` (was 9.8, a ~0.5 m clip), builds
@@ -311,13 +533,13 @@ replicated step like everything else — note it here so it isn't missed.
 
 ## 7a. Testing the whole game alone, on one PC
 
-**Solo works by design.** `ServerStartMatch` picks Bigfoot from whoever opted in; with nobody opted
-in it needs 2+ players, and with **one** player it assigns **no Bigfoot at all**. So:
+**Solo works by design.** `ServerStartMatch` picks Yeti from whoever opted in; with nobody opted
+in it needs 2+ players, and with **one** player it assigns **no Yeti at all**. So:
 
 | Setup | You are | Covers |
 |---|---|---|
 | 1 instance, lobby toggle **off** | a searcher, alone | world, trails, cave discovery, evidence + duffel, logs, sky/moon, HUD, perf |
-| 1 instance, **"wants Bigfoot"** on | Bigfoot, alone | roar/leap/climb/cave travel, hair shedding, senses overlay |
+| 1 instance, **"wants Yeti"** on | Yeti, alone | roar/leap/climb/cave travel, hair shedding, senses overlay |
 | 2 instances | one of each | the interactions only: grab → spill, dazzle, filming, revive |
 
 Most of what needs verifying is reachable **solo** — only grab/dazzle/film/revive need two.
@@ -330,7 +552,7 @@ it starts faster and you can shrink it, which matters on integrated graphics alr
 trees. Run it windowed and small:
 
 ```
-HollowPines.exe -screen-width 1280 -screen-height 720 -screen-fullscreen 0
+Metoh.exe -screen-width 1280 -screen-height 720 -screen-fullscreen 0
 ```
 
 Host in the editor, JOIN from the build at `127.0.0.1`. Only the focused window takes input, so drive
@@ -350,6 +572,33 @@ Two dev affordances exist specifically so a play-test produces *data* instead of
   Number keys flip the **cost levers live, in the §7 order**: `1` bloom, `2` prop lights,
   `3` undergrowth, `4` shadows. The point is that "it felt slow" doesn't distinguish four causes with
   four different fixes, and toggling beats rebuilding.
+- **CPU Yeti levers, same overlay.** `O` pauses the bot where it stands (it keeps its state, stops
+  moving, and cannot grab), `K` toggles its speed between `1.0x` and `0.5x`, and `P` cycles what it
+  is allowed to know:
+
+  | Mode | Fallback when nothing is perceived | Reads snow prints? |
+  |---|---|---|
+  | `HUNT` (default) | walks at a searcher's **true** position | yes |
+  | `TRACK` | none — wanders | yes |
+  | `RANDOM` | none — wanders | **no** |
+
+  These exist because the two most common play-test reports about the bot are unfalsifiable at full
+  speed. "It just beelines at me" is the `HUNT` fallback and is answered by pressing `P` — if it
+  still finds you on `TRACK`, it tracked you. "It got stuck" needs the thing to hold still while you
+  walk up to it, which is `O`. `K` separates *tracked* from merely *outran*.
+
+  `YetiBot.AiMode` replaced the old `AggressiveProwl` bool (kept as a read-only alias). All three are
+  **static**, so they apply to every bot and survive a reseed. `GameManager.ResetDevLevers` puts them
+  back on the way to the **lobby** — both routes there, `ServerReturnToLobby` *and* `AbortToLobby` —
+  rather than at match start, so a mode you set in the lobby survives into the match you set it for.
+- **`J` — per-bot movement trace** (`[bot]` lines to the Console). **Off by default**: it fires per
+  bot, and an editor `Debug.Log` captures a stack trace, so with five bots it was a steady tax on
+  every frame. Turn it on only while chasing a stall.
+
+  > The `[botAI]` guard trace is gone. It logged once a second forever ("remove once the bot is
+  > confirmed hunting" — it is), and each bail reason now shows up in `DbgState` as `off: <reason>`,
+  > which the overlay and the play-test log both already read. The `[look]` Console mirror is gone
+  > for the same reason: it fired twice a second precisely while the overlay was measuring frame cost.
 - **Seed pin** (title screen, under the dev persona strip). The forest is rolled per hosting session,
   so **a bug found in one map is otherwise unreproducible** — the map is gone when you restart. The
   overlay prints the live seed; paste it into the field to get that exact forest back. Blank/`0` =
@@ -358,14 +607,45 @@ Two dev affordances exist specifically so a play-test produces *data* instead of
 Note `4` writes `QualitySettings.shadowDistance`, the same knob `HPQuality` owns — re-applying
 settings from the pause menu will overwrite it. Fine for a dev toggle, just don't read it as sticky.
 
+## 7c. The play-test log (`HPLog`)
+
+`<project>/Logs/metoh-playtest.log`, with the run before it kept as `metoh-playtest.prev.log`. The
+path is printed to the Console at startup and the file name is shown in the F3 footer.
+
+It exists so play-test feedback can be *checked* rather than only believed. A report arrives as a
+sentence about a symptom several seconds after its cause ("the Yeti got stuck when it let go"), and
+answering it needs the timeline. Two line kinds share that timeline:
+
+- `EVENT` — gameplay moments: `MATCH` (with the **seed**), `NIGHT`, `ROAR`, `GRAB`, `DROP`,
+  `REVIVE`, `RECOVER`, `AI` (bot state *transitions*), `DEV` (an F3 lever moved).
+- `UNITY` — everything that reached the Console, so an exception sits next to the gameplay that
+  caused it. Errors and exceptions carry their stack; ordinary logs don't.
+
+Three things about it are deliberate and worth not undoing:
+
+- **It is not `Editor.log`.** That file is a build/import log with gameplay scattered through it, and
+  the running editor holds it open. `HPLog` opens its own file with `FileShare.ReadWrite`, so it can
+  be read live, from outside the editor, while a play-test is still running.
+- **Leaving Play mode is not a quit.** `Application.quitting` never fires in the editor, which is
+  where every play-test happens, so `Shutdown` is also hooked to `ExitingPlayMode` — otherwise the
+  last second of a session, usually the interesting one, dies in the buffer.
+- **`[look]` and `[bot]` are filtered out.** Both are throttled per-second heartbeats; unfiltered
+  they are most of the file.
+
+Buffered, flushed once a second and forced at night rollover and match end.
+
 ## 8. Workflow
 
-- **Edit in the repo** (`unity/Assets/HollowPines/`), then `robocopy /E` into
-  `C:\Users\amedi\HollowPines\Assets\HollowPines`. Robocopy exit codes < 8 are success.
+- **Edit in the repo** (`unity/Assets/Metoh/`), then `robocopy /E` into
+  `C:\Users\amedi\Metoh_port\Assets\Metoh`. Robocopy exit codes < 8 are success.
   **There are now THREE trees to sync, not one** — `Scripts/`, `Shaders/`, and `Sim/` (which comes
-  from `csharp/HollowPines.Sim`, not from `unity/`). A sync script that only copies `Scripts/` will
+  from `csharp/Metoh.Sim`, not from `unity/`). A sync script that only copies `Scripts/` will
   silently leave the shader or a new sim file behind, and the failure shows up as a magenta sky or a
   missing type rather than as a copy error.
+  > **The live project path has moved before — check before you copy.** It is
+  > `C:\Users\amedi\Metoh_port`, created fresh for the Metoh rebrand; `C:\Users\amedi\HollowPines`
+  > no longer exists. The repo carries no `.meta` or `Library/`, so the live project is always a
+  > separate tree, never a checkout.
 - **Smoke-compile outside Unity** before handing over — a scratch csproj (netstandard2.1, LangVersion
   9, `ENABLE_INPUT_SYSTEM`, plus `UNITY_EDITOR` and `UnityEditor*.dll` for a second editor pass)
   against `Library/ScriptAssemblies/*.dll` and the Unity Managed DLLs. This has caught real errors
@@ -373,9 +653,14 @@ settings from the pause menu will overwrite it. Fine for a dev toggle, just don'
 - **The editor log lives at `<project>/Logs/Editor.log`**, *not* the one in `AppData` (which goes
   stale with multiple editor instances). When something fails at runtime, read that file — the first
   error is usually several steps upstream of the reported one.
-- **Re-run "Hollow Pines → Set Up Game Scene (Forest)"** whenever the scene gains a component or a
+- **Re-run "Metoh → Set Up Game Scene (Mountain)"** whenever the scene gains a component or a
   spawnable prefab. The scene has no hand-made content; rebuilding it costs nothing.
-- `HollowPines.Sim` collides with UnityEngine on `Collider`/`Collision` — qualify them.
+- **Run "Metoh → Configure Render Pipeline" once per clone** (and after any URP upgrade). It adds the
+  SSAO renderer feature and sets HDR colour grading, a 32³ LUT and 4 shadow cascades. These live on
+  `.asset` files the repo does not track, so a fresh live project does not have them — and every one
+  of them is the kind of setting whose absence looks like an art problem rather than a missing step.
+  Idempotent, and it logs what it changed.
+- `Metoh.Sim` collides with UnityEngine on `Collider`/`Collision` — qualify them.
 - FishNet 4.7.2 does not compile on Unity 6000.5 unpatched; see [`../unity/fishnet-patches/`](../unity/fishnet-patches/README.md).
 
 ## 9. Copy should read as capability, not as a stat block

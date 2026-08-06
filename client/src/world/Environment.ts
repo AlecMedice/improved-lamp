@@ -137,7 +137,7 @@ export class Environment {
 
   /**
    * Capsule overlap against all fallen logs, 0 = clear, 1 = fully inside.
-   * Used to apply the hunter slow-down penalty (Bigfoot ignores logs).
+   * Used to apply the hunter slow-down penalty (Yeti ignores logs).
    */
   logOverlap(x: number, z: number, playerRadius: number): number {
     return simLogOverlap(this.fallenLogs, x, z, playerRadius);
@@ -412,7 +412,7 @@ export class Environment {
     // RV body colliders are produced by the shared buildColliders().
   }
 
-  /** Rocky cave entrances — Bigfoot's lairs and the nodes of its fast-travel network. */
+  /** Rocky cave entrances — Yeti's lairs and the nodes of its fast-travel network. */
   private buildCaves() {
     const rock = new THREE.MeshStandardMaterial({ color: 0x6a6a73, roughness: 1 });
 

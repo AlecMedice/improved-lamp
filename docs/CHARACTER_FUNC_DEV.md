@@ -8,7 +8,7 @@ abilities as RPCs with cooldown maps).
 **Design principle.** All five specialties are first-class mechanics, not cosmetic perks — and **all
 five ship**, not just the cheap ones. Each should be *always relevant*: it changes how that character
 plays for the whole match and touches a real system (filming, the clue/map trail, revive/incap,
-battery/stamina, Bigfoot deterrence). A player should feel their specialty every night. The balance
+battery/stamina, Yeti deterrence). A player should feel their specialty every night. The balance
 target is *distinct, defining playstyles that still win on cohesion* — impactful, not a solo carry.
 
 Status legend: ✅ shipped · 🟡 partial substrate exists · ❌ not built.
@@ -17,8 +17,8 @@ Status legend: ✅ shipped · 🟡 partial substrate exists · ❌ not built.
 
 ## 1. Where things stand today
 
-There is **no character/specialty system**. A player's `role` is only `"searcher"` or `"bigfoot"`
-(`server/src/rooms/ForestRoom.ts`, `schema/GameState.ts`). Every searcher is mechanically identical;
+There is **no character/specialty system**. A player's `role` is only `"searcher"` or `"yeti"`
+(`server/src/rooms/MountainRoom.ts`, `schema/GameState.ts`). Every searcher is mechanically identical;
 the five names/portraits/specialties exist only in the story doc.
 
 What *is* built is the **shared core kit** every searcher already has — the substrate several specialties
@@ -26,11 +26,11 @@ build on:
 
 | Core ability | Where | Notes |
 |---|---|---|
-| Film Bigfoot (win condition) | `ForestRoom.updateFilming` / `canFilm`; `FILM_RANGE`, `FILM_AIM_COS`; client `config.FILM` | Server-authoritative (range + aim cone + LOS). |
-| Revive a downed teammate | `ForestRoom.updateRevives`; `REVIVE_RADIUS/SECONDS/DECAY` | Held action on the move stream. |
-| Dazzle Bigfoot with a light | `ForestRoom.updateDazzle`; `DAZZLE_*` | Sustained beam, range + cone + LOS. |
+| Film Yeti (win condition) | `MountainRoom.updateFilming` / `canFilm`; `FILM_RANGE`, `FILM_AIM_COS`; client `config.FILM` | Server-authoritative (range + aim cone + LOS). |
+| Revive a downed teammate | `MountainRoom.updateRevives`; `REVIVE_RADIUS/SECONDS/DECAY` | Held action on the move stream. |
+| Dazzle Yeti with a light | `MountainRoom.updateDazzle`; `DAZZLE_*` | Sustained beam, range + cone + LOS. |
 | Vault a fallen log | `shared/sim/movement.ts` (`vault`); `PLAYER.vaultHopSpeed/vaultStaminaCost` | Negates the log slow. |
-| Drop a stakeout ping | `ForestRoom` `ping` handler; `PING_LIFETIME` | One per hunter. |
+| Drop a stakeout ping | `MountainRoom` `ping` handler; `PING_LIFETIME` | One per hunter. |
 | Map clue-contact trail | client `MAP.hearRange/evidenceSight/clueWindow`; `ClueField` | Trail visible only "in contact". |
 | Battery / stamina | `shared/sim/constants.ts` `PLAYER.*`; server resource envelope | **No battery pickups exist yet.** |
 
@@ -44,7 +44,7 @@ So each specialty below is either a **per-player scalar** over something that al
 ### 2.1 Data model
 
 - **Specialty id** — one of `"analysis" | "photo" | "tracking" | "sound" | "endurance"` (Mara, Eli,
-  Wren, Theo, Sam). Bigfoot / unassigned = `""`.
+  Wren, Theo, Sam). Yeti / unassigned = `""`.
 - **Schema** (`schema/GameState.ts`) — add to `Player`:
   `@type("string") specialty = ""` and `@type("string") characterName = ""`. Both are set once at match
   start and never change during a match, so they cost one replication each, not per-tick.
@@ -72,15 +72,15 @@ they never fight during reconciliation.
 
 ### 2.3 Assignment
 
-In the `startMatch` handler, after Bigfoot is chosen: shuffle the five ids and deal one to each searcher
+In the `startMatch` handler, after Yeti is chosen: shuffle the five ids and deal one to each searcher
 (assignment is not sim state, so ordinary `Math.random` shuffle is fine). ≤5 searchers ⇒ all distinct;
-Bigfoot gets `""`. Set `characterName` from a name map. `maxClients = 6` (1 Bigfoot + 5 searchers), so
+Yeti gets `""`. Set `characterName` from a name map. `maxClients = 6` (1 Yeti + 5 searchers), so
 duplicates never occur in practice.
 
 ### 2.4 New message contract (only two specialties need one)
 
 - `flash` — Eli, client→server RPC, no payload. Server validates charges-left-this-night + range + aim
-  cone + LOS (mirror `updateDazzle`), applies a dazzle, marks Eli's position visible to Bigfoot for a few
+  cone + LOS (mirror `updateDazzle`), applies a dazzle, marks Eli's position visible to Yeti for a few
   seconds, and broadcasts a positional `flash` cue. Charges reset each night.
 - `mark` — Wren, client→server RPC `{x,z}` (or a held action). Promotes a nearby clue to a team-visible
   trail marker (a small `marks` ArraySchema, modeled on `pings`). Cooldown'd.
@@ -139,8 +139,8 @@ export const SPECIALTIES = {
     flash: {
       range:         22,      // short reach (< dazzle's 40)
       aimCos:        Math.cos(0.5), // ~29° cone — an aimed shot, a touch tighter than filming
-      dazzleSeconds: 3,       // reuse DAZZLE_SECONDS: locks Bigfoot's roar/grab + cuts its sight
-      revealSeconds: 5,       // Bigfoot sees Eli's position marked for this long (the "here I am")
+      dazzleSeconds: 3,       // reuse DAZZLE_SECONDS: locks Yeti's roar/grab + cuts its sight
+      revealSeconds: 5,       // Yeti sees Eli's position marked for this long (the "here I am")
       chargesPerNight: 1,     // one flash per night, refills at each nightfall
     },
   },
@@ -177,7 +177,7 @@ export const SPECIALTIES = {
 | 🩹 Sam | faster revives, deeper stamina | give battery | revive/incap + stamina/battery economy |
 | 🥾 Wren | longer/wider trail vision, quiet | mark trail | the clue/map trail |
 | 🎙️ Theo | long-range hearing, faster film | — | early-warning + the win condition |
-| 📷 Eli | longer film range | flash (stun+reveal) | the win condition + Bigfoot deterrence |
+| 📷 Eli | longer film range | flash (stun+reveal) | the win condition + Yeti deterrence |
 | 🔬 Mara | *identity only for now (deferred)* | — | — (lands with non-film evidence) |
 
 ---
@@ -190,7 +190,7 @@ export const SPECIALTIES = {
   marks). No fundamentally new mechanics.
 - **Eli** — the `flash` is the only genuinely new **ability RPC**; everything else is a scalar.
 - **Mara** — **decided: identity-only for now.** There is no evidence-casting or false-clue mechanic
-  today (every clue is a genuine Bigfoot track, film is the only evidence), so her "analysis" fantasy has
+  today (every clue is a genuine Yeti track, film is the only evidence), so her "analysis" fantasy has
   nothing to attach to. She ships as a name/portrait/briefing identity with **no gameplay modifier**, and
   her real specialty is built together with the non-film evidence system (casts / hair samples / false
   clues). Until then she's a fully playable searcher with the shared core kit, just no specialty edge.
@@ -231,7 +231,7 @@ Wanted, next pass on the cards:
   disappear entirely where the comparison ("farther than anyone", "twice as fast") carries it.
 - Keep the derived values in code as the source of truth so copy can't drift — e.g. pick the phrase
   from a threshold on the live value, rather than printing the value raw.
-- The Bigfoot card is already close to this voice; the searcher cards are the ones to bring up.
+- The Yeti card is already close to this voice; the searcher cards are the ones to bring up.
 - Same applies to the in-game prompts and the `[H]` controls card.
 
 ## 6. Decisions
@@ -278,7 +278,7 @@ All three landed together, because Mara's specialty only exists if physical evid
 
 ### Casting tracks (new second win path)
 
-**Corrected 2026-07-19 after owner review.** The first pass had Bigfoot *shedding plaster casts*,
+**Corrected 2026-07-19 after owner review.** The first pass had Yeti *shedding plaster casts*,
 which is nonsense — a cast is something a **person makes from a track**. The model now is:
 
 - Some footprints land in ground soft and deep enough to be worth working. The server flags them
@@ -289,12 +289,12 @@ which is nonsense — a cast is something a **person makes from a track**. The m
 - **Only Mara can cast one** (`CasterSpecialty = "analysis"`). Holding the interact key runs a
   `CastSeconds` (6 s) stationary channel; progress lives on the PRINT, so an interrupted cast bleeds
   off rather than resetting. Completing it is +1 proof and consumes the print.
-- ~~Bigfoot **ruins a workable print by treading on it** (`CastStompRadius`).~~ **Removed 2026-07-20
-  (owner call).** Bigfoot now has **no way to destroy evidence anywhere in the loop** — not prints,
+- ~~Yeti **ruins a workable print by treading on it** (`CastStompRadius`).~~ **Removed 2026-07-20
+  (owner call).** Yeti now has **no way to destroy evidence anywhere in the loop** — not prints,
   not hair, not a spilled pack. Evidence leaves play exactly two ways: it goes cold on the clue
   lifetime, or a searcher collects it. The reasoning is worth keeping: a delete button meant a
   searcher could do everything right — find a workable print, bring Mara, arrive in time — and still
-  get nothing, with no counterplay available to them. Bigfoot's answer to evidence is now purely
+  get nothing, with no counterplay available to them. Yeti's answer to evidence is now purely
   **positional** (be where the evidence is), which is one rule instead of three exceptions and makes
   "get there in time" a promise the game actually keeps.
 
@@ -313,10 +313,10 @@ The HUD breaks it out as "1 film · 2 casts · 1 hair".
 | | Filming | Casting | Hair |
 |---|---|---|---|
 | Speed | fast (3 s in frame) | slow (6 s stationary channel) | quick (2.5 s) |
-| Risk | must close on Bigfoot | never requires seeing it | never requires seeing it |
+| Risk | must close on Yeti | never requires seeing it | never requires seeing it |
 | Who | anyone | **Mara only** | anyone |
 | Supply | whenever you find it | 16% of prints, 4 live | per-stride roll + **every tree it brushes** |
-| Counterplay | Bigfoot hunts the filmer | Bigfoot camps the print | Bigfoot avoids the tight lines |
+| Counterplay | Yeti hunts the filmer | Yeti camps the print | Yeti avoids the tight lines |
 
 All three paths then share the same second half: **carry it home to the duffel** (below).
 
@@ -331,14 +331,14 @@ owner's replacement is an **extraction loop**, and it's a real improvement:
 - Proof is banked only by walking it to the **evidence duffel beside the RV** and holding the
   interact key for ~1.2 s (`GameManager.TryDeposit`, `WorldBuilder.DuffelPosition()`). Stored proof
   is **permanent**.
-- **Bigfoot cannot touch the duffel.** There is no RPC, no radius check, nothing — the bag is not
-  interactable by Bigfoot in any way, by construction.
+- **Yeti cannot touch the duffel.** There is no RPC, no radius check, nothing — the bag is not
+  interactable by Yeti in any way, by construction.
 - **A grab destroys only what that searcher was carrying.** Stored proof is untouched.
 
 This replaces BOTH earlier rules — the original "a grab wipes all team footage" and the interim
 "a grab wipes everything including casts". The punishment is now proportional to how greedy one
 player chose to be, which is a decision they made, instead of a team-wide reset nobody could
-influence. It also finally gives Bigfoot a *positional* strategy — camp the walk home, when their
+influence. It also finally gives Yeti a *positional* strategy — camp the walk home, when their
 hands are full — without letting it attack the safe zone itself. `TryDeposit` is deliberately
 type-agnostic: a new evidence kind needs a carried counter and no change to the deposit path.
 
@@ -364,11 +364,11 @@ night, and a loud amber marker on the team map labelled `pack ×n`. Any active s
 the victim, if the team gets them up in time — holds interact for `PileRecoverSeconds` (1.5 s) to
 gather it back into their own pack, still unsaved. Spills go cold after `PileLifetime` (120 s).
 
-**Bigfoot cannot destroy a pile. It can only guard one.** This is the same guarantee the duffel has,
-and it is the point of the feature: if Bigfoot could stomp the spill it would simply stand still for
+**Yeti cannot destroy a pile. It can only guard one.** This is the same guarantee the duffel has,
+and it is the point of the feature: if Yeti could stomp the spill it would simply stand still for
 a second after every grab, which costs it nothing and makes the whole thing equivalent to the silent
 deletion it replaced. "Guard only" is what creates the standoff — and it is the *positional*
-strategy the extraction loop was missing, without ever letting Bigfoot attack the safe zone.
+strategy the extraction loop was missing, without ever letting Yeti attack the safe zone.
 
 This is the third version of the rule and the reasoning is worth keeping:
 
@@ -393,9 +393,9 @@ It sheds **two ways** (owner design):
 
 1. **At random along the trail** — a per-stride `HairChance` (9%) roll, independent of everything
    else, so a plain trail across open ground is still worth following.
-2. **Guaranteed on every tree Bigfoot shoulders past** (`TreeBrushSlack`, on a `TreeHairCooldown` of
+2. **Guaranteed on every tree Yeti shoulders past** (`TreeBrushSlack`, on a `TreeHairCooldown` of
    7 s so a trunk can't be farmed). This is the good one: it turns the forest's own density into
-   evidence and makes the thing Bigfoot does constantly — weaving through trunks at speed — the
+   evidence and makes the thing Yeti does constantly — weaving through trunks at speed — the
    thing that incriminates it. Running the tight lines is fast and leaves a bright trail; the open
    ground is clean but exposed. Crouching suppresses both, like every other kind of track.
 
@@ -412,9 +412,9 @@ she alone can take the *reliable, always-available* kind) without making the pat
 
 Per §3: range 22 m, ~29° cone, LOS-checked, **3 s dazzle** (reuses the torch-dazzle state, so it
 locks roar + grab), **1 charge per night**. The cost is the ability: firing sets `RevealedFor` on
-Eli, and Bigfoot sees him blazing through the trees for **5 s** — drawn by `HPHud.DrawRevealed`,
+Eli, and Yeti sees him blazing through the trees for **5 s** — drawn by `HPHud.DrawRevealed`,
 deliberately **independent of the senses overlay**, because the reveal is something the flash did to
-Eli, not something Bigfoot chose to switch on. Everyone near the flash gets a white screen bloom.
+Eli, not something Yeti chose to switch on. Everyone near the flash gets a white screen bloom.
 
 ### Sam's spare battery (hold interact near a teammate)
 
@@ -460,6 +460,6 @@ testing any one of them otherwise means restarting until the deal hands you that
      supply, not by cost. If casting ends up never worth doing, the fix is to make a cast worth
      **2 proof**, not to slow hair down.
   3. **Pile lifetime.** 120 s vs a 60 s incapacitation: the victim can be revived and recover their
-     own spill, which is the intended dramatic beat. If Bigfoot camping trivially wins the standoff,
+     own spill, which is the intended dramatic beat. If Yeti camping trivially wins the standoff,
      raise `PileLifetime`; if recovery feels free, lower it.
   4. The Mara single-point-of-failure risk that motivated hair should now be gone — confirm it is.

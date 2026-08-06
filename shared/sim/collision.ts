@@ -49,7 +49,7 @@ export function groundHeightAt(climbables: Collider[], getHeight: HeightFn, x: n
   return g;
 }
 
-/** The top of a climbable structure Bigfoot can scale here (clinging to the side, or over the top), or null. */
+/** The top of a climbable structure Yeti can scale here (clinging to the side, or over the top), or null. */
 export function climbSupport(
   climbables: Collider[], getHeight: HeightFn, x: number, z: number, radius: number, reach: number
 ): { top: number; over: boolean } | null {
@@ -86,7 +86,7 @@ export function lineBlocked(colliders: Collider[], a: Vec2, b: Vec2): boolean {
 /**
  * Push an (x,z) point out of every fallen log it overlaps — logs are SOLID to a grounded hunter.
  *
- * Called only for grounded hunters: Bigfoot strides over logs untouched, and a hunter mid-vault
+ * Called only for grounded hunters: Yeti strides over logs untouched, and a hunter mid-vault
  * is airborne, so the trunk passes harmlessly beneath. That is the whole mechanic — a log is a
  * wall you go around or spend stamina to clear, not a patch of mud you wade through.
  */

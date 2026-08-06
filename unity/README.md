@@ -1,4 +1,4 @@
-# Hollow Pines — Unity build
+# Metoh — Unity build
 
 The Unity/FishNet port of the game. Traps, conventions and remaining work live in
 [`docs/UNITY_PORT_NOTES.md`](../docs/UNITY_PORT_NOTES.md) — **read that before changing anything here.**
@@ -9,7 +9,7 @@ The Unity/FishNet port of the game. Traps, conventions and remaining work live i
 
 ```
 unity/
-  Assets/HollowPines/Scripts/
+  Assets/Metoh/Scripts/
     Game/          # the game: world, player, host match loop, HUD, map, audio, post-FX
     Editor/        # GameSceneSetup.cs — one-click scene + prefab wiring, and the Windows build
     Net/           # SteamLobby.cs + NetworkHud.cs — dormant behind #if HP_STEAM (Steam is deferred)
@@ -17,8 +17,8 @@ unity/
   steam_appid.txt  # Steam only: "480" (Valve's Spacewar test app)
 ```
 
-`Assets/HollowPines/Sim` is **not** in this folder — it's copied from
-[`csharp/HollowPines.Sim`](../csharp) during the sync step. That copy is the parity-tested shared
+`Assets/Metoh/Sim` is **not** in this folder — it's copied from
+[`csharp/Metoh.Sim`](../csharp) during the sync step. That copy is the parity-tested shared
 simulation and stays canonical in the repo.
 
 ## Setup (once)
@@ -28,12 +28,12 @@ simulation and stays canonical in the repo.
    [github.com/FirstGearGames/FishNet](https://github.com/FirstGearGames/FishNet).
 3. **Apply [`fishnet-patches/`](fishnet-patches/)** — FishNet 4.7.2 does *not* compile on Unity 6.5
    without it (see Troubleshooting).
-4. Copy `unity/Assets/HollowPines` and `csharp/HollowPines.Sim` (as `Assets/HollowPines/Sim`) into the
+4. Copy `unity/Assets/Metoh` and `csharp/Metoh.Sim` (as `Assets/Metoh/Sim`) into the
    project's `Assets/`.
 
 ## Running it
 
-**Hollow Pines → Set Up Game Scene (Forest)** builds `Assets/Scenes/Forest.unity` from scratch: camera,
+**Metoh → Set Up Game Scene (Mountain)** builds `Assets/Scenes/Mountain.unity` from scratch: camera,
 NetworkManager + Tugboat, the game systems, and every spawnable prefab, with all references wired.
 Then press **Play → START NEW GAME → START MATCH**.
 
@@ -42,7 +42,7 @@ no hand-made content, so rebuilding costs nothing — and the setup script does 
 editor callbacks would otherwise miss on a scripted build (SceneIds and prefab AssetPathHashes; see
 `UNITY_PORT_NOTES.md` §1, which is the single most expensive trap in this port).
 
-**Hollow Pines → Build Windows (Game)** produces `Build/Windows/HollowPines.exe`. For two players, run
+**Metoh → Build Windows (Game)** produces `Build/Windows/Metoh.exe`. For two players, run
 the exe alongside the editor and **JOIN GAME → 127.0.0.1**.
 
 There's a **DEV — force persona** strip on the title screen: several systems are gated behind one
@@ -54,8 +54,12 @@ matches to test them.
 Edit in **this repo**, then sync into the Unity project:
 
 ```powershell
-robocopy "<repo>\unity\Assets\HollowPines" "C:\Users\amedi\HollowPines\Assets\HollowPines" /E
+robocopy "<repo>\unity\Assets\Metoh" "C:\Users\amedi\Metoh_port\Assets\Metoh" /E
+robocopy "<repo>\csharp\Metoh.Sim"   "C:\Users\amedi\Metoh_port\Assets\Metoh\Sim" /E
 ```
+
+The live project is `C:\Users\amedi\Metoh_port` — a separate tree from this repo, which carries no
+`.meta` or `Library/`. It is a **new** folder as of the Metoh rebrand.
 
 Robocopy exit codes below 8 mean success. Verify without opening Unity by smoke-compiling against
 `Library/ScriptAssemblies` — see `UNITY_PORT_NOTES.md` §8; it has caught real errors repeatedly.
@@ -64,8 +68,8 @@ Robocopy exit codes below 8 mean success. Verify without opening Unity by smoke-
 
 `Scripts/Game/` renders the deterministic world from the shared sim (terrain, forest, RV, caves,
 tower, logs, lake, day-night sky), runs first-person movement through
-`HollowPines.Sim.Movement.StepPlayer`, and runs the whole authoritative match loop ported from
-`ForestRoom.ts` — night clock + escalation, clue trail, roar → freeze → grab → incap, revive,
+`Metoh.Sim.Movement.StepPlayer`, and runs the whole authoritative match loop ported from
+`MountainRoom.ts` — night clock + escalation, clue trail, roar → freeze → grab → incap, revive,
 flashlight dazzle, server-checked filming, the evidence/casting loop and the duffel, and win/loss —
 as FishNet SyncVars and RPCs.
 
@@ -83,7 +87,7 @@ as FishNet SyncVars and RPCs.
   The codegen error is fallout and clears once `FishNet.Runtime` compiles.
 - **START NEW GAME throws a NullReferenceException** — almost certainly a scene/prefab identity
   problem upstream, not the menu. Read `<project>/Logs/Editor.log` (**not** the one in AppData) and
-  look for an error *earlier* than the reported one; then re-run **Set Up Game Scene (Forest)**.
+  look for an error *earlier* than the reported one; then re-run **Set Up Game Scene (Mountain)**.
   `UNITY_PORT_NOTES.md` §1 has the full explanation.
 - **Something spawns but never appears** — the prefab isn't in FishNet's Default Prefab Objects.
   Re-run the scene setup, or **Tools → Fish-Networking → Refresh Default Prefabs**.

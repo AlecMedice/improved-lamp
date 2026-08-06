@@ -6,7 +6,7 @@ import { pathDepth, type ForestPath } from "./paths";
 export type Collider = {
   x: number; z: number; r: number;
   /** If set, the structure is climbable: solid from the side, walkable on top at this many metres
-   *  above its base terrain (Bigfoot can scale it and perch). Undefined = a plain, un-scalable solid. */
+   *  above its base terrain (Yeti can scale it and perch). Undefined = a plain, un-scalable solid. */
   climbH?: number;
 };
 export type FallenLog = {
@@ -26,7 +26,7 @@ export const LOOKOUT = { x: 220, z: -230, r: 2.4 };
 export const RV = { x: 9, z: -4, ry: -0.5 };
 
 /**
- * Fallen-log obstacles (slow hunters, not Bigfoot). [cx, cz, angle(rad), length(m)].
+ * Fallen-log obstacles (slow hunters, not Yeti). [cx, cz, angle(rad), length(m)].
  * After the trunk mesh is laid flat (rotateZ) and turned by `angle`, its long axis in
  * world XZ is (cos(angle), -sin(angle)); trunk radius is 0.38.
  */
@@ -99,7 +99,7 @@ export function buildColliders(seed: number, caves: readonly Cave[], paths: read
   }
 
   // Caves — horseshoe of boulders; side + back are solid, the mouth (toward centre) is open.
-  // The boulders are climbable — Bigfoot can perch on them above its lair.
+  // The boulders are climbable — Yeti can perch on them above its lair.
   for (const cave of caves) {
     const dl = Math.hypot(cave.x, cave.z) || 1;
     const dx = -cave.x / dl;

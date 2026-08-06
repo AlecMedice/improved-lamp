@@ -28,7 +28,7 @@ const DEFAULTS: Record<Action, string> = {
   mark: "KeyG",
 };
 
-const KEY = "hollowpines.keybinds";
+const KEY = "metoh.keybinds";
 
 /** Pretty label for a KeyboardEvent.code (e.g. "KeyW" -> "W", "ShiftLeft" -> "Shift"). */
 export function codeLabel(code: string): string {

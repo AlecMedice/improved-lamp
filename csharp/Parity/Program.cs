@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
-using HollowPines.Sim;
+using Metoh.Sim;
 
-namespace HollowPines.Parity
+namespace Metoh.Parity
 {
     /// <summary>
     /// Determinism gate for the C# sim port. Two layers:
@@ -41,7 +41,8 @@ namespace HollowPines.Parity
             CollidersCheck(g, seed);
             WorldCheck(g, seed);
             HunterTrajectory(g, seed);
-            BigfootTrajectory(g, seed);
+            YetiTrajectory(g, seed);
+            DeepSnowGolden(g, seed);
             SpecialtiesGolden(g);
 
             Console.WriteLine("\n== mirrored property tests (from server/test/*.ts) ==");
@@ -52,6 +53,7 @@ namespace HollowPines.Parity
             LeapTests(seed);
             EdgeNaNTest(seed);
             CaveLayoutTests(seed);
+            DeepSnowTests(seed);
             SpecialtyDealTests();
 
             Console.WriteLine(_failures == 0
@@ -177,6 +179,82 @@ namespace HollowPines.Parity
             Near("firstLog.az", world.FallenLogs[0].Az, fl.GetProperty("az").GetDouble());
         }
 
+        /// <summary>
+        /// Deep snow: the drift-basin slow and the wider print zone, cross-checked against the
+        /// golden probes. Separate from HunterTrajectory because that one starts at the origin,
+        /// inside the camp clearing, and never travels far enough to leave it — it cannot see this
+        /// mechanic at all.
+        /// </summary>
+        private static void DeepSnowGolden(JsonElement g, uint seed)
+        {
+            var world = GameWorld.MakeWorld(seed);
+            foreach (var p in g.GetProperty("deepSnowProbes").EnumerateArray())
+            {
+                double x = p.GetProperty("x").GetDouble(), z = p.GetProperty("z").GetDouble();
+                string label = p.GetProperty("label").GetString();
+                Near($"deepSnow[{label}].h", world.GetHeight(x, z), p.GetProperty("h").GetDouble());
+                Near($"deepSnow[{label}].depth", Movement.DeepSnowDepth(world, x, z), p.GetProperty("depth").GetDouble());
+                Check($"deepSnow[{label}].prints",
+                    Movement.LeavesSnowPrints(world, x, z) == p.GetProperty("prints").GetBoolean());
+            }
+
+            double dh = world.GetHeight(-180, 106);
+            var st = new PlayerSimState
+            {
+                X = -180, Z = 106, FeetY = dh, GroundY = dh, Vy = 0, Grounded = true,
+                Yaw = 0, Stamina = 100, Exhausted = false, Battery = 100, CurEye = 1.7,
+                FlashlightOn = false, IsYeti = false, EyeHeight = 1.7,
+            };
+            var input = new MoveInput { W = true, Yaw = 0.6, Sprint = true, Dt = 1.0 / 20.0 };
+            var expected = g.GetProperty("driftTrajectory");
+            int ei = 0;
+            for (int i = 0; i < 40; i++)
+            {
+                Movement.StepPlayer(st, input, world, Mods);
+                if (i % 10 == 9)
+                {
+                    var e = expected[ei++];
+                    Near($"drift[{i}].x", st.X, e.GetProperty("x").GetDouble());
+                    Near($"drift[{i}].z", st.Z, e.GetProperty("z").GetDouble());
+                }
+            }
+        }
+
+        /// <summary>
+        /// Mirrors the vitest deep-snow case: a searcher in a drift basin covers less ground than
+        /// one on scoured crust, and the Yeti covers the same in both.
+        /// </summary>
+        private static void DeepSnowTests(uint seed)
+        {
+            var world = GameWorld.MakeWorld(seed);
+            var input = new MoveInput { W = true, Yaw = 0.6, Sprint = false, Dt = 1.0 / 20.0 };
+
+            double Run(double x0, double z0, bool yeti)
+            {
+                double gy = world.GetHeight(x0, z0);
+                var st = new PlayerSimState
+                {
+                    X = x0, Z = z0, FeetY = gy, GroundY = gy, Vy = 0, Grounded = true,
+                    Yaw = 0, Stamina = 100, Exhausted = false, Battery = 100,
+                    CurEye = yeti ? 2.4 : 1.7, FlashlightOn = false, IsYeti = yeti,
+                    EyeHeight = yeti ? 2.4 : 1.7,
+                };
+                for (int i = 0; i < 20; i++) Movement.StepPlayer(st, input, world, Mods);
+                double dx = st.X - x0, dz = st.Z - z0;
+                return System.Math.Sqrt(dx * dx + dz * dz);
+            }
+
+            // (-180,106) is a full-depth basin; (-390,132) is scoured ridge at depth 0.
+            double hunterBasin = Run(-180, 106, false);
+            double hunterRidge = Run(-390, 132, false);
+            double yetiBasin = Run(-180, 106, true);
+            double yetiRidge = Run(-390, 132, true);
+
+            Check("searcher covers less ground in a drift basin than on crust", hunterBasin < hunterRidge * 0.95);
+            Check("yeti is unaffected by drift basins", System.Math.Abs(yetiBasin - yetiRidge) < 0.05);
+            Check("deep snow never speeds anyone up", hunterBasin <= hunterRidge && yetiBasin <= yetiRidge + 1e-9);
+        }
+
         private static void HunterTrajectory(JsonElement g, uint seed)
         {
             var world = GameWorld.MakeWorld(seed);
@@ -185,7 +263,7 @@ namespace HollowPines.Parity
             {
                 X = 0, Z = 0, FeetY = gy, GroundY = gy, Vy = 0, Grounded = true,
                 Yaw = 0, Stamina = 100, Exhausted = false, Battery = 100, CurEye = 1.7,
-                FlashlightOn = true, IsBigfoot = false, EyeHeight = 1.7,
+                FlashlightOn = true, IsYeti = false, EyeHeight = 1.7,
             };
             var input = new MoveInput { W = true, Yaw = 0.6, Sprint = true, Dt = 1.0 / 20.0 };
             var expected = g.GetProperty("hunterTrajectory");
@@ -204,7 +282,7 @@ namespace HollowPines.Parity
             }
         }
 
-        private static void BigfootTrajectory(JsonElement g, uint seed)
+        private static void YetiTrajectory(JsonElement g, uint seed)
         {
             var world = GameWorld.MakeWorld(seed);
             double gy = world.GetHeight(30, 30);
@@ -212,9 +290,9 @@ namespace HollowPines.Parity
             {
                 X = 30, Z = 30, FeetY = gy, GroundY = gy, Vy = 0, Grounded = true,
                 Yaw = 1.0, Stamina = 100, Exhausted = false, Battery = 100, CurEye = 2.4,
-                FlashlightOn = false, IsBigfoot = true, EyeHeight = 2.4,
+                FlashlightOn = false, IsYeti = true, EyeHeight = 2.4,
             };
-            var expected = g.GetProperty("bigfootTrajectory");
+            var expected = g.GetProperty("yetiTrajectory");
             int ei = 0;
             for (int i = 0; i < 30; i++)
             {
@@ -223,10 +301,10 @@ namespace HollowPines.Parity
                 if (i % 6 == 5)
                 {
                     var e = expected[ei++];
-                    Near($"bigfoot[{i}].x", st.X, e.GetProperty("x").GetDouble());
-                    Near($"bigfoot[{i}].feetY", st.FeetY, e.GetProperty("feetY").GetDouble());
-                    Near($"bigfoot[{i}].vy", st.Vy, e.GetProperty("vy").GetDouble());
-                    Near($"bigfoot[{i}].stamina", st.Stamina, e.GetProperty("stamina").GetDouble());
+                    Near($"yeti[{i}].x", st.X, e.GetProperty("x").GetDouble());
+                    Near($"yeti[{i}].feetY", st.FeetY, e.GetProperty("feetY").GetDouble());
+                    Near($"yeti[{i}].vy", st.Vy, e.GetProperty("vy").GetDouble());
+                    Near($"yeti[{i}].stamina", st.Stamina, e.GetProperty("stamina").GetDouble());
                 }
             }
         }
@@ -274,7 +352,7 @@ namespace HollowPines.Parity
             {
                 X = 0, Z = 0, FeetY = gy, GroundY = gy, Vy = 0, Grounded = true, Yaw = 0,
                 Stamina = 100, Exhausted = false, Battery = 100, CurEye = Player.EyeHeight,
-                FlashlightOn = false, IsBigfoot = false, EyeHeight = Player.EyeHeight,
+                FlashlightOn = false, IsYeti = false, EyeHeight = Player.EyeHeight,
             };
             over?.Invoke(st);
             return st;
@@ -358,7 +436,7 @@ namespace HollowPines.Parity
         private static void LeapTests(uint seed)
         {
             var world = GameWorld.MakeWorld(seed);
-            var st = MakeState(world, s => s.IsBigfoot = true);
+            var st = MakeState(world, s => s.IsYeti = true);
             double groundY = st.GroundY;
             Movement.StepPlayer(st, MakeInput(b => b.Leap = true), world, Mods);
             Check("leap leaves the ground", !st.Grounded);
@@ -375,7 +453,7 @@ namespace HollowPines.Parity
             Check("leap apex near analytic v^2/2g", (apex - groundY) > analytic - 0.3 && (apex - groundY) < analytic + 0.4);
             Check("leap comes back down", st.Grounded);
 
-            var st2 = MakeState(world, s => { s.IsBigfoot = true; s.Stamina = Player.LeapStaminaCost - 1; });
+            var st2 = MakeState(world, s => { s.IsYeti = true; s.Stamina = Player.LeapStaminaCost - 1; });
             Movement.StepPlayer(st2, MakeInput(b => b.Leap = true), world, Mods);
             Check("won't leap without enough stamina", st2.Grounded);
         }
@@ -429,7 +507,7 @@ namespace HollowPines.Parity
             }
             Check("forced pick honoured and never duplicated", held);
 
-            Check("isSpecialtyId validates", Specialties.IsSpecialtyId("tracking") && !Specialties.IsSpecialtyId("bigfoot") && !Specialties.IsSpecialtyId(null));
+            Check("isSpecialtyId validates", Specialties.IsSpecialtyId("tracking") && !Specialties.IsSpecialtyId("yeti") && !Specialties.IsSpecialtyId(null));
         }
 
         private static int DistinctCount(List<string> sids, Dictionary<string, string> deal)

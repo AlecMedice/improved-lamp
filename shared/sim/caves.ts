@@ -4,7 +4,7 @@ import { CAVE, CAVE_GEN } from "./constants";
 export type Cave = { x: number; z: number };
 
 /**
- * Cave entrances — Bigfoot's lairs and the nodes of its fast-travel network.
+ * Cave entrances — Yeti's lairs and the nodes of its fast-travel network.
  * Seed-derived so the client and the server generate the IDENTICAL set (previously
  * each used Math.random() independently, so every client + the server disagreed).
  * Five caves spread across the outer ring (150..340 m from centre), ≥120 m apart.

@@ -1,5 +1,5 @@
 /**
- * Shared, dependency-free movement + world simulation for Hollow Pines. Imported by BOTH
+ * Shared, dependency-free movement + world simulation for Metoh. Imported by BOTH
  * the Three.js client (prediction) and the Colyseus server (authority). Same V8 + same
  * source → bit-identical results, so client prediction reconciles cleanly. No three.js here.
  */
@@ -26,7 +26,7 @@ export type World = {
   paths: readonly ForestPath[]; // logging trails out of camp (tree-free corridors)
   getHeight: HeightFn;
   colliders: Collider[];
-  climbables: Collider[]; // the subset of colliders with a `climbH` (structures Bigfoot can scale/perch on)
+  climbables: Collider[]; // the subset of colliders with a `climbH` (structures Yeti can scale/perch on)
   fallenLogs: FallenLog[];
 };
 

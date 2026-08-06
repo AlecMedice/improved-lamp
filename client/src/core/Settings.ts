@@ -13,7 +13,7 @@ export const SETTINGS_RANGE = {
 } as const;
 
 const DEFAULTS: SettingsData = { brightness: 1, volume: 0.85, sensitivity: 1 };
-const KEY = "hollowpines.settings";
+const KEY = "metoh.settings";
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 export class Settings {

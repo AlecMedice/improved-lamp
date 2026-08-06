@@ -4,7 +4,7 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
-import { NET, FILM, NIGHT_SECONDS, CAVES, CAVE, ABILITY, CHARGE, REVIVE, MAP, PLAYER, BIGFOOT_VISION, SENSES, POST, QUALITY, isMobile } from "../config";
+import { NET, FILM, NIGHT_SECONDS, CAVES, CAVE, ABILITY, CHARGE, REVIVE, MAP, PLAYER, YETI_VISION, SENSES, POST, QUALITY, isMobile } from "../config";
 
 /** Screen-space vignette + moving film grain, composited after bloom (replaces the old CSS vignette). */
 const VignetteGrainShader = {
@@ -30,7 +30,7 @@ import { RemotePlayer } from "../entities/RemotePlayer";
 import {
   climbSupport, nearestCaveIndex, caveEmergePoint, SPECIALTY_IDS,
   staminaMax as staminaMaxFor, staminaDrainMul as staminaDrainMulFor,
-  clueWindowMul, evidenceSightMul, hearRangeMul, reviveMul, roarDirPersistSec,
+  clueWindowMul, evidenceSightMul, hearRangeMul, reviveMul, roarDirPersistSec, deepSnowDepth,
 } from "../../../shared/sim";
 import { Input } from "./Input";
 import { Network, SelfInfo, EscalationInfo } from "./Network";
@@ -78,7 +78,7 @@ export class Game {
   private map = new MapView();
   private canvas: HTMLCanvasElement;
 
-  private readonly isBigfoot: boolean;
+  private readonly isYeti: boolean;
   private sendAccum = 0;
   private timeOfDay = 0;
   private serverTimeOfDay: number | null = null;
@@ -93,7 +93,7 @@ export class Game {
   private roarCooldownSec = ABILITY.roarCooldown; // effective, from server escalation
   private chargeTimer = 0; // remaining seconds of an active charge burst (drives chargeMul)
   private chargeCooldown = 0; // remaining seconds until the next charge is ready
-  private sensesOn = false; // Bigfoot predator-vision overlay (toggle with V)
+  private sensesOn = false; // Yeti predator-vision overlay (toggle with V)
   private reviveProgress = 0; // 0..1 local estimate of the teammate revive being held (server-authoritative)
   private reviveTickTimer = 0; // spacing for the revive channel cue while holding
   private reviveWasFull = false; // guards the one-shot success cue
@@ -111,7 +111,7 @@ export class Game {
   private toBf = new THREE.Vector3();
 
   constructor(canvas: HTMLCanvasElement, role: string, name: string, room?: Room) {
-    this.isBigfoot = role === "bigfoot";
+    this.isYeti = role === "yeti";
     this.canvas = canvas;
 
     const mobile = isMobile();
@@ -121,10 +121,10 @@ export class Game {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.info.autoReset = false; // we render several composer passes per frame; reset once/frame
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    // Per-client render (scenes don't leak). Bigfoot no longer gets a blanket brightness buff —
+    // Per-client render (scenes don't leak). Yeti no longer gets a blanket brightness buff —
     // its night sight is the dim short-range vision cone (see LocalPlayer); exposure stays near
     // the searcher's so the far scene goes dark beyond that cone.
-    this.baseExposure = this.isBigfoot ? BIGFOOT_VISION.exposure : 1.15;
+    this.baseExposure = this.isYeti ? YETI_VISION.exposure : 1.15;
     this.renderer.toneMappingExposure = this.baseExposure;
 
     this.camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 900);
@@ -149,13 +149,13 @@ export class Game {
     this.env = new Environment(this.scene);
     this.audio.groundSampler = (x, z) => this.env.getHeight(x, z);
     this.map.setBakedMap(this.env.generateMapCanvas(600, 400));
-    this.clues = new ClueField(this.scene, this.env);
+    this.clues = new ClueField(this.scene, this.env, this.isYeti);
     // Online: use the server-assigned spawn. Offline/solo: pick one locally.
     const spawn = spawnFor(role, room);
     this.player = new LocalPlayer(this.camera, this.env, role, spawn, this.audio);
 
-    if (this.isBigfoot) {
-      // A very faint floor so Bigfoot isn't in pitch black outside its vision cone — but low
+    if (this.isYeti) {
+      // A very faint floor so Yeti isn't in pitch black outside its vision cone — but low
       // enough that distance still falls to darkness (the cone is the real sight now).
       this.scene.add(new THREE.HemisphereLight(0x34405e, 0x10131c, 0.12));
     }
@@ -166,13 +166,13 @@ export class Game {
     this.input.onPress("Escape", () => this.toggleSettings()); // fixed, not rebindable
     // Debug persona hot-swap: `\` cycles the searcher's character. Only bound when ?devSpecialty is
     // present (a debug session); the server rejects it unless ALLOW_DEV_ROLE, so it's inert in prod.
-    if (!this.isBigfoot && new URLSearchParams(location.search).has("devSpecialty")) {
+    if (!this.isYeti && new URLSearchParams(location.search).has("devSpecialty")) {
       this.input.onPress("Backslash", () => {
         const i = SPECIALTY_IDS.indexOf(this.self.specialty as (typeof SPECIALTY_IDS)[number]);
         this.net.sendDebugSetSpecialty(SPECIALTY_IDS[(i + 1) % SPECIALTY_IDS.length]);
       });
     }
-    if (!this.isBigfoot) this.input.onAction("flashlight", () => this.player.toggleFlashlight());
+    if (!this.isYeti) this.input.onAction("flashlight", () => this.player.toggleFlashlight());
     this.map.onSelectCave = (i) => this.travelToCave(i);
 
     // Settings + rebindable controls, persisted; Resume re-locks the pointer.
@@ -195,7 +195,7 @@ export class Game {
       pixelRatio: this.renderer.getPixelRatio(),
     });
     if (this.showPerf) { const el = document.getElementById("perf"); if (el) el.style.display = "block"; }
-    // Dev-only: drop a hunter + Bigfoot avatar in front of the camera for art/proportion QA.
+    // Dev-only: drop a hunter + Yeti avatar in front of the camera for art/proportion QA.
     (window as any).__previewAvatars = () => this.spawnPreviewAvatars();
 
     this.net = new Network(this.scene, role, name, room, this.audio);
@@ -228,8 +228,8 @@ export class Game {
     };
     this.net.onEscalation = (e) => this.applyEscalation(e);
 
-    // Bigfoot abilities: right-click roar, left-click grab a frozen hunter, sprint-key charge, senses.
-    if (this.isBigfoot) {
+    // Yeti abilities: right-click roar, left-click grab a frozen hunter, sprint-key charge, senses.
+    if (this.isYeti) {
       this.input.onMousePress(2, () => this.tryRoar());
       this.input.onMousePress(0, () => this.tryGrab());
       this.input.onAction("sprint", () => this.tryCharge());
@@ -237,7 +237,7 @@ export class Game {
     }
 
     // Hunters: stakeout pings (Q to mark where you stand, or click the map).
-    if (!this.isBigfoot) {
+    if (!this.isYeti) {
       this.pings = new PingField(this.scene, this.env);
       this.net.onPingAdd = (id, x, z) => this.pings!.add(id, x, z);
       this.net.onPingRemove = (id) => this.pings!.remove(id);
@@ -248,7 +248,7 @@ export class Game {
     void this.net.connect();
 
     this.hud.setFootage(0, 3);
-    this.hud.setRole(this.isBigfoot ? "bigfoot" : "searcher");
+    this.hud.setRole(this.isYeti ? "yeti" : "searcher");
     window.addEventListener("resize", () => this.onResize());
   }
 
@@ -256,7 +256,7 @@ export class Game {
     this.audio.resume(); // called from the start gesture — lifts the autoplay gate
     this.renderer.setAnimationLoop(() => this.frame());
     // Dusk briefing first (any key begins); then the drip of one-line reminders.
-    this.briefing.show(this.isBigfoot, this.keybinds, this.input, () => {
+    this.briefing.show(this.isYeti, this.keybinds, this.input, () => {
       if (!this.ended) this.canvas.requestPointerLock();
       this.startTutorial();
     });
@@ -264,9 +264,9 @@ export class Game {
 
   /** Brief, role-specific control hints shown one at a time at the start of a match. */
   private startTutorial() {
-    const hints = this.isBigfoot
+    const hints = this.isYeti
       ? [
-          "You ARE Bigfoot. WASD to move · mouse to look · you're faster than they are.",
+          "You ARE Yeti. WASD to move · mouse to look · you're faster than they are.",
           "Right-click to ROAR — freezes nearby hunters in place.",
           "Left-click to GRAB a frozen hunter — erases the team's footage.",
           "Stand in a cave mouth, press M, and pick a cave to fast-travel.",
@@ -275,7 +275,7 @@ export class Game {
       : [
           "WASD to move · mouse to look · Shift to sprint · Ctrl to crouch.",
           "F toggles your flashlight — watch the battery.",
-          "Hold Right-Mouse to film Bigfoot — fill the bar 3 times to win.",
+          "Hold Right-Mouse to film Yeti — fill the bar 3 times to win.",
           "M opens the map · Q drops a stakeout ping for your team.",
           "Follow footprints and broken branches. Don't get caught.",
         ];
@@ -291,7 +291,7 @@ export class Game {
     show();
   }
 
-  /** Dev QA: spawn a hunter + Bigfoot avatar a few metres in front of the camera, facing it. */
+  /** Dev QA: spawn a hunter + Yeti avatar a few metres in front of the camera, facing it. */
   private spawnPreviewAvatars() {
     const fwd = new THREE.Vector3();
     this.camera.getWorldDirection(fwd);
@@ -300,7 +300,7 @@ export class Game {
     const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
     const base = this.camera.position.clone().addScaledVector(fwd, 6);
     const faceRy = Math.atan2(fwd.x, fwd.z); // turn to look back at the camera (−Z local faces it)
-    for (const [role, off] of [["searcher", -1.4], ["bigfoot", 1.6]] as const) {
+    for (const [role, off] of [["searcher", -1.4], ["yeti", 1.6]] as const) {
       const rp = new RemotePlayer(this.scene, role);
       const p = base.clone().addScaledVector(right, off);
       const y = this.env.getHeight(p.x, p.z);
@@ -337,7 +337,7 @@ export class Game {
       this.player.update(dt, this.input);
       this.reconcile(dt); // ease toward the server's authoritative (validated) position
     } else if (incapacitated) {
-      // Bigfoot is dragging us — follow the server's authoritative position.
+      // Yeti is dragging us — follow the server's authoritative position.
       const sp = this.net.getSelfPosition();
       if (sp) this.player.teleportTo(sp.x, sp.z);
     }
@@ -363,19 +363,19 @@ export class Game {
     this.hud.setStatusBanner(this.ended ? "active" : this.self.status);
     this.hud.setBlackout(incapacitated && !this.ended);
 
-    // Bigfoot: charge burst timing (drives the sim speed multiplier + UI) + senses overlay.
-    if (this.isBigfoot) {
+    // Yeti: charge burst timing (drives the sim speed multiplier + UI) + senses overlay.
+    if (this.isYeti) {
       this.chargeTimer = Math.max(0, this.chargeTimer - dt);
       this.chargeCooldown = Math.max(0, this.chargeCooldown - dt);
       this.player.chargeMul = this.chargeTimer > 0 ? CHARGE.speedMul : 1;
       this.net.refreshSenses(this.sensesOn, this.player.position.x, this.player.position.z, SENSES.range);
     }
 
-    // Bigfoot: ability readout + cave-travel prompt.
-    if (this.isBigfoot && !this.ended) {
+    // Yeti: ability readout + cave-travel prompt.
+    if (this.isYeti && !this.ended) {
       this.roarCooldown = Math.max(0, this.roarCooldown - dt);
-      // A searcher's sustained flashlight blinds Bigfoot: cut the sight cone and lock roar/grab.
-      if (this.player.visionLight) this.player.visionLight.intensity = this.self.dazzled ? 0 : BIGFOOT_VISION.intensity;
+      // A searcher's sustained flashlight blinds Yeti: cut the sight cone and lock roar/grab.
+      if (this.player.visionLight) this.player.visionLight.intensity = this.self.dazzled ? 0 : YETI_VISION.intensity;
       if (this.self.dazzled) {
         this.hud.setAbility("DAZZLED — blinded by a flashlight, can't roar or grab");
       } else {
@@ -399,31 +399,35 @@ export class Game {
 
     // Live map refresh while open.
     if (this.map.isOpen) {
-      const hunter = !this.isBigfoot;
+      const hunter = !this.isYeti;
       this.map.refresh({
         ownX: this.player.position.x,
         ownZ: this.player.position.z,
         yaw: this.player.yawAngle,
-        travelMode: this.isBigfoot && this.caveCooldown === 0 && this.nearestCaveIndex() >= 0,
+        travelMode: this.isYeti && this.caveCooldown === 0 && this.nearestCaveIndex() >= 0,
         currentCave: this.nearestCaveIndex(),
         others: hunter ? this.net.getRemoteSearchers() : [],
         clues: hunter && this.clueVisionActive() ? this.clues.getRecentDots(MAP.clueWindow * clueWindowMul(this.self.specialty)) : [],
+        // The Yeti's counterpart to the hunters' clue trail: where searchers have broken snow.
+        // Ungated — unlike the hunters' trail there's no "contact" condition, because reading
+        // tracks IS the Yeti's contact.
+        prints: this.isYeti ? this.clues.getRecentDots(MAP.printWindow, "snowprint") : [],
         pings: hunter ? this.net.getPings() : [],
         marks: hunter ? this.net.getMarks() : [],
-        bigfoot: this.isBigfoot,
+        yeti: this.isYeti,
       });
     }
 
-    // Filming (hunters only): hold right mouse to record; Bigfoot in frame builds footage.
+    // Filming (hunters only): hold right mouse to record; Yeti in frame builds footage.
     let recording = false;
     let inView = false;
     // Revive (hunters only): hold E near a downed teammate to free them (server-authoritative).
     let reviving = false;
     let reviveTarget = "";
-    if (!this.isBigfoot) {
+    if (!this.isYeti) {
       if (!locked) {
         recording = this.input.isMouseDown(2);
-        inView = recording && this.computeBigfootInView();
+        inView = recording && this.computeYetiInView();
       }
       this.hud.setRecording(recording, inView); // recording=false hides the viewfinder
       this.hud.setFilmProgress(this.self.filmProgress);
@@ -450,10 +454,10 @@ export class Game {
         this.reviveProgress = Math.max(0, this.reviveProgress - dt * 2); // bleed off when not holding
         this.reviveTickTimer = 0;
         this.reviveWasFull = false;
-        // Prompt priority: an in-range revive, else a hint that our flashlight is dazzling Bigfoot.
-        const dazzling = !locked && this.player.isFlashlightOn && this.computeBigfootInView();
+        // Prompt priority: an in-range revive, else a hint that our flashlight is dazzling Yeti.
+        const dazzling = !locked && this.player.isFlashlightOn && this.computeYetiInView();
         this.hud.setPrompt(
-          target ? "Hold E to revive teammate" : dazzling ? "Blinding Bigfoot — hold the light on it" : null
+          target ? "Hold E to revive teammate" : dazzling ? "Blinding Yeti — hold the light on it" : null
         );
       }
       this.hud.setReviveProgress(this.reviveProgress);
@@ -483,7 +487,11 @@ export class Game {
     this.hud.setBattery(this.player.battery);
     this.hud.setStamina((this.player.stamina / this.player.staminaMax) * 100); // % of this persona's max
     this.updateRoarDirHud();
-    this.hud.setBeam(!this.isBigfoot && this.player.isFlashlightOn); // beam mask + lens grime while lit
+    this.hud.setBeam(!this.isYeti && this.player.isFlashlightOn); // beam mask + lens grime while lit
+    // Threshold rather than > 0, so the pill doesn't flicker crossing a feathered basin edge.
+    this.hud.setDeepSnow(
+      !this.isYeti && deepSnowDepth(this.env.simWorld, this.player.position.x, this.player.position.z) > 0.35
+    );
 
     // Drive the post FX: moving grain + a vignette that tightens toward the dead of night.
     this.fxPass.uniforms.time.value = t;
@@ -522,10 +530,10 @@ export class Game {
     else this.player.correctTo(sp.x, sp.z, Math.min(1, dt * RECONCILE_EASE));
   }
 
-  /** Map only shows the trail when the hunter hears Bigfoot nearby or sees recent evidence. */
+  /** Map only shows the trail when the hunter hears Yeti nearby or sees recent evidence. */
   private clueVisionActive(): boolean {
     const p = this.player.position;
-    const bf = this.net.getBigfootPosition();
+    const bf = this.net.getYetiPosition();
     // Specialty-scaled senses: Theo (Sound) hears farther; Wren (Tracking) sees clues farther, for longer.
     const hearRange = MAP.hearRange * hearRangeMul(this.self.specialty);
     if (bf) {
@@ -545,9 +553,9 @@ export class Game {
       else if (this.self.status === "incapacitated") this.audio.playOnce("grab_impact", { volume: 0.95 });
       this.prevStatus = this.self.status;
     }
-    if (!this.isBigfoot) {
+    if (!this.isYeti) {
       let intensity = 0;
-      const bf = this.ended ? null : this.net.getBigfootPosition();
+      const bf = this.ended ? null : this.net.getYetiPosition();
       if (bf) {
         const d = Math.hypot(bf.x - this.player.position.x, bf.z - this.player.position.z);
         intensity = THREE.MathUtils.clamp((40 - d) / 30, 0, 1); // 40m silent -> 10m pounding
@@ -566,7 +574,7 @@ export class Game {
 
   /** Apply the server's per-night escalation to the local player + roar UI. */
   private applyEscalation(e: EscalationInfo) {
-    this.player.nightSpeedMul = this.isBigfoot ? e.bigfootSpeedMul : 1; // hunters pressured via drain
+    this.player.nightSpeedMul = this.isYeti ? e.yetiSpeedMul : 1; // hunters pressured via drain
     this.player.batteryDrainMul = e.batteryDrainMul;
     this.escStaminaDrain = e.staminaDrainMul;
     this.roarCooldownSec = e.roarCooldownSec;
@@ -598,20 +606,20 @@ export class Game {
   }
 
   private tryRoar() {
-    if (!this.isBigfoot || this.ended || this.map.isOpen || this.roarCooldown > 0 || this.self.dazzled) return;
+    if (!this.isYeti || this.ended || this.map.isOpen || this.roarCooldown > 0 || this.self.dazzled) return;
     this.net.sendRoar();
     this.audio.playOnce("roar", { volume: 0.9 }); // our own roar, up close
     this.roarCooldown = this.roarCooldownSec;
   }
 
   private tryGrab() {
-    if (!this.isBigfoot || this.ended || this.map.isOpen || this.self.dazzled) return;
+    if (!this.isYeti || this.ended || this.map.isOpen || this.self.dazzled) return;
     this.net.sendGrab();
     this.audio.playOnce("grab_impact", { volume: 0.5 }); // the swing
   }
 
   private tryCharge() {
-    if (!this.isBigfoot || this.ended || this.map.isOpen || this.chargeCooldown > 0) return;
+    if (!this.isYeti || this.ended || this.map.isOpen || this.chargeCooldown > 0) return;
     this.net.sendCharge(); // server opens the speed-gate window; we predict the burst locally
     this.chargeTimer = CHARGE.duration;
     this.chargeCooldown = CHARGE.duration + CHARGE.cooldown;
@@ -619,9 +627,9 @@ export class Game {
   }
 
   private toggleSenses() {
-    if (!this.isBigfoot) return;
+    if (!this.isYeti) return;
     this.sensesOn = !this.sensesOn;
-    this.clues.setSensed(this.sensesOn); // scent trail (Bigfoot's own recent tracks, through walls)
+    this.clues.setSensed(this.sensesOn); // scent trail (Yeti's own recent tracks, through walls)
     this.audio.playOnce("flashlight_click", { volume: 0.35 });
     this.hud.setTutorial(this.sensesOn ? "SENSES ON — prey & scent revealed (V)" : null);
   }
@@ -640,16 +648,16 @@ export class Game {
 
   /** Flash a short escalation note when a new night begins. */
   private showNightNote(night: number) {
-    const note = this.isBigfoot
+    const note = this.isYeti
       ? `Night ${night} — you move faster and bolder now.`
-      : `Night ${night} — Bigfoot is faster, and your gear drains quicker.`;
+      : `Night ${night} — Yeti is faster, and your gear drains quicker.`;
     this.hud.setTutorial(note);
     window.setTimeout(() => this.hud.setTutorial(null), 5000);
   }
 
-  /** Is Bigfoot within range, centred in frame, and not hidden behind a trunk? */
-  private computeBigfootInView(): boolean {
-    const bf = this.net.getBigfootPosition();
+  /** Is Yeti within range, centred in frame, and not hidden behind a trunk? */
+  private computeYetiInView(): boolean {
+    const bf = this.net.getYetiPosition();
     if (!bf) return false;
     this.toBf.copy(bf).setY(bf.y + FILM.aimHeight).sub(this.player.position);
     const dist = this.toBf.length();
@@ -660,14 +668,14 @@ export class Game {
     return !this.env.lineBlocked(this.player.position, bf);
   }
 
-  /** Index of a cave whose mouth Bigfoot is standing in, or -1 (shared with the server's validation). */
+  /** Index of a cave whose mouth Yeti is standing in, or -1 (shared with the server's validation). */
   private nearestCaveIndex(): number {
     return nearestCaveIndex(CAVES, this.player.position.x, this.player.position.z);
   }
 
-  /** Bigfoot picks a destination cave from the map and emerges from its mouth. */
+  /** Yeti picks a destination cave from the map and emerges from its mouth. */
   private travelToCave(i: number) {
-    if (!this.isBigfoot || this.ended || this.caveCooldown > 0) return;
+    if (!this.isYeti || this.ended || this.caveCooldown > 0) return;
     const here = this.nearestCaveIndex();
     if (here < 0 || i === here || i < 0 || i >= CAVES.length) return;
     this.caveCooldown = CAVE.travelCooldown;
@@ -686,14 +694,14 @@ export class Game {
 
   /** Drop a stakeout ping at (x,z), or at the player's feet if not given. */
   private dropPing(x?: number, z?: number) {
-    if (this.isBigfoot || this.ended || this.self.status !== "active") return;
+    if (this.isYeti || this.ended || this.self.status !== "active") return;
     this.net.sendPing(x ?? this.player.position.x, z ?? this.player.position.z);
     this.audio.playOnce("ping_drop", { volume: 0.5 });
   }
 
   /** Wren drops a team-visible trail marker at her feet (server enforces the Tracking specialty + cooldown). */
   private dropMark() {
-    if (this.isBigfoot || this.ended || this.self.specialty !== "tracking" || this.self.status !== "active") return;
+    if (this.isYeti || this.ended || this.self.specialty !== "tracking" || this.self.status !== "active") return;
     this.net.sendMark();
     this.audio.playOnce("ping_drop", { volume: 0.4 });
   }
@@ -743,14 +751,14 @@ export class Game {
     this.map.close();
     this.settingsMenu.dispose();
     document.exitPointerLock();
-    const youWon = winner === (this.isBigfoot ? "bigfoot" : "hunters");
+    const youWon = winner === (this.isYeti ? "yeti" : "hunters");
     this.audio.setHeartbeat(0);
     this.audio.playOnce(youWon ? "victory" : "defeat", { volume: 0.7 });
-    const title = winner === "hunters" ? "The footage is secured" : "The forest keeps its secret";
+    const title = winner === "hunters" ? "The footage is secured" : "The mountain keeps its secret";
     const body =
       winner === "hunters"
-        ? "Enough solid video. The expedition makes it out with proof Bigfoot is real."
-        : "Bigfoot outlasted three nights. The expedition goes home with nothing.";
+        ? "Enough solid video. The expedition walks out with proof the Yeti is real."
+        : "The Yeti outlasted three nights. The expedition goes home with nothing.";
     this.hud.showEnd(youWon ? "VICTORY" : "DEFEAT", `${title}. ${body}`);
     // The host can send everyone back to the lobby for another match.
     if (this.net.isHost()) this.hud.showHostRematch(() => this.net.sendReturnToLobby());
@@ -769,11 +777,11 @@ function spawnFor(role: string, room?: Room): { x: number; z: number; yaw?: numb
   if (room) {
     const self = (room.state as any).players?.get(room.sessionId);
     if (self) {
-      const yaw = role === "bigfoot" ? Math.atan2(self.x, self.z) : 0;
+      const yaw = role === "yeti" ? Math.atan2(self.x, self.z) : 0;
       return { x: self.x, z: self.z, yaw };
     }
   }
-  return role === "bigfoot" ? caveMouthSpawn() : campfireSpawn();
+  return role === "yeti" ? caveMouthSpawn() : campfireSpawn();
 }
 
 /** A scatter point around the campfire for searcher spawns. */
@@ -783,7 +791,7 @@ function campfireSpawn(): { x: number; z: number } {
   return { x: Math.cos(a) * r, z: Math.sin(a) * r };
 }
 
-/** A random cave mouth (offset toward map centre) for the Bigfoot spawn. */
+/** A random cave mouth (offset toward map centre) for the Yeti spawn. */
 function caveMouthSpawn(): { x: number; z: number; yaw: number } {
   const cave = CAVES[Math.floor(Math.random() * CAVES.length)];
   const dl = Math.hypot(cave.x, cave.z) || 1;
