@@ -147,6 +147,11 @@ namespace Metoh.Game
         {
             _self = GetComponent<HPPlayer>();
             _path = new NavMeshPath(); // see the field — this cannot be an initializer
+            // The bake is on demand (WorldBuilder.EnsureNavMesh), and a bot waking up IS the demand —
+            // nothing else in the game reads a NavMesh. Asking here rather than from the spawn site
+            // means every path that creates a bot, now or later, gets a surface without knowing it
+            // had to arrange one. Idempotent: the second bot's call is free.
+            WorldBuilder.EnsureNavMesh();
         }
 
         private void Update()

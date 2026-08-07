@@ -34,8 +34,21 @@ namespace Metoh.Game
         /// </summary>
         public static float FogMul = 1f;
 
-        /// <summary>Force the next SetTimeOfDay to re-apply (after FogMul changes).</summary>
-        public void InvalidatePalette() { _lastTod = -1f; }
+        /// <summary>
+        /// Re-apply the sky/fog/light palette right now, ignoring the per-frame early-out.
+        ///
+        /// This used to only clear `_lastTod` and leave the actual re-apply to whoever called
+        /// SetTimeOfDay next — which meant that every caller (TitleMode, FogMul, a reseed) was
+        /// silently depending on GameManager's Update to run before anything was on screen. It
+        /// usually did, so this looked fine; when it didn't, the change simply never landed and the
+        /// world stayed lit for whatever state it was built in. A method whose whole job is
+        /// "re-apply now" should not be a request that something else does it later.
+        /// </summary>
+        public void InvalidatePalette()
+        {
+            _lastTod = -1f;
+            SetTimeOfDay(_appliedTod, _appliedNight);
+        }
 
         /// <summary>
         /// Title-screen mode: the menu backdrop is a showpiece, not a horror beat, so it gets lit
@@ -164,17 +177,42 @@ namespace Metoh.Game
 
         private void Awake()
         {
+            // EVERYTHING IN THIS METHOD RUNS BEFORE THE FIRST FRAME IS PRESENTED, so its total is
+            // exactly how long the window sits on a stale image before the title screen appears —
+            // and on the first run after a script recompile it is at its worst, because a domain
+            // reload throws away every static cache (ProcTex's normal maps, the audio cues) and the
+            // shader variants have to compile on first use as well. Timed and logged per stage
+            // because "startup is slow" is unactionable and "the bake is 4 of the 6 seconds" is not.
+            var clock = System.Diagnostics.Stopwatch.StartNew();
             Instance = this;
             EnsureWorld();
+            long tWorld = clock.ElapsedMilliseconds;
             Build();
-            BuildNavMesh();
+            long tBuild = clock.ElapsedMilliseconds;
+            // NOT BuildNavMesh(). Everything in this Awake runs before the first frame is ever
+            // presented, so every millisecond spent here is a millisecond the window sits on a stale
+            // image with no title screen on it — and a runtime bake over ~2,400 tree meshes is the
+            // single largest item on that list. Nothing needs it until a CPU bot exists, which
+            // requires a host, which requires somebody to click a button on the title screen that
+            // cannot be drawn yet. So it is deferred to EnsureNavMesh.
             PostFX.Ensure(gameObject);
             // Before anything connects, so the TITLE cinematic flies through the same weather the match
             // does — the systems follow Camera.main, not a player.
             Weather.Ensure(gameObject);
+            long tPost = clock.ElapsedMilliseconds;
             HPAudio.Ensure(gameObject); // synthesizes every cue + starts the wind/tarn beds
+            long tAudio = clock.ElapsedMilliseconds;
             HPDebug.Ensure(gameObject); // F3 diagnostics overlay (costs nothing while hidden)
+
+            // Title mode is set by TitleMenu on its first Update, which is after this — so the very
+            // first palette the world gets is the gameplay one, and the menu's brighter backdrop
+            // arrives a frame later. Applying it here as well would mean guessing at whether a menu
+            // is coming; TitleMenu.SetTitleLighting re-applies immediately when it decides.
             SetTimeOfDay(0f);
+
+            Debug.Log($"[boot] world {tWorld} ms, geometry {tBuild - tWorld} ms, post+weather {tPost - tBuild} ms, " +
+                      $"audio {tAudio - tPost} ms, total {clock.ElapsedMilliseconds} ms before the first frame" +
+                      " (navmesh bake deferred to the first CPU bot).");
         }
 
         private NavMeshSurface _navSurface;
@@ -192,8 +230,33 @@ namespace Metoh.Game
         /// degrades to "occasionally clips a route past a trunk the sim then slides it around", never
         /// to walking through solid geometry.
         /// </summary>
+        /// <summary>
+        /// Set whenever the geometry changes, cleared by a bake. The bake is on-demand now, so
+        /// something has to remember that the surface is stale.
+        /// </summary>
+        private bool _navDirty = true;
+
+        /// <summary>
+        /// Bake the bot navigation surface if the world has changed since the last bake.
+        ///
+        /// Called by the host immediately before it spawns CPU players — the only thing in the game
+        /// that reads a NavMesh. Deliberately NOT called on plain clients: they were baking a surface
+        /// only the host would ever query, paying the whole cost for nothing.
+        ///
+        /// It is safe to be late. Both bots plan with <c>NavMesh.CalculatePath</c> and refine wander
+        /// goals with <c>SamplePosition</c>, and both fall back to beeline steering when the query
+        /// fails, so the worst case of baking a moment after a bot exists is a few seconds of coarser
+        /// routing — never walking through geometry, which the shared sim's collision owns.
+        /// </summary>
+        public static void EnsureNavMesh()
+        {
+            if (Instance == null || !Instance._navDirty) return;
+            Instance.BuildNavMesh();
+        }
+
         private void BuildNavMesh()
         {
+            _navDirty = false;
             if (_navSurface == null)
             {
                 _navSurface = gameObject.AddComponent<NavMeshSurface>();
@@ -226,9 +289,13 @@ namespace Metoh.Game
             ReleaseWorldMaterials(); // BEFORE the children go — it reads their renderers to find them
             for (int i = transform.childCount - 1; i >= 0; i--) Destroy(transform.GetChild(i).gameObject);
             Build();
-            BuildNavMesh();           // the world moved — the CPU bot's pathing surface must follow
+            // The world moved, so any baked surface is stale. Marked, not re-baked: a reseed lands on
+            // every client, including the four that will never run a bot, and the next bot to wake up
+            // asks for the bake itself. (The seed is rolled once per hosting session, before any bot
+            // exists, so "a reseed while bots are already running" is not a case that can arise today.
+            // If per-match reseeding ever ships, this is the line that has to grow a re-bake.)
+            _navDirty = true;
             InvalidatePalette();      // _lastTod would otherwise early-out and leave the new moon unlit
-            SetTimeOfDay(_appliedTod, _appliedNight);
         }
 
         /// <summary>

@@ -568,6 +568,70 @@ and you cannot see the shadows a teammate's beam casts 40 m away.
 > Unity's built-in primitive meshes, and destroying one of those breaks every primitive for the rest of
 > the session — a far worse bug than the leak. Avatar meshes are exempt; `Avatar.Dispose` owns them.
 
+### Merged from `main`, 2026-08-06 — the duplicate bodies pass
+
+`main` built the same thing independently while this branch was building `Avatar.cs`
+(`CharacterMesh.cs` + `CharacterRig.cs`, PR #9). **`Avatar` won** on the merge: it carries the richer
+pose set (roar, carry, filming, frozen/incap, yaw-rate head lead) and `TitleActors`/`TorchBeam` are
+built on its anchors, while nothing depended on the rig. The other implementation was deleted whole —
+do not resurrect half of it. Three findings from that branch outlived their code and were kept:
+
+- **The parka recolour never worked.** A specialty is dealt *after* the figure is built, so the colour
+  has to be re-checked every frame. `main` had it gated on `IsOwner` — i.e. it only ran for the one
+  player whose body is hidden. This branch had a different form of the same bug: `_baseBodyColor` was
+  recomputed and **never applied to a material**, a dead write. It is pushed to `_bodyMat` now, on
+  change only.
+- **`DisposeVisuals` leaked the torch.** The owner's flashlight is reparented to the *camera*, so it is
+  no longer under `_visualRoot` — dropping the root left a live spot light in the scene. The light is
+  destroyed by hand now, and `_recMat`/`TorchBeam`'s material with it.
+- **Body status tint was lost and is still missing.** The rig had `SetStatusTint` (frozen blue, incap
+  black, dazzled white); `Avatar` has no colour API at all, so frozen/incapacitated/dazzled bodies
+  currently read only from pose. Worth adding to `Avatar` — it is the one thing the deleted branch had
+  that this one does not.
+
+## [startup] Startup: what happens before the first frame
+
+Owner report, same day: *"the first time after recompiling, the title screens don't load right and it
+sticks on one initial frame."*
+
+**`WorldBuilder.Awake` was doing the entire boot** — world gen, all the geometry, a runtime NavMesh
+bake over ~2,400 tree meshes, and the audio synthesis — and `Awake` runs *before the first frame is
+ever presented*. Its total is exactly how long the window sits on a stale image with no title screen
+on it. "First run after a recompile" is the tell: a domain reload throws away every static cache
+(`ProcTex`'s normal maps, `MeshUtil._unitCube`) and Unity has to compile the shader variants on
+first use as well, so that one run pays for all of it.
+
+- **The NavMesh bake is deferred.** It is the largest single item and the only consumer is a CPU
+  bot — which needs a host, which needs a button on a title screen that cannot be drawn yet.
+  `WorldBuilder.EnsureNavMesh()` bakes on demand and `YetiBot`/`SearcherBot` call it from `Awake`,
+  so any future spawn path gets a surface without having to know it had to arrange one. Being late
+  is safe: both bots fall back to beeline steering when a query fails, and collision is the shared
+  sim's regardless. It also no longer runs on plain clients, which were baking a surface only the
+  host would ever query.
+- **`[boot]` timings are logged per stage**, because "startup is slow" is unactionable and "the
+  geometry is 4 of the 6 seconds" is not. Read it in the play-test log or the Console.
+
+**Two separate title-screen bugs, both from the same shape of mistake — work sitting below an early
+return, or work nobody was actually doing:**
+
+- `WorldBuilder.InvalidatePalette()` only cleared the `_lastTod` cache and left the *actual*
+  re-apply to whoever called `SetTimeOfDay` next. Every caller (title mode, `FogMul`, a reseed) was
+  therefore silently depending on `GameManager.Update` — a **scene NetworkObject**, i.e. a
+  networking object, to light the **menu**. When it ran, this looked fine. When it didn't, the world
+  kept whatever palette `Awake` baked in (gameplay dusk, title mode off) and the backdrop sat frozen
+  in the wrong lighting behind the menu. It now re-applies immediately, and `TitleMenu` drives the
+  sky itself while nothing is connected instead of borrowing a match object's tick.
+- The JOIN timeout lived *inside* `SetTitleLighting`, **below** that method's "already in this mode"
+  early return — so it only ran on the single frame the lighting flipped, which is precisely the
+  frame a join cannot have timed out on yet. A dead address sat on "connecting…" forever. Moved to
+  `Update`, and it now says why on screen.
+
+Also fixed while in the area: `HPLog` was calling `Time.realtimeSinceStartup` from
+`Application.logMessageReceivedThreaded`, which fires on *whatever thread logged*. The Time API is
+main-thread only, so every `Debug.Log` raised off the main thread threw from inside a log handler —
+about the least attributable place an exception can come from. It uses a `Stopwatch` now.
+
+
 ## [searcher-bots] The CPU searchers (`SearcherBot`) — a shell, deliberately
 
 Title → SINGLE PLAYER → **PLAY AS YETI** spawns four CPU searchers and hands the human the monster.

@@ -138,6 +138,7 @@ namespace Metoh.Game
         private Material _bodyMat, _gearMat, _eyeMat;
         private Light _flashlight;
         private Renderer _recDot;
+        private Material _recMat;
         private byte _builtRole = 255;
         private Color _baseBodyColor;
         private Avatar _avatar;
@@ -1581,13 +1582,16 @@ namespace Metoh.Game
                 _beam = TorchBeam.Build(lightGo.transform, _flashlight.range, _flashlight.spotAngle);
 
                 // REC light — a red bead above a filming searcher's head (like the web rec light).
+                // Parented to the HEAD so it rides the gait instead of hovering at a fixed point the
+                // body walks out from under.
                 var rec = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                 Destroy(rec.GetComponent<UnityEngine.Collider>());
                 rec.transform.SetParent(_avatar.HeadAnchor, false);
                 rec.transform.localScale = Vector3.one * 0.07f;
                 rec.transform.localPosition = new Vector3(0f, 0.30f, 0f);
                 _recDot = rec.GetComponent<MeshRenderer>();
-                _recDot.sharedMaterial = MeshUtil.Emissive(Color.black, Color.red, 4f);
+                _recMat = MeshUtil.Emissive(Color.black, Color.red, 4f);
+                _recDot.sharedMaterial = _recMat;
                 _recDot.enabled = false;
             }
 
@@ -1617,13 +1621,26 @@ namespace Metoh.Game
             if (_gearMat != null) Destroy(_gearMat);
             if (_eyeMat != null) Destroy(_eyeMat);
             _bodyMat = _gearMat = _eyeMat = null;
+            // The torch has to go by HAND, before the root does. The owner's has been REPARENTED to the
+            // camera by this point, so it is no longer under the visual root — dropping the root alone
+            // left a live spot light floating in the scene, still lighting the snow from nowhere.
+            // The beam is a child of the light, so its GameObject dies with it, but it owns a material
+            // instance that only Dispose releases.
+            _beam?.Dispose();
+            _beam = null;
+            if (_flashlight != null) { Destroy(_flashlight.gameObject); _flashlight = null; }
+            if (_recMat != null) { Destroy(_recMat); _recMat = null; }
             if (_visualRoot != null) Destroy(_visualRoot.gameObject);
             _visualRoot = null;
-            _flashlight = null;
             _recDot = null;
-            _beam = null;
         }
 
+        /// <summary>
+        /// A plain Unity message rather than a FishNet callback, like Update and LateUpdate above:
+        /// this has to run whenever the GameObject dies, including paths that never went through a
+        /// clean despawn. (FishNet's own destroy handling lives on NetworkObject, a different
+        /// component, so there is nothing here to shadow.)
+        /// </summary>
         private void OnDestroy()
         {
             DisposeVisuals();
@@ -1679,22 +1696,22 @@ namespace Metoh.Game
             if (_recDot != null && !base.IsOwner)
                 _recDot.enabled = Filming.Value && (Time.time % 0.8f) < 0.55f;
 
-            if (_bodyMat != null)
-            {
-                Color target = _baseBodyColor;
-                if (Status.Value == StatusFrozen) target = Color.Lerp(_baseBodyColor, MeshUtil.Rgb(0x9ac8ff), 0.65f);
-                else if (Status.Value == StatusIncap) target = Color.Lerp(_baseBodyColor, Color.black, 0.55f);
-                else if (Dazzled.Value) target = Color.Lerp(_baseBodyColor, Color.white, 0.5f);
-                _bodyMat.SetColor("_BaseColor", target);
-            }
-
             if (_beam != null) _beam.SetOn(base.IsOwner ? OwnFlashOn : FlashOn.Value);
 
-            // Body colour can change when the specialty is dealt mid-session.
-            if (!IsYeti && !string.IsNullOrEmpty(Specialty.Value))
+            // The parka colour is dealt with the specialty, which can land AFTER the figure was built,
+            // so it has to be re-checked rather than only read in BuildVisuals. This used to compute
+            // _baseBodyColor and stop there — the field was assigned and never applied to anything, so
+            // a specialty dealt mid-session recoloured nobody. Pushed to the material now, and only on
+            // an actual change: this runs every frame for every player.
+            if (!IsYeti && _bodyMat != null && !string.IsNullOrEmpty(Specialty.Value))
             {
                 int hex = SpecialtyColors.TryGetValue(Specialty.Value, out int c) ? c : 0x9aa2aa;
-                _baseBodyColor = MeshUtil.Rgb(hex);
+                Color dealt = MeshUtil.Rgb(hex);
+                if (dealt != _baseBodyColor)
+                {
+                    _baseBodyColor = dealt;
+                    _bodyMat.color = dealt;
+                }
             }
 
             UpdateAvatar();

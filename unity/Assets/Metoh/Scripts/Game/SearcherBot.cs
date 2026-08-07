@@ -113,6 +113,7 @@ namespace Metoh.Game
         {
             _self = GetComponent<HPPlayer>();
             _path = new NavMeshPath();
+            WorldBuilder.EnsureNavMesh(); // on-demand bake; see YetiBot.Awake
         }
 
         private void Update()

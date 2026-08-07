@@ -240,6 +240,10 @@ Shared (`shared/sim/`) — dependency‑free deterministic sim, imported by both
 - **Weather** (`Weather.cs`) is bootstrapped from `WorldBuilder.Awake` and follows `Camera.main`, so the
   **title cinematic gets the same snow the match does**. `TitleActors.cs` stages avatars in the title
   shots; they touch no networking and are destroyed the moment a connection comes up.
+- **`WorldBuilder.Awake` runs before the first frame is presented**, so anything added to it is time
+  the window spends on a stale image with no title screen. It logs `[boot]` timings per stage. The
+  NavMesh bake is deliberately *not* there — it is on demand via `WorldBuilder.EnsureNavMesh()`
+  ([startup]).
 - Colyseus **0.15** schema uses **legacy decorators** — server `tsconfig` has
   `experimentalDecorators: true`, `useDefineForClassFields: false`. Don't "modernize" these.
 - Light intensities are physically‑based‑ish and **tuned by eye** — expect to nudge.
