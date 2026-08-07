@@ -31,7 +31,7 @@ namespace Metoh.Game
 
         private static StreamWriter _writer;
         private static readonly object Gate = new object();
-        private static float _nextFlush;
+        private static double _nextFlush;
         private static bool _installed;
         private static bool _failed; // a broken log must never take the game down with it
 
@@ -178,10 +178,13 @@ namespace Metoh.Game
                 {
                     _writer.WriteLine(line);
                     // Flushing on a timer rather than per line. Checked here (not in an Update) so the
-                    // class needs no MonoBehaviour and works before any scene exists.
-                    if (Time.realtimeSinceStartup >= _nextFlush)
+                    // class needs no MonoBehaviour and works before any scene exists — and off the
+                    // Stopwatch, not UnityEngine.Time, because this runs on the logging thread too
+                    // (see Clock).
+                    double now = Uptime.Elapsed.TotalSeconds;
+                    if (now >= _nextFlush)
                     {
-                        _nextFlush = Time.realtimeSinceStartup + 1f;
+                        _nextFlush = now + 1.0;
                         _writer.Flush();
                     }
                 }
@@ -221,12 +224,22 @@ namespace Metoh.Game
         /// <summary>
         /// Seconds since the process started, which is what correlates with "about a minute in it
         /// did X". Match time is logged separately by the events that know it.
+        ///
+        /// A Stopwatch and not <c>Time.realtimeSinceStartup</c>, for one specific reason:
+        /// <see cref="OnUnityLog"/> is subscribed to <c>logMessageReceivedThreaded</c>, which fires
+        /// on whatever thread logged — and the UnityEngine.Time API is main-thread only. So every
+        /// Debug.Log raised off the main thread (jobs, the network read loop, a worker) was calling
+        /// a main-thread API from a background thread, and the throw came out of the middle of a log
+        /// handler, where it is about as hard to attribute as an exception can be. Stopwatch is
+        /// thread-safe and measures the same thing.
         /// </summary>
+        private static readonly System.Diagnostics.Stopwatch Uptime = System.Diagnostics.Stopwatch.StartNew();
+
         private static string Clock()
         {
-            float t = Time.realtimeSinceStartup;
-            int m = (int)(t / 60f);
-            float s = t - m * 60f;
+            double t = Uptime.Elapsed.TotalSeconds;
+            int m = (int)(t / 60.0);
+            double s = t - m * 60.0;
             return m.ToString("00", CultureInfo.InvariantCulture) + ":" +
                    s.ToString("00.0", CultureInfo.InvariantCulture);
         }
