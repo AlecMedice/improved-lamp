@@ -451,6 +451,114 @@ from the tree/cave index — **never from an RNG stream**, because the forest lo
 > missing file), and tree cost rose ~46% on the high tier at the same time render scale went to
 > native. If frames are short, the F3 levers in §7 order still apply.
 
+## 5d. The figures — the last two capsules in the game
+
+Owner report, 2026-08-06, after §5c: *"they're still a little weird"*. They were. §5b and §5c both
+rebuilt the world's silhouettes and both stopped at the world: **the searchers and the Yeti were
+still `PrimitiveType.Capsule`, scaled** — a 0.8×0.9×0.8 one and a 1.3×1.35×1.3 one with two spheres
+stuck on for eyes. Every argument §5c makes about the conifer applies here with more force, because
+a figure is the thing a player actually looks at.
+
+Two files, both pure presentation, both client-side, neither touching the sim:
+
+- **`CharacterMesh.cs`** — lathed body parts. A `Ring` is an *ellipse* with a fore/aft offset, which
+  is what lets a torso be wider than it is deep and a spine curve into a hunch; a stack of concentric
+  circles can only ever make a bollard. On top of it: `LimbDown`/`LimbUp` (capsule-ended limb
+  segments), `Torso`, `Head` (brow ridge + muzzle), `Blob` (boots, mitts, the pack) and `Ruff`.
+- **`CharacterRig.cs`** — assembles the two figures and animates them.
+
+**Three traps in `Lathe`, all of which fail as "the mesh is invisible" rather than as an error:**
+
+1. **Ring order is bottom-up, and the winding depends on it.** `LimbDown` writes its profile
+   pivot-first, i.e. downward, and has to `Reverse()` before handing it over. Get this wrong and
+   every side face points inward — the geometry is there and you cannot see it from outside.
+2. **`(cos → x, sin → z)`, matching `MeshUtil.TaperedCylinder`/`Conifer`.** The triangle winding is
+   copied from those, so swapping the pair reverses the direction of travel around the ring and
+   flips every face. A phase offset is safe (it only rotates the seam onto the figure's back);
+   swapping the functions is not.
+3. **Seam normals must be welded.** A lathe duplicates the vertex column where theta wraps, or U
+   runs 1→0 across the last quad — but two coincident vertices get two independently averaged
+   normals and that draws a hard lighting line down the mesh. On a boulder nobody notices; on a
+   face at torch range it is a crack. `WeldSeamNormals` averages the known index pairs after
+   `RecalculateNormals` and before `RecalculateTangents`.
+
+   The same class of mistake bites `Ruff`, differently: it is double-sided, and emitting reversed
+   triangles over *shared* vertices makes each vertex average its front and back contributions to
+   roughly zero and shades the whole thing black. The back half needs its own copy of the vertices.
+
+**What actually makes them read.** For the searcher: a hood shell set back off the skull so the face
+sits in a recess (a hooded head with no neck reads as human from much farther than a bare one), a
+pack, and **retroreflective tape** at 0.92 smoothness — the one material in the game that exists to
+be hit by a torch, and incidentally how you tell a teammate from a rock at 50 m. For the Yeti, in
+descending order: the **hunch** (head forward of the hips, not above them), **arm length** (hands
+past the knees), **no neck** (skull down between two trapezius humps), and **a ragged edge** — the
+mane/cuff/haunch `Ruff`s exist purely to stop the outline resolving into something machined.
+
+**The gait is driven by distance, not by time.** `_phase += speed / cycleMetres * 2π * dt`, with
+speed measured off the *transform* delta so one code path serves the owner (moved by the sim) and a
+remote (moved by the NetworkTransform). Feet driven by the clock skate whenever speed changes; feet
+driven by the ground do not. A frozen or dragged body stops walking even though its position is
+changing, and a cave fast-travel is discarded as a teleport rather than credited to the stride.
+
+> **Everything above is unverified in the editor** — same standing caveat as §5b/§5c. The specific
+> risks are proportions (measured on paper: soles at y≈0, searcher crown 1.82 m with the camera at
+> `Player.EyeHeight` 1.7, Yeti crown 2.58 m with eyeshine at ≈2.40) and gait tuning, which is
+> first-guess. `CharacterRig`'s named constants are the dials.
+
+**Materials are now per-figure and per-part**, so status tinting had to move: each material stores
+its own base colour and `SetStatusTint` lerps all of them together, rather than one capsule material
+being overwritten. The Yeti's eyeshine is deliberately *excluded* — it must stay lit when the body
+goes blue with freeze or black with a drag, because it is the only thing telling a searcher which
+way the thing is facing. And `HPPlayer.OnDestroy` now releases the meshes and materials: `new
+Mesh`/`new Material` allocate native objects Unity never collects, and a figure is rebuilt on every
+role change.
+
+> One live bug fell out of the rewrite: the specialty→parka-colour update was gated on `IsOwner`, so
+> it only ever ran for the one player whose body is hidden. No searcher had ever been recoloured by
+> their dealt specialty.
+
+## 5e. Startup: what happens before the first frame
+
+Owner report, same day: *"the first time after recompiling, the title screens don't load right and it
+sticks on one initial frame."*
+
+**`WorldBuilder.Awake` was doing the entire boot** — world gen, all the geometry, a runtime NavMesh
+bake over ~2,400 tree meshes, and the audio synthesis — and `Awake` runs *before the first frame is
+ever presented*. Its total is exactly how long the window sits on a stale image with no title screen
+on it. "First run after a recompile" is the tell: a domain reload throws away every static cache
+(`ProcTex`'s normal maps, `MeshUtil._unitCube`) and Unity has to compile the shader variants on
+first use as well, so that one run pays for all of it.
+
+- **The NavMesh bake is deferred.** It is the largest single item and the only consumer is a CPU
+  bot — which needs a host, which needs a button on a title screen that cannot be drawn yet.
+  `WorldBuilder.EnsureNavMesh()` bakes on demand and `YetiBot`/`SearcherBot` call it from `Awake`,
+  so any future spawn path gets a surface without having to know it had to arrange one. Being late
+  is safe: both bots fall back to beeline steering when a query fails, and collision is the shared
+  sim's regardless. It also no longer runs on plain clients, which were baking a surface only the
+  host would ever query.
+- **`[boot]` timings are logged per stage**, because "startup is slow" is unactionable and "the
+  geometry is 4 of the 6 seconds" is not. Read it in the play-test log or the Console.
+
+**Two separate title-screen bugs, both from the same shape of mistake — work sitting below an early
+return, or work nobody was actually doing:**
+
+- `WorldBuilder.InvalidatePalette()` only cleared the `_lastTod` cache and left the *actual*
+  re-apply to whoever called `SetTimeOfDay` next. Every caller (title mode, `FogMul`, a reseed) was
+  therefore silently depending on `GameManager.Update` — a **scene NetworkObject**, i.e. a
+  networking object, to light the **menu**. When it ran, this looked fine. When it didn't, the world
+  kept whatever palette `Awake` baked in (gameplay dusk, title mode off) and the backdrop sat frozen
+  in the wrong lighting behind the menu. It now re-applies immediately, and `TitleMenu` drives the
+  sky itself while nothing is connected instead of borrowing a match object's tick.
+- The JOIN timeout lived *inside* `SetTitleLighting`, **below** that method's "already in this mode"
+  early return — so it only ran on the single frame the lighting flipped, which is precisely the
+  frame a join cannot have timed out on yet. A dead address sat on "connecting…" forever. Moved to
+  `Update`, and it now says why on screen.
+
+Also fixed while in the area: `HPLog` was calling `Time.realtimeSinceStartup` from
+`Application.logMessageReceivedThreaded`, which fires on *whatever thread logged*. The Time API is
+main-thread only, so every `Debug.Log` raised off the main thread threw from inside a log handler —
+about the least attributable place an exception can come from. It uses a `Stopwatch` now.
+
 ## 6d. The CPU searchers (`SearcherBot`) — a shell, deliberately
 
 Title → SINGLE PLAYER → **PLAY AS YETI** spawns four CPU searchers and hands the human the monster.

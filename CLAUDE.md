@@ -225,9 +225,16 @@ Shared (`shared/sim/`) — dependency‑free deterministic sim, imported by both
   (`MeshUtil` does this; hand‑built meshes have to do it themselves) or it silently renders flat.
   But "materials, not mesh density" is **only true of surfaces, not silhouettes** — at night, fogged,
   the outline is nearly all the player gets, so shapes that read as primitives (stacked cones, scaled
-  spheres) do have to be rebuilt. See `UNITY_PORT_NOTES.md` §5b and **§5c**. Anything that varies
-  per‑instance in the forest must be hashed from an index, **never drawn from an RNG stream** (§3c).
-  The web build keeps the original flat look.
+  spheres) do have to be rebuilt. See `UNITY_PORT_NOTES.md` §5b, **§5c** and **§5d** (the figures).
+  Anything that varies per‑instance in the forest must be hashed from an index, **never drawn from
+  an RNG stream** (§3c). The web build keeps the original flat look.
+- **Character geometry** lives in `CharacterMesh.cs` (lathed body parts) + `CharacterRig.cs` (the two
+  figures + a distance‑driven procedural gait). Both are pure client presentation — nothing there is
+  replicated or read by the sim. `Lathe` has three invisible‑mesh traps (ring order, `(cos→x, sin→z)`
+  winding, seam‑normal welding) written up in **§5d**; read it before adding a body part.
+- **`WorldBuilder.Awake` runs before the first frame is presented**, so anything added to it is time
+  the window spends on a stale image with no title screen. It logs `[boot]` timings per stage. The
+  NavMesh bake is deliberately *not* there — it is on demand via `WorldBuilder.EnsureNavMesh()` (§5e).
 - Colyseus **0.15** schema uses **legacy decorators** — server `tsconfig` has
   `experimentalDecorators: true`, `useDefineForClassFields: false`. Don't "modernize" these.
 - Light intensities are physically‑based‑ish and **tuned by eye** — expect to nudge.

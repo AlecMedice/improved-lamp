@@ -48,6 +48,28 @@ namespace Metoh.Game
             SetTitleLighting(!connected); // the backdrop is lit well above gameplay dusk
             if (connected) { _connectStartedAt = -1f; return; }
 
+            // Join attempt timed out? (Tugboat fails quietly if nothing is listening.) This check
+            // used to live inside SetTitleLighting, BELOW that method's `already in this mode` early
+            // return — so it only ever ran on the single frame the lighting flipped, which is exactly
+            // the frame a join can't have timed out on yet. A stuck CONNECT sat there forever.
+            if (_connectStartedAt >= 0f && Time.time - _connectStartedAt > 8f)
+            {
+                InstanceFinder.ClientManager.StopConnection();
+                _connectStartedAt = -1f;
+                _error = "no answer from that address after 8s — is the host up, and the port open?";
+            }
+
+            // Drive the sky ourselves while nothing is connected.
+            //
+            // The palette is normally pushed every frame by GameManager.Update, but GameManager is a
+            // scene NetworkObject whose whole reason to exist is a match — leaning on it to light the
+            // MENU is an invisible dependency on a networking object ticking before any networking
+            // has happened. When it doesn't, the world keeps whatever palette WorldBuilder.Awake
+            // baked in (gameplay dusk, TitleMode off, cached by `_lastTod`), the title-mode boost
+            // never lands, and the backdrop sits frozen in the wrong lighting behind the menu.
+            // SetTimeOfDay early-outs when nothing changed, so this costs nothing when both run.
+            if (WorldBuilder.Instance != null) WorldBuilder.Instance.SetTimeOfDay(TitleTimeOfDay, 1);
+
             // At the title: keep the cursor free and drift the camera slowly around camp.
             if (Cursor.lockState != CursorLockMode.None)
             {
@@ -57,6 +79,13 @@ namespace Metoh.Game
             var cam = Camera.main;
             if (cam != null && cam.transform.parent == null) OrbitCamp(cam);
         }
+
+        /// <summary>
+        /// Where on the night the menu backdrop sits. Matches the value GameManager holds the sky at
+        /// outside a match — just past dusk, night one's full moon — so handing the sky over on
+        /// connect is not a visible jump.
+        /// </summary>
+        private const float TitleTimeOfDay = 0.05f;
 
         /// <summary>
         /// The title cinematic. Shared with the camp lobby (HPPlayer keeps it running there whenever
@@ -139,15 +168,8 @@ namespace Metoh.Game
         {
             if (WorldBuilder.TitleMode == on) return;
             WorldBuilder.TitleMode = on;
-            if (WorldBuilder.Instance != null) WorldBuilder.Instance.InvalidatePalette(); // re-apply now
+            if (WorldBuilder.Instance != null) WorldBuilder.Instance.InvalidatePalette(); // re-applies immediately
             if (PostFX.Instance != null) PostFX.Instance.SetTitleBrightness(on);
-
-            // Join attempt timed out? (Tugboat fails quietly if nothing is listening.)
-            if (_connectStartedAt >= 0f && Time.time - _connectStartedAt > 8f)
-            {
-                InstanceFinder.ClientManager.StopConnection();
-                _connectStartedAt = -1f;
-            }
         }
 
         private static bool Connected()

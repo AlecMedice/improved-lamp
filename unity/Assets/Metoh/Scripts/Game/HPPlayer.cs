@@ -135,12 +135,16 @@ namespace Metoh.Game
 
         // --- Visuals ---
         private Transform _visualRoot;
-        private Renderer _bodyRenderer;
-        private Material _bodyMat;
+        /// <summary>The figure: geometry, materials and the procedural gait (see CharacterRig).</summary>
+        private CharacterRig _rig;
         private Light _flashlight;
         private Renderer _recDot;
+        private Material _recMat;
         private byte _builtRole = 255;
         private Color _baseBodyColor;
+        /// <summary>Where the body was last frame, for the gait's ground speed. Presentation only.</summary>
+        private Vector3 _gaitLastPos;
+        private bool _gaitPosInit;
 
         // --- Senses overlay (V, Yeti, client-only render toggle like the web build) ---
         public static bool SensesOn;
@@ -1503,48 +1507,38 @@ namespace Metoh.Game
         {
             if (_builtRole == Role.Value) return;
             _builtRole = Role.Value;
+
+            // Tear the previous figure down by hand. The owner's flashlight in particular has been
+            // REPARENTED to the camera by now, so it is no longer under the visual root and dropping
+            // the root would leave a live spot light floating in the scene.
+            if (_rig != null) { _rig.Dispose(); _rig = null; }
+            if (_flashlight != null) { Destroy(_flashlight.gameObject); _flashlight = null; }
+            if (_recMat != null) { Destroy(_recMat); _recMat = null; }
+            _recDot = null;
             if (_visualRoot != null) Destroy(_visualRoot.gameObject);
             _visualRoot = new GameObject("Visual").transform;
             _visualRoot.SetParent(transform, false);
 
-            var body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-            Destroy(body.GetComponent<UnityEngine.Collider>());
-            body.transform.SetParent(_visualRoot, false);
-            _bodyRenderer = body.GetComponent<MeshRenderer>();
+            // A per-figure shape variant, hashed off the network object id so it is stable for the
+            // life of the player and identical on every client — the fringes and hems are hashed, not
+            // rolled, for the same reason the forest is (UNITY_PORT_NOTES §3c).
+            int variant = Mathf.Abs(base.ObjectId) * 31;
 
             if (IsYeti)
             {
-                body.transform.localScale = new Vector3(1.3f, 1.35f, 1.3f); // capsule h=2 -> ~2.7 m
-                body.transform.localPosition = new Vector3(0f, 1.35f, 0f);
-                _baseBodyColor = MeshUtil.Rgb(0x2a2018);
-                // Matted fur, not painted plastic. Low smoothness so it stays a light SINK — the Yeti
-                // reading as a silhouette that swallows the torch is half of what makes it scary.
-                _bodyMat = MeshUtil.Surface(_baseBodyColor, 0.08f, ProcTex.FurNormal, 1.15f, 2.2f);
-                _bodyRenderer.sharedMaterial = _bodyMat;
-                foreach (float sx in new[] { -0.16f, 0.16f })
-                {
-                    var eye = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                    Destroy(eye.GetComponent<UnityEngine.Collider>());
-                    eye.transform.SetParent(_visualRoot, false);
-                    eye.transform.localScale = Vector3.one * 0.12f;
-                    eye.transform.localPosition = new Vector3(sx, 2.3f, 0.55f);
-                    eye.GetComponent<MeshRenderer>().sharedMaterial =
-                        MeshUtil.Emissive(Color.black, MeshUtil.Rgb(0xffcc55), 3.5f);
-                }
+                _rig = CharacterRig.BuildYeti(_visualRoot, variant);
             }
             else
             {
-                body.transform.localScale = new Vector3(0.8f, 0.9f, 0.8f);
-                body.transform.localPosition = new Vector3(0f, 0.9f, 0f);
                 int hex = SpecialtyColors.TryGetValue(Specialty.Value ?? "", out int c) ? c : 0x9aa2aa;
                 _baseBodyColor = MeshUtil.Rgb(hex);
-                // Technical outerwear: a little sheen, woven surface.
-                _bodyMat = MeshUtil.Surface(_baseBodyColor, 0.24f, ProcTex.FabricNormal, 0.8f, 3f);
-                _bodyRenderer.sharedMaterial = _bodyMat;
+                _rig = CharacterRig.BuildSearcher(_visualRoot, _baseBodyColor, variant);
 
+                // The torch rides the searcher's right hand on remotes, so the beam leaves the body at
+                // the place the figure is holding it. (The OWNER's is reparented to the camera on the
+                // first frame it exists — see UpdateSharedVisuals.)
                 var lightGo = new GameObject("Flashlight");
-                lightGo.transform.SetParent(_visualRoot, false);
-                lightGo.transform.localPosition = new Vector3(0.18f, (float)Sim.Player.EyeHeight - 0.15f, 0.1f);
+                lightGo.transform.SetParent(_rig.TorchAnchor, false);
                 _flashlight = lightGo.AddComponent<Light>();
                 _flashlight.type = LightType.Spot;
                 // A searcher's torch is their main tool in the dark, so it reaches and punches harder
@@ -1562,19 +1556,41 @@ namespace Metoh.Game
                 _flashlight.enabled = false;
 
                 // REC light — a red bead above a filming searcher's head (like the web rec light).
+                // Parented to the HEAD so it rides the gait instead of hovering at a fixed point the
+                // body walks out from under.
                 var rec = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                 Destroy(rec.GetComponent<UnityEngine.Collider>());
-                rec.transform.SetParent(_visualRoot, false);
+                rec.transform.SetParent(_rig.Head, false);
                 rec.transform.localScale = Vector3.one * 0.09f;
-                rec.transform.localPosition = new Vector3(0f, 2.05f, 0f);
+                rec.transform.localPosition = new Vector3(0f, 0.42f, 0f);
                 _recDot = rec.GetComponent<MeshRenderer>();
-                _recDot.sharedMaterial = MeshUtil.Emissive(Color.black, Color.red, 4f);
+                _recMat = MeshUtil.Emissive(Color.black, Color.red, 4f);
+                _recDot.sharedMaterial = _recMat;
                 _recDot.enabled = false;
             }
 
             // First person: hide your own body, keep your light.
             if (base.IsOwner)
-                foreach (var r in _visualRoot.GetComponentsInChildren<Renderer>()) r.enabled = false;
+            {
+                _rig.SetVisible(false);
+                if (_recDot != null) _recDot.enabled = false;
+            }
+        }
+
+        /// <summary>
+        /// Release the figure's meshes and materials. `new Mesh(...)`/`new Material(...)` allocate
+        /// native objects Unity does not collect on its own, and a figure is rebuilt whenever the role
+        /// changes — so without this every re-roll leaks a whole body.
+        ///
+        /// A plain Unity message rather than a FishNet callback, like Update and LateUpdate above:
+        /// this has to run whenever the GameObject dies, including paths that never went through a
+        /// clean despawn. (FishNet's own destroy handling lives on NetworkObject, a different
+        /// component, so there is nothing here to shadow.)
+        /// </summary>
+        private void OnDestroy()
+        {
+            if (_rig != null) { _rig.Dispose(); _rig = null; }
+            if (_recMat != null) { Destroy(_recMat); _recMat = null; }
         }
 
         /// <summary>
@@ -1627,13 +1643,24 @@ namespace Metoh.Game
             if (_recDot != null && !base.IsOwner)
                 _recDot.enabled = Filming.Value && (Time.time % 0.8f) < 0.55f;
 
-            if (_bodyMat != null)
+            if (_rig != null)
             {
-                Color target = _baseBodyColor;
-                if (Status.Value == StatusFrozen) target = Color.Lerp(_baseBodyColor, MeshUtil.Rgb(0x9ac8ff), 0.65f);
-                else if (Status.Value == StatusIncap) target = Color.Lerp(_baseBodyColor, Color.black, 0.55f);
-                else if (Dazzled.Value) target = Color.Lerp(_baseBodyColor, Color.white, 0.5f);
-                _bodyMat.SetColor("_BaseColor", target);
+                // The parka colour is dealt with the specialty, which can land after the figure was
+                // built. This used to be gated on IsOwner — i.e. it only ever ran for the one player
+                // whose body is hidden, so a dealt specialty never actually recoloured anybody.
+                if (!IsYeti)
+                {
+                    int hex = SpecialtyColors.TryGetValue(Specialty.Value ?? "", out int c) ? c : 0x9aa2aa;
+                    _baseBodyColor = MeshUtil.Rgb(hex);
+                    _rig.SetCoatColor(_baseBodyColor);
+                }
+
+                if (Status.Value == StatusFrozen) _rig.SetStatusTint(MeshUtil.Rgb(0x9ac8ff), 0.65f);
+                else if (Status.Value == StatusIncap) _rig.SetStatusTint(Color.black, 0.55f);
+                else if (Dazzled.Value) _rig.SetStatusTint(Color.white, 0.5f);
+                else _rig.SetStatusTint(Color.white, 0f);
+
+                UpdateGait();
             }
 
             if (_visualRoot != null)
@@ -1642,14 +1669,36 @@ namespace Metoh.Game
                 var targetRot = lying ? Quaternion.Euler(90f, 0f, 0f) : Quaternion.identity;
                 _visualRoot.localRotation = Quaternion.Slerp(_visualRoot.localRotation, targetRot, Time.deltaTime * 8f);
             }
+        }
 
-            // Camera eye follows crouch for the owner; remotes just show the capsule.
-            if (base.IsOwner && Specialty.Value != null && _bodyRenderer != null && !IsYeti)
-            {
-                // Body colour can change when the specialty is dealt mid-session.
-                int hex = SpecialtyColors.TryGetValue(Specialty.Value, out int c) ? c : 0x9aa2aa;
-                _baseBodyColor = MeshUtil.Rgb(hex);
-            }
+        /// <summary>
+        /// Feed the figure's gait from the ground it is actually covering.
+        ///
+        /// Deliberately measured off the TRANSFORM rather than off the sim, so the same code drives
+        /// the owner (whose transform the sim moves) and a remote (whose transform the
+        /// NetworkTransform interpolates). One source, no divergence, and no per-role special case —
+        /// and it means the legs are always in step with the position everyone else can see, which is
+        /// the only definition of "not skating" that matters.
+        ///
+        /// Presentation only: nothing here is read by the sim, the server, or any ability check.
+        /// </summary>
+        private void UpdateGait()
+        {
+            Vector3 pos = transform.position;
+            float dt = Time.deltaTime;
+            if (!_gaitPosInit) { _gaitPosInit = true; _gaitLastPos = pos; }
+
+            float moved = Vector2.Distance(new Vector2(pos.x, pos.z), new Vector2(_gaitLastPos.x, _gaitLastPos.z));
+            _gaitLastPos = pos;
+            // A cave fast-travel is a teleport, not a sprint: crediting it to the stride would spin
+            // the legs through several cycles in one frame.
+            float speed = (dt > 1e-4f && moved < 3f) ? moved / dt : 0f;
+
+            // A frozen searcher is held in place by the roar and an incapacitated one is being
+            // dragged — in both cases the body is moving without walking, so the gait has to stop
+            // even though the position is changing.
+            bool held = Status.Value != StatusActive;
+            _rig.Animate(held ? 0f : speed, Crouched.Value, Status.Value == StatusIncap, dt);
         }
     }
 }

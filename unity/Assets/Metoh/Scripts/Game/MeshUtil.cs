@@ -228,8 +228,10 @@ namespace Metoh.Game
         /// <summary>
         /// Deterministic 0..1 hash. Not an RNG — it takes no state and advances nothing, which is
         /// precisely why it is safe to call from inside the forest loop (UNITY_PORT_NOTES §3c).
+        /// Shared with <see cref="CharacterMesh"/> rather than copied: two hashes that were meant to
+        /// match and quietly drift apart is a bug nobody would ever go looking for.
         /// </summary>
-        private static float Hash01(int n)
+        internal static float Hash01(int n)
         {
             uint h = (uint)n * 2654435761u;
             h ^= h >> 15;
