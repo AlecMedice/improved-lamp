@@ -422,6 +422,20 @@ at any distance. Fixes, in descending order of how much they changed:
   readable at range. Measure slope as the **gradient** (`length(n.xz)/n.y`), *not* `1 - n.y`: this
   terrain is gentle enough that `1 - n.y` never leaves the bottom 6% of its range and no threshold in
   it is tunable.
+
+  > **And it had never rendered either — for a third time, silently.** The first Unity compile of this
+  > work (2026-08-06) found `[Header(Break-up)]` in its Properties block. **ShaderLab parses the text
+  > inside `[Header(...)]` as a bare token, so a hyphen is a parse error** — `unexpected $undefined,
+  > expecting TVAL_ID` — and a ShaderLab parse error fails the *entire* shader, not the one line.
+  > Spaces are legal (`[Header(Slope blend)]` is fine) and the quoted display names may contain
+  > anything, because those are string literals. Only the attribute is grammar.
+  >
+  > What made it invisible is that `WorldBuilder` handles it *gracefully*: `Shader.Find("Metoh/Snowpack")`
+  > returns null, it logs a warning and falls back to flat snow. So the terrain rendered — just with no
+  > rock blend, no basin tint and no wind-scour, which is indistinguishable from "the art didn't land"
+  > unless you read the Console. **A fallback that hides a broken asset behind plausible output is the
+  > same failure mode as the two settings above**: the bug presents as an art problem. If a
+  > `Shader.Find` fallback ever fires, treat it as an error, not a degraded mode.
 - **The deep-snow basin is now visible.** `Movement.DeepSnowDepth` slows searchers over roughly a
   third of the map and that zone was completely unmarked. The shader reads `Player.DriftHeight` /
   `DriftDepth` directly — one source of truth, no second copy — so the tint can't disagree with the
@@ -828,10 +842,67 @@ Buffered, flushed once a second and forced at night rollover and match end.
   > `C:\Users\amedi\Metoh_port`, created fresh for the Metoh rebrand; `C:\Users\amedi\HollowPines`
   > no longer exists. The repo carries no `.meta` or `Library/`, so the live project is always a
   > separate tree, never a checkout.
+- **KNOW WHICH BUILD IS DEPLOYED BEFORE INTERPRETING A PLAY-TEST REPORT.** The thing to verify is
+  *your own assumption that the repo is what's running* — not the report. Between 2026-08-01 and
+  2026-08-06 the live project was never synced and never opened, so two entire passes (the
+  bodies/weather/torch overhaul, then a merge) were committed and pushed **without Unity compiling
+  them once**. The owner's two reports in that window — *"the yeti is literally 2 ovals"* and *"the
+  title screen hangs on an image"* — were **completely accurate descriptions of the build they had**.
+  Both were already fixed here. The observations were right; the deployment model was wrong, and it
+  was the agent side that held the wrong model.
+
+  So: a report is evidence about a *specific binary*. Pin down which one before reasoning about it —
+  three checks, none of which require opening Unity:
+
+  ```powershell
+  # 1. When was the project last OPENED? (Unity Hub's own bookkeeping)
+  $j = Get-Content "$env:APPDATA\UnityHub\projects-v1.json" -Raw | ConvertFrom-Json
+  $j.data.PSObject.Properties.Name | ForEach-Object {
+    "{0}  {1}" -f $j.data.$_.title, [DateTimeOffset]::FromUnixTimeMilliseconds($j.data.$_.lastModified).LocalDateTime }
+
+  # 2. When was it last COMPILED?
+  (Get-Item 'C:\Users\amedi\Metoh_port\Library\ScriptAssemblies\Assembly-CSharp.dll').LastWriteTime
+
+  # 3. Does it even have the files? (name the newest thing you added)
+  Test-Path 'C:\Users\amedi\Metoh_port\Assets\Metoh\Scripts\Game\Avatar.cs'
+  ```
+
+  If the compiled DLL predates the commit whose behaviour is being described, the report is about
+  older code. Say that plainly and sync — do not start debugging the symptom.
+
+- **`Unity Hub` and the `Unity Editor` are separate processes**, and the repo-side agent cannot tell
+  which is open from a description. The Hub is the launcher (project list, Open button); the Editor
+  is the app with the Scene view, Hierarchy, Console and ▶. `Get-Process Unity` is the editor;
+  `Get-Process 'Unity Hub'` is only the launcher. Worth checking directly because the two are easy
+  to conflate from either side of the conversation, and the distinction decides whether batchmode
+  can run at all (the editor holds `Temp/UnityLockfile`; the Hub does not).
+
+- **Rebuild the whole live project headlessly — no clicking, and it is the real compiler.**
+  Requires the editor closed (it holds `Temp/UnityLockfile`):
+
+  ```powershell
+  & 'C:\Program Files\Unity\Hub\Editor\6000.5.4f1\Editor\Unity.exe' -batchmode -quit -nographics `
+      -projectPath 'C:\Users\amedi\Metoh_port' -logFile <log> `
+      -executeMethod Metoh.EditorTools.GameSceneSetup.SetUpScene
+  ```
+
+  Then `grep -c "error CS" <log>` (must be 0) and `grep -i "Shader error\|Parse error" <log>`
+  (also 0). This is strictly stronger than the scratch-csproj check below: it compiles the C#
+  **and imports every shader**, which is the only way the `[Header]` parse error above was ever
+  going to surface. It does **not** enter Play mode, so it proves compilation, not behaviour —
+  `[boot]` timings and anything runtime still need a human to press ▶. Expect a few minutes cold.
+
+  Two log-reading traps: `Shader error in ''` with an **empty name** is usually Unity's own
+  (`Hidden/ChartRasterizerHardware` is unsupported on this GPU and is harmless) — attribute it by
+  checking the reported line number against your own shaders before assuming it is yours. And
+  FishNet logs `have the same assetPath hash of 0` repeatedly *during* prefab creation; those are
+  transient and `StampAssetPathHashes` clears them, so only care if they appear **after** the
+  final `[GameSceneSetup] Mountain scene wired` line ([fishnet-identity]).
+
 - **Smoke-compile outside Unity** before handing over — a scratch csproj (netstandard2.1, LangVersion
   9, `ENABLE_INPUT_SYSTEM`, plus `UNITY_EDITOR` and `UnityEditor*.dll` for a second editor pass)
-  against `Library/ScriptAssemblies/*.dll` and the Unity Managed DLLs. This has caught real errors
-  repeatedly.
+  against `Library/ScriptAssemblies/*.dll` and the Unity Managed DLLs. Faster than batchmode and
+  works while the editor is open, but it does **not** import shaders — see above.
 - **The editor log lives at `<project>/Logs/Editor.log`**, *not* the one in `AppData` (which goes
   stale with multiple editor instances). When something fails at runtime, read that file — the first
   error is usually several steps upstream of the reported one.

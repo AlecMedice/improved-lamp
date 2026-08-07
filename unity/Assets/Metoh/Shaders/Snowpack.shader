@@ -50,7 +50,12 @@ Shader "Metoh/Snowpack"
         _DriftDepth     ("Metres to full drift", Float) = 1.5
         _DriftStrength  ("Drift tint strength", Range(0,1)) = 0.65
 
-        [Header(Break-up)]
+        // NO PUNCTUATION IN A [Header]. ShaderLab parses the text inside as a bare token, so a hyphen
+        // is a parse error ("unexpected $undefined, expecting TVAL_ID") that fails the WHOLE shader —
+        // and the failure is silent in play: WorldBuilder's Shader.Find falls back to flat snow, so
+        // the terrain just quietly loses its rock blend and basin tint. Spaces are fine; the quoted
+        // display names below can keep their hyphens because those are string literals.
+        [Header(Break up)]
         _MacroTiling    ("Wind-scour tiling (metres)", Float) = 42
         _MacroStrength  ("Wind-scour strength", Range(0,1)) = 0.22
         _DetailMap      ("Detail normal", 2D) = "bump" {}

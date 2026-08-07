@@ -41,6 +41,25 @@ The client runs **standalone** (offline solo) if the server is down — you just
 other players, clues, pings, nights, or abilities. To test multiplayer, open one tab as
 Yeti and another as a searcher (`server/src/rooms` is authoritative).
 
+### Running the UNITY build — read this before debugging any play-test report
+**Editing this repo does not change what the owner plays.** The Unity work lives in two places:
+
+| | |
+|---|---|
+| `unity/Assets/Metoh/` (here) | source only — **not an openable Unity project** (no `Packages/`, no `ProjectSettings/`) |
+| `C:\Users\amedi\Metoh_port` | the real Unity project the editor opens. Not a git repo. **Never create or recreate it** |
+
+Code moves between them only by an explicit `robocopy` (three trees: `Scripts/`, `Shaders/`, and
+`csharp/Metoh.Sim` → `Assets/Metoh/Sim`). No button inside Unity reaches into this repo.
+
+**This gap silently swallowed 5 days of work** (2026-08-01 → 08-06): two passes were committed and
+pushed without Unity ever compiling them once. The owner's bug reports in that window were accurate
+about the build they had — the wrong assumption was *ours*, that the repo is what runs. **A
+play-test report is evidence about a specific binary: establish which one before reasoning about
+it**, via the checks in `UNITY_PORT_NOTES.md` **[workflow]**. Same section has the headless
+`-executeMethod ... SetUpScene` rebuild, which compiles the C# *and* imports the shaders without
+anyone clicking anything; use it to prove Unity work compiles instead of claiming it untested.
+
 ## Verify your work (do this before claiming done)
 ```bash
 cd client && npx tsc --noEmit && npx vite build     # client typechecks + bundles

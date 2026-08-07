@@ -459,15 +459,73 @@ person. The deep-snow smoke test also proved *why* the slow itself cannot be ass
 level — hand-driving a socket measures the harness, not the sim — so that stays covered by vitest and
 the parity harness instead.
 
+## 2026-08-06 — merging `main`, and finding out none of this had ever run
+
+Two things happened this day, and the second one reframes the first.
+
+**1. `main` and `yeti_port` had built the same feature twice.** While this branch wrote `Avatar.cs`,
+a cloud-agent PR (#9, `claude/graphics-realism-title-screen-w5fc2v`) landed `CharacterMesh.cs` +
+`CharacterRig.cs` on `main` — the same procedural-body feature, independently, down to the same
+`ObjectId * 31` variant hash and the same distance-driven gait rule. ~1,300 lines of parallel work.
+
+Resolved by merge commit `e160a30`, **keeping `Avatar.cs`** (richer pose set — roar, carry, filming,
+frozen/incap, yaw-rate head lead — and `TitleActors`/`TorchBeam` are built on its anchors, while
+nothing depended on the rig) and deleting the other implementation **whole**. Three of the losing
+branch's findings outlived its code and were kept: the parka recolour (broken on *both* branches, in
+different ways), the leaked reparented flashlight in `DisposeVisuals`, and the JOIN timeout stranded
+below an early return. Full detail in `UNITY_PORT_NOTES.md` [bodies]. Lost and not yet replaced:
+`SetStatusTint`, so frozen/incap/dazzled bodies currently read from pose alone.
+
+`main` was then fast-forwarded to the merge; both branches and both remotes sit on `e160a30`.
+
+**2. None of it had ever been compiled by Unity.** The live project had not been synced since
+**2026-08-01** or opened since **08-02**. Everything from the bodies pass onward — `Avatar.cs`,
+`Weather.cs`, `TorchBeam.cs`, `TitleActors.cs`, the startup fix — existed only in the repo.
+
+The owner's two reports that drove this day's work (*"the yeti is literally 2 ovals"*, *"the title
+screen hangs on an image"*) were **accurate**: that is exactly what Aug-1 code does. Capsule bodies
+are precisely what the build had, because `Avatar.cs` was not in it. The mistaken belief was on the
+repo side — that committing and pushing put code in front of the player. It does not, and the
+distance between "committed" and "running" had grown to five days without anything surfacing it.
+
+Synced, then rebuilt headlessly (`-batchmode -executeMethod GameSceneSetup.SetUpScene`): **0
+`error CS`**, scene wired. That first real compile immediately found something no amount of reading
+would have:
+
+> **`Snowpack.shader` — the terrain shader — had never parsed.** `[Header(Break-up)]`: ShaderLab
+> reads the text inside `[Header(...)]` as a bare token, so the **hyphen** is a parse error that
+> fails the *entire* shader. And `WorldBuilder` handles it *gracefully* — `Shader.Find` misses, it
+> logs a warning, falls back to flat snow — so the slope rock-blend, the deep-snow basin tint and
+> the wind-scour had simply never rendered, presenting as "the art didn't land" rather than as a
+> bug. One character. Third time on this project that material work silently didn't render; written
+> up under [legibility] with the rule: **if a `Shader.Find` fallback fires, treat it as an error.**
+
+The durable lesson is in `CLAUDE.md` and [workflow]: **editing this repo does not change what the
+owner plays**, and a play-test report must be dated against
+`Library/ScriptAssemblies/Assembly-CSharp.dll` before it is debugged.
+
 ## If you are picking this up next
+
+**State:** `main` == `yeti_port` == `origin/*` == `e160a30`. Working tree carries the uncommitted
+Snowpack fix + these docs. The live project at `C:\Users\amedi\Metoh_port` **is** synced and
+compiles clean as of 2026-08-06 — but has still never been in Play mode.
 
 In rough order of value:
 
-1. **Run it.** Everything visual and audible is unseen and unheard. The realism pass's tiling scales
-   especially are the kind of thing that is obviously wrong the moment you look and impossible to
-   guess from a compiler.
-2. **Add SSAO** in the live project ([materials]) — biggest remaining visual gain, two minutes of clicking.
-3. **`SearcherBot`'s EXPLORE**, which is random roam, and is why a bot team reads as five people
+1. **Run it — and this time it is genuinely runnable.** Everything visual and audible is still
+   unseen: all character animation, all weather, the torch shaft, the title actors, and the snowpack
+   material that has never once rendered. The animation pass is mostly *motion*, which a compiler
+   cannot check at all — limb rotation signs were derived in a comment rather than observed, so an
+   arm swinging backwards is a sign flip, not a redesign.
+2. **Read the `[boot]` line in the Console** and settle the title-screen hang. The NavMesh bake is
+   out of `Awake`, but the geometry build (~2,500 trees + ~5,200 undergrowth meshes) is still
+   synchronous before the first frame. If `geometry` dominates, spread it across frames — the
+   cinematic only needs the *sim* world (`GetHeight`, `Paths`), not the meshes, and collision is
+   analytic, so deferring the geometry is safe.
+3. **Give `Avatar` a colour API** to restore the status tint lost with `CharacterRig` — frozen,
+   incapacitated and dazzled currently have no colour signal at all.
+4. **Add SSAO** in the live project ([materials]) — biggest remaining visual gain, two minutes of clicking.
+5. **`SearcherBot`'s EXPLORE**, which is random roam, and is why a bot team reads as five people
    wandering rather than as a search party.
-4. **Balance the deep-snow constants** — `deepSnowFactor`, `driftHeight`, `driftDepth`, print
+6. **Balance the deep-snow constants** — `deepSnowFactor`, `driftHeight`, `driftDepth`, print
    stride/lifetime are all first-guess and none has met a player.
