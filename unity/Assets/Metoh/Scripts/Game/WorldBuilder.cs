@@ -576,7 +576,7 @@ namespace Metoh.Game
                 // stunted variant, so high ground reads as wind-beaten and white; below, crowns
                 // alternate as before. All of this is pure material/mesh CHOICE driven by the
                 // already-computed height and index — no rand() call is added, moved or skipped, so
-                // the tree stream stays in lockstep with WorldData.BuildColliders (UNITY_PORT_NOTES
+                // the tree stream stays in lockstep with WorldData.BuildColliders (UNITY_NOTES
                 // [rng-lockstep]). The treeIndex % 2 alternation was never an RNG draw either, which is why it
                 // is safe to key off it here.
                 bool aboveSnowline = y >= SnowlineHeight;
@@ -955,7 +955,7 @@ namespace Metoh.Game
         /// rather than water.
         ///
         /// Its own RNG stream, like the undergrowth: nothing here may perturb the tree/collider
-        /// lockstep (UNITY_PORT_NOTES 3c).
+        /// lockstep (UNITY_NOTES [rng-lockstep]).
         /// </summary>
         private void BuildPressureRidges(float cx, float cz, float rx, float rz)
         {
@@ -1286,7 +1286,7 @@ namespace Metoh.Game
         private void Boulder(Material rock, double x, double z, double r)
         {
             // Hashed from the position, so a given world always gets the same rocks and no RNG stream
-            // is touched (UNITY_PORT_NOTES [rng-lockstep]).
+            // is touched (UNITY_NOTES [rng-lockstep]).
             int variant = Mathf.Abs((int)(x * 73.3 + z * 149.7)) % 8;
             var go = NewMeshGo("Boulder", MeshUtil.Rock((float)r, 7, 10, variant), rock);
             float y = (float)World.GetHeight(x, z);
@@ -1761,7 +1761,7 @@ namespace Metoh.Game
         /// Nudge a palette colour deterministically per forest chunk, so neighbouring stands differ.
         ///
         /// Uses its own hash of the cell index rather than any RNG stream — this must never touch the
-        /// tree/collider lockstep (UNITY_PORT_NOTES [rng-lockstep]), and being a pure function of the index means
+        /// tree/collider lockstep (UNITY_NOTES [rng-lockstep]), and being a pure function of the index means
         /// it is stable across a rebuild without needing a stream at all. Value-only: hue is left
         /// alone so the palette still reads as one deliberate scheme rather than as noise.
         /// </summary>

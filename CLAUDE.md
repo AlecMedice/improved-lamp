@@ -5,16 +5,18 @@ for proof of the **Yeti** (played by the 6th player). Browser game: **Three.js c
 Colyseus server, TypeScript everywhere**. Stylized low‑poly, smooth‑shaded, dusk‑to‑dawn.
 
 **The project was re-themed from "Hollow Pines" (a Pacific-NW Bigfoot hunt) to Metoh in Aug 2026**,
-to escape overlap with the Steam game *BIGFOOT*. Plan and rationale: `docs/Metoh_migration.md`.
-One thing to know: the **web build keeps its forest visuals on purpose** (only identifiers were
-renamed — web visuals are abandoned; the Unity build carries the snow re-theme).
+to escape overlap with the Steam game *BIGFOOT* — full rename + rebrand + a Himalayan visual
+re-theme, on branch `yeti_port`, in git history if the "why" of a specific old identifier is ever
+needed. One thing to know: the **web build keeps its forest visuals on purpose** (only identifiers
+were renamed — web visuals are abandoned; the Unity build carries the snow re-theme).
 
 Read `docs/` for the full picture — every file there is current, nothing is a stale plan:
 - `GAME_DESIGN.md` — the GDD, source of truth for rules · `STORY.md` — world + the five characters
 - `CHARACTER_FUNC_DEV.md` — searcher specialties, the evidence/casting system, the duffel
-- `ROADMAP.md` — phases (the Unity port's old build log `July19Work.md` was deleted 2026-08-05 —
-  it is in git history if you ever need it; `Metoh_migration.md` is the current record)
-- `UNITY_PORT_NOTES.md` — Unity traps, conventions and remaining work;
+- `ROADMAP.md` — phases (two build logs were retired once their durable lessons were folded into
+  `UNITY_NOTES.md`: `July19Work.md`, deleted 2026-08-05, and `Metoh_migration.md`, deleted
+  2026-08-08 — both are in git history if you ever need the original narrative)
+- `UNITY_NOTES.md` — Unity traps, conventions and remaining work;
   **read before touching the Unity build**. Its sections are cited by **bracketed id**
   (`[rng-lockstep]`, `[materials]`, `[bodies]`), never by number — cite the id, never the position.
   (Other docs keep their own `§`-numbering; `GAME_DESIGN.md` §7.7 is unaffected.)
@@ -56,7 +58,7 @@ Code moves between them only by an explicit `robocopy` (three trees: `Scripts/`,
 pushed without Unity ever compiling them once. The owner's bug reports in that window were accurate
 about the build they had — the wrong assumption was *ours*, that the repo is what runs. **A
 play-test report is evidence about a specific binary: establish which one before reasoning about
-it**, via the checks in `UNITY_PORT_NOTES.md` **[workflow]**. Same section has the headless
+it**, via the checks in `UNITY_NOTES.md` **[workflow]**. Same section has the headless
 `-executeMethod ... SetUpScene` rebuild, which compiles the C# *and* imports the shaders without
 anyone clicking anything; use it to prove Unity work compiles instead of claiming it untested.
 
@@ -64,7 +66,15 @@ anyone clicking anything; use it to prove Unity work compiles instead of claimin
 ```bash
 cd client && npx tsc --noEmit && npx vite build     # client typechecks + bundles
 cd server && npx tsc --noEmit && npm test            # server typechecks + vitest (sim + anti-cheat)
+./server/node_modules/.bin/tsx csharp/parity/gen-golden.ts && dotnet run --project csharp/Parity  # C# sim parity — must end "PARITY OK"
 ```
+Regen **then** run, always — `Parity.csproj` copies `golden.json` into `bin/`. Regenerate whenever
+`shared/sim` output or key names change (a byte-identical regen after a behaviour change means the
+fixture didn't exercise the change — add a probe, don't assume you're safe). This also runs in CI
+(`.github/workflows/ci.yml`'s `parity` job regenerates and `git diff --exit-code`s the fixture before
+running the harness), but run it locally before pushing rather than finding out from a red PR.
+(`npx -p ts-node -p typescript` throws on this machine — use the `tsx` in `server/node_modules`.)
+
 The **vitest** suite (`server/test/`) covers the two things unit tests protect best: `shared/sim`
 determinism (same seed ⇒ identical world + `stepPlayer` sequences) and the pure server-authority
 helpers in `server/src/rooms/antiCheat.ts` (filming LOS/aim, speed-gate token bucket, resource
@@ -247,15 +257,20 @@ Shared (`shared/sim/`) — dependency‑free deterministic sim, imported by both
   (`MeshUtil` does this; hand‑built meshes have to do it themselves) or it silently renders flat.
   But "materials, not mesh density" is **only true of surfaces, not silhouettes** — at night, fogged,
   the outline is nearly all the player gets, so shapes that read as primitives (stacked cones, scaled
-  spheres, capsules) do have to be rebuilt. See `UNITY_PORT_NOTES.md` [materials], **[legibility]** and **[bodies]**. Anything
+  spheres, capsules) do have to be rebuilt. See `UNITY_NOTES.md` [materials], **[legibility]** and **[bodies]**. Anything
   that varies per‑instance must be hashed from an index, **never drawn from an RNG stream** ([rng-lockstep]).
   The web build keeps the original flat look.
-- **Characters are jointed procedural bodies** (`Avatar.cs` over `MeshUtil.Lathe/Limb/Blob`) — a
+- **Characters are jointed procedural bodies** (`Avatar.cs` over `MeshUtil.Lathe/Limb/Blob/Torus`) — a
   hierarchy of separate meshes moved by transform, no rig and no skinning, because an `.fbx` would break
   "clone it and it runs". The animation layer reads **only already‑replicated state** (speed, yaw,
   `Status`, `Crouched`, `Filming`, `GrabberObjectId`) and adds **no SyncVar and no RPC** — keep it that
   way; a cosmetic desync is still a desync. Gait phase advances with **ground covered, not time**, or
   the feet skate whenever a speed multiplier changes. Full rationale in [bodies].
+- **Gameplay never holds an `Avatar`** — it holds an **`ICharacterBody`** and builds through
+  `CharacterFactory` (`CharacterBody.cs`), so an **imported rigged model can take a role over with no
+  code change**: humanoid FBX + Animator Controller, dropped in `Assets/Resources/Metoh/Characters/`
+  as `Searcher` or `Yeti`. `AvatarInput` is the entire contract between the two. Procedural is the
+  default and the fallback. Full procedure and the traps in [import].
 - **Weather** (`Weather.cs`) is bootstrapped from `WorldBuilder.Awake` and follows `Camera.main`, so the
   **title cinematic gets the same snow the match does**. `TitleActors.cs` stages avatars in the title
   shots; they touch no networking and are destroyed the moment a connection comes up.

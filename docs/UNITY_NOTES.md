@@ -1,8 +1,10 @@
-# Unity port — traps, conventions, and hard-won lessons
+# Unity — traps, conventions, and hard-won lessons
 
-Durable engineering notes distilled from the Unity/FishNet port (July 2026). Everything here cost
+Durable engineering notes for the Unity/FishNet build, starting from the initial port (July 2026)
+and kept current since — art passes, the Metoh re-theme, bot work, all of it. Everything here cost
 real debugging time at least once. The dated work orders these came from are gone; this is the part
-worth keeping.
+worth keeping. (Renamed from `UNITY_PORT_NOTES.md` 2026-08-08 — "port" undersold what this had
+already become; nothing about the id scheme below changed.)
 
 For persona/evidence design, see [`CHARACTER_FUNC_DEV.md`](CHARACTER_FUNC_DEV.md).
 
@@ -158,6 +160,24 @@ and cave mouths. `BuildForest` mirrors that RNG stream exactly, so skipping them
 leave invisible tree colliders in the water. Fixing it properly means a lake exclusion in **both**
 sims plus a re-run parity check.
 
+**A tuning value derived from a generator's *parameter* is not the same as one derived from its
+*output*, and the gap is invisible until measured.** The Metoh re-theme's snowline cutoff was
+specified as "~60% of `HillHeight`" — but `HillHeight` (14) is the noise **amplitude**, not a
+reachable height; the shipping seed's terrain actually spans about −10.2 to +7.8, so that cut sat
+above the highest ground on the map and would have snow-caked zero trees. The fix was a constant
+measured off a sampled grid of the real output (3.0 ≈ the 85th percentile on a 400×400 sample),
+not off the generator's own parameters. Sample the terrain you actually shipped, not the number that
+built it.
+
+**A byte-identical golden-fixture regen after a behaviour change means the fixture didn't exercise
+the change, not that nothing moved.** Regenerating `golden.json` after adding the deep-snow slow
+produced an unchanged file — the golden hunter trajectory starts at the origin, inside the exempt
+camp clearing, and 40 sprint steps never carry it into a drift basin. A green diff had nothing to do
+with correctness; it meant the probe couldn't see the code path at all. Fixed by adding
+`deepSnowProbes` (basin, feathered edge, scoured ridge, trail, tarn, camp) and a `driftTrajectory`
+so the fixture has a probe standing in the zone being changed. Treat "the diff is empty" as a
+question — *did this fixture ever touch that code?* — not as a pass.
+
 ## [no-world-cache] The world is rebuilt at runtime now — nothing may cache a `GameWorld`
 
 The host rolls a **per-session seed** (`GameManager.WorldSeed`) and clients rebuild the forest when it
@@ -307,6 +327,13 @@ fast-travel needed a bot path: `TargetTeleport` is a TargetRpc to an owning clie
 `TryCaveTravel` now branches to `ServerBotTeleport` for a bot. Same guards, same authority, only the
 delivery differs.
 
+A third: **snow prints stay in `ClueMarker.All` on every client** — only the *renderer* is hidden
+from non-Yeti players — so a searcher's own tracks are otherwise indistinguishable from any other
+clue to a naive reader of that list. Left ungated, a searcher's own footprints would satisfy the
+evidence-in-sight test and permanently unlock their own clue-trail map layer. `ClueMarker.IsYetiTrail`
+gates every consumer of the list for exactly this reason — treat it as required, not optional, on any
+new code that walks `ClueMarker.All`.
+
 **Roles are the normal deal.** The bot carries `WantsYeti = true` and the lone human `= false`, so
 `DoStartMatch` hands the monster to the bot with no special-casing. A bot has no `Owner`, so it can't
 receive the `TargetTeleport` RPC — it's placed server-side by `ServerBotPlace`, which also spins up
@@ -386,6 +413,10 @@ Two things fixed in passing, both pre-existing: `SetTimeOfDay` re-asserted `Ligh
 frame, so shadow quality could never actually be configured from anywhere; and the world leaked its
 entire material set on every reseed (`new Material` is a native object Unity does not collect), which
 was survivable at a couple of dozen and is not at ~200 after per-chunk tinting.
+
+One more worth knowing before retiling anything: **URP drives every main-texture UV from `_BaseMap_ST`
+and every detail UV from `_DetailAlbedoMap_ST`** — tiling set on `_BumpMap` or `_DetailNormalMap`
+directly is silently ignored. Scale the base/detail albedo tiling and the normal maps ride along.
 
 **Nothing in this pass has been seen.** Every value is reasoned from how the materials behave, not
 observed — expect to sit in `ProcTex` (normal strengths, tiling) and the smoothness numbers and tune
@@ -601,7 +632,97 @@ do not resurrect half of it. Three findings from that branch outlived their code
 - **Body status tint was lost and is still missing.** The rig had `SetStatusTint` (frozen blue, incap
   black, dazzled white); `Avatar` has no colour API at all, so frozen/incapacitated/dazzled bodies
   currently read only from pose. Worth adding to `Avatar` — it is the one thing the deleted branch had
-  that this one does not.
+  that this one does not. (`SetTint` now exists for the *specialty* colour, but it is not this: it
+  takes one colour and has no notion of a status override to layer on top.)
+
+### The searcher rebuild, 2026-08-08 — "just blobs with blob arms"
+
+Owner report on the first jointed bodies. Accurate: a searcher was five lumpy ellipsoids (chest, yoke,
+pack, skull, hood) with tapered cylinders for limbs and a `Blob` stuck on each end for a hand or a
+foot. This is the [legibility] argument arriving one level down — an ellipsoid is a shape the eye names
+instantly, and six of them stacked reads as an assembly of primitives whatever material is on it.
+
+Three things fixed it, **none of them triangle count**, and all three generalise to any future body:
+
+- **One torso with a waist.** The trunk is a single `Lathe` through an explicit profile — flared hem,
+  narrow waist, wide chest, shoulders closing to the neck. Two stacked ellipsoids can be wide at the
+  top; they cannot make a *waist*, and the waist is what says "ribcage above, pelvis below".
+- **The places clothing stops.** Belt, collar, wrist cuffs, boot cuffs, hood ruff — each a hard
+  horizontal break across a taper. `MeshUtil.Torus` was added for exactly this and is the highest
+  value-per-triangle primitive in the file. A fogged figure is an outline, and an outline with breaks
+  reads as a dressed person where a smooth one reads as a mannequin.
+- **A neck.** 11 cm of geometry, and the single largest improvement in the pass. A head sitting
+  straight on the shoulders is a snowman and no hood fixes it.
+
+Two things that look like details and are not. **Lumpiness came down hard** (0.07 → ~0.025): it exists
+to stop a mesh reading as a revolved primitive, which is right on a boulder and wrong on a person —
+fabric over a body is smooth, and lumps at this scale read as damage. The job it was doing badly,
+keeping five searchers from being five identical mannequins, is now done by a hashed **`broad`
+multiplier** on widths only. It touches **no vertical dimension on purpose**: every height is anchored
+to the sim's 1.7 m eye height, and a figure whose eyes are 5 cm from where its own camera says they are
+is a figure that ducks behind cover the sim thinks it can see over. And the **face is the dark gear
+material, not a skin tone** — recessed in the hood it reads as shadow, which is what a hooded face at
+night actually looks like and a better target than a procedural face, the one piece of anatomy where
+"almost right" is worse than "not attempted".
+
+Boots and gloves are gear-coloured, not parka-coloured. Beyond being what real kit looks like, the dark
+foot **plants the figure on the snow** — a pale boot on pale ground hovers, the same tell SSAO went in
+to fix everywhere else.
+
+> Cost: ~30 renderers per searcher, up from 19. Left unmerged deliberately — URP's SRP Batcher keys on
+> material, and a searcher has only two, so the extra parts cost per-renderer culling rather than draw
+> calls. The smallest pieces (pack lid, straps, cuffs) are gated on `HPQuality.HighDetail`.
+
+## [import] Importing character models — the seam, and how to use it
+
+Bodies are generated at runtime so that cloning the repo and pressing play works with no asset files in
+it. That is worth keeping and it must not be a **ceiling**: the moment a real rigged model exists,
+dropping it in should be a five-minute job, not a rewrite of the animation layer.
+
+So gameplay does not talk to `Avatar` any more. It holds an **`ICharacterBody`** (`CharacterBody.cs`)
+and builds through **`CharacterFactory`**, handing over exactly one thing — the `AvatarInput` struct,
+filled entirely from already-replicated state. Two implementations sit behind it: the procedural
+`Avatar`, and `ModelBody`, which drives an imported prefab's `Animator` from that same struct. Nothing
+in `HPPlayer`, `GameManager` or `TitleActors` knows which one it got.
+
+**The whole import procedure:**
+
+1. Import the FBX. Inspector → **Rig** tab → Animation Type = **Humanoid** → Apply. This is the step
+   that matters: a humanoid avatar is what lets Unity name the bones for us, and it is also what lets
+   any humanoid clip (Mixamo's entire library) retarget onto a model it was not authored for.
+2. Give it an Animator Controller. Every parameter is optional — a controller with only `Speed` works,
+   it just does less.
+3. Drop the prefab in `Assets/Resources/Metoh/Characters/`, named exactly **`Searcher`** or **`Yeti`**.
+4. Press play. There is no step 5 and no code change anywhere.
+
+Anchors — where the torch rides, where breath comes from — are read off the humanoid rig for free
+(`Head`, `RightHand`). Add a **`CharacterAnchors`** component only to override them, to tint part of
+the model with the specialty colour, or to fix the scale.
+
+Things that were deliberate, and are worth not undoing:
+
+- **Resources, not Addressables.** Dropping a prefab in a folder is the entire install step — no
+  manifest to register in, no build-time group to configure. That is what keeps "clone it and it runs"
+  true whether or not any models exist.
+- **Missing prefab ⇒ procedural body.** Not a degraded safety path; it is the shipping default and
+  stays that way until real models exist for every role.
+- **Tint goes through a `MaterialPropertyBlock`**, never the material. An imported model's material is
+  a project *asset*: `renderer.material` clones it (a leak per player per rebuild) and
+  `sharedMaterial` **edits the asset**, so one match would permanently repaint every searcher in the
+  project the colour of whoever was dealt it last — and the change survives leaving play mode.
+- **Only parameters the controller declares get driven.** `SetBool` on a missing parameter warns
+  *every frame*, which would bury the console the first time anyone imports anything.
+- **`HeightMeters` rescales on import.** The most common import failure is an FBX authored in
+  centimetres arriving 100× too big, and a wall of parka filling the screen does not obviously read as
+  a units problem. The measured height is logged either way, so there is a number to type in.
+- **`AnimatorCullingMode.CullUpdateTransforms`** — off-screen bodies stop evaluating. With five
+  searchers plus a Yeti that is most of the animation cost, and the only thing riding their transforms
+  while invisible is breath vapour nobody is looking at.
+
+> **Unverified beyond compilation.** The seam compiles and the procedural path is unchanged in
+> behaviour, but `ModelBody` has never run — there is no model to run it against. The humanoid-bone
+> anchor lookup, the property-block tint and the auto-fit are all reasoned, not observed. First real
+> import should expect to find something here.
 
 ## [startup] Startup: what happens before the first frame
 
@@ -624,6 +745,11 @@ first use as well, so that one run pays for all of it.
   host would ever query.
 - **`[boot]` timings are logged per stage**, because "startup is slow" is unactionable and "the
   geometry is 4 of the 6 seconds" is not. Read it in the play-test log or the Console.
+- **Open TODO, not yet done:** if `[boot]` shows geometry dominating, the fix is to spread the
+  ~2,500 tree + ~5,200 undergrowth mesh build across frames rather than deferring it like the NavMesh
+  bake. It's safe to defer past the first frame because the title cinematic only needs the *sim*
+  world (`GetHeight`, `Paths`) — not the meshes — and collision is analytic regardless of whether the
+  render meshes exist yet.
 
 **Two separate title-screen bugs, both from the same shape of mistake — work sitting below an early
 return, or work nobody was actually doing:**

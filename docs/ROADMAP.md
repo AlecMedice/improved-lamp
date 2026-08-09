@@ -116,7 +116,7 @@ Legend: ✅ done in this scaffold · 🟡 partially stubbed · ⬜ not started
   is replaced by the Unity/Steam plan below — the target is a downloadable Steam game with
   host-authoritative relay play (R.E.P.O.-style), not a hosted web build.
 
-## Phase 8 — Unity / Steam migration 🟡 → see [`UNITY_PORT_NOTES.md`](./UNITY_PORT_NOTES.md)
+## Phase 8 — Unity / Steam migration 🟡 → see [`UNITY_NOTES.md`](./UNITY_NOTES.md)
 The engine pivot: a downloadable Steam game, host-authoritative with Steam Datagram Relay. Sequenced
 **netcode-first, sim-port-last**. Steps R1–R6 in the migration doc. Done so far: **R1** (Unity + FishNet +
 Steam relay "moving cube" slice) scaffolded in [`unity/`](../unity); **R3** — the deterministic
@@ -133,7 +133,7 @@ Steam relay "moving cube" slice) scaffolded in [`unity/`](../unity); **R3** — 
 | Asymmetric balance (1 vs 5) | Tunable knobs in GDD §5; playtest early and often |
 | Browser perf with many trees/lights | Instancing, LODs, cap dynamic lights, bake where possible |
 | Scope creep | Lock the vertical slice (P0–P4) before any P5+ work |
-| Sim drift between TS and C# | The `csharp/Parity` harness. **Regenerate `golden.json` whenever `shared/sim` output or key names change, then re-run it** — see the gates in `Metoh_migration.md`. Regen events so far: the Bigfoot→Yeti rename (key names), deep snow (new probes). A byte-identical regen after a behaviour change means the fixture doesn't cover it — add probes, don't assume you're safe. |
+| Sim drift between TS and C# | The `csharp/Parity` harness, also gated in CI. **Regenerate `golden.json` whenever `shared/sim` output or key names change, then re-run it** — see the gates in `CLAUDE.md`. Regen events so far: the Bigfoot→Yeti rename (key names), deep snow (new probes). A byte-identical regen after a behaviour change means the fixture doesn't cover it — add probes, don't assume you're safe. |
 | Trail network coupling | Deep snow reads the *absence* of a trail, so any future "bigger map" work must keep `generatePaths` covering it — trails that stop short would strand players in permanent deep snow |
 
 ## Definition of "vertical slice" (the first real milestone)

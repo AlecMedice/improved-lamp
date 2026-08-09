@@ -30,7 +30,7 @@ namespace Metoh.Game
             // Shader.Find only catches a MISSING file — a shader that fails to COMPILE returns a valid
             // object that renders magenta. Bailing out on null at least keeps a missing file from
             // taking the torch with it; a compile failure is a Console error, not something detectable
-            // from here (the same trap UNITY_PORT_NOTES flags for Metoh/Snowpack).
+            // from here (the same trap UNITY_NOTES flags for Metoh/Snowpack).
             if (shader == null) return null;
 
             float length = lightRange * VisibleFraction;
