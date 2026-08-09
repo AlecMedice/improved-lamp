@@ -23,9 +23,9 @@ namespace Metoh.Game
         private const int SearcherCount = 3;
 
         private static Transform _root;
-        private static Avatar _yeti;
+        private static ICharacterBody _yeti;
         private static Transform _yetiHolder;
-        private static readonly List<Avatar> _searchers = new List<Avatar>();
+        private static readonly List<ICharacterBody> _searchers = new List<ICharacterBody>();
         private static readonly List<Transform> _searcherHolders = new List<Transform>();
         private static Material _fur, _eye, _gear;
         private static readonly List<Material> _cloth = new List<Material>();
@@ -53,7 +53,7 @@ namespace Metoh.Game
 
             _yetiHolder = new GameObject("Yeti").transform;
             _yetiHolder.SetParent(_root, false);
-            _yeti = Avatar.BuildYeti(_yetiHolder, _fur, _eye, 1337);
+            _yeti = CharacterFactory.BuildYeti(_yetiHolder, _fur, _eye, 1337);
             Weather.AttachBreath(_yeti.HeadAnchor, true);
 
             // Three of the five specialty colours, so the team reads as a team of individuals rather
@@ -67,7 +67,10 @@ namespace Metoh.Game
                 var cloth = MeshUtil.Surface(MeshUtil.Rgb(colors[i]), 0.24f, ProcTex.FabricNormal, 0.8f, 3f);
                 _cloth.Add(cloth);
 
-                var a = Avatar.BuildSearcher(holder, cloth, _gear, 400 + i * 97);
+                var a = CharacterFactory.BuildSearcher(holder, cloth, _gear, 400 + i * 97);
+                // Redundant on the generated body (its cloth material was built this colour), but it is
+                // the only way an imported model would ever get it.
+                a.SetTint(MeshUtil.Rgb(colors[i]));
                 Weather.AttachBreath(a.HeadAnchor, false);
                 _searchers.Add(a);
                 _searcherHolders.Add(holder);

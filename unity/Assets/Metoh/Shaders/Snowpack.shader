@@ -61,6 +61,11 @@ Shader "Metoh/Snowpack"
         _DetailMap      ("Detail normal", 2D) = "bump" {}
         _DetailTiling   ("Detail tiling (metres)", Float) = 0.7
         _DetailScale    ("Detail strength", Range(0,2)) = 0.6
+
+        [Header(Ice glitter)]
+        _SparkleColor   ("Glitter colour", Color) = (0.85, 0.93, 1.0, 1)
+        _SparkleDensity ("Glitter facets per metre", Float) = 55
+        _SparkleStrength("Glitter strength", Range(0,4)) = 1.4
     }
 
     SubShader
@@ -93,6 +98,9 @@ Shader "Metoh/Snowpack"
             float  _MacroStrength;
             float  _DetailTiling;
             float  _DetailScale;
+            float4 _SparkleColor;
+            float  _SparkleDensity;
+            float  _SparkleStrength;
         CBUFFER_END
         ENDHLSL
 
@@ -174,6 +182,10 @@ Shader "Metoh/Snowpack"
                 surface.occlusion = 1.0;
                 surface.alpha = 1.0;
                 surface.normalTS = surf.normalTS;
+                // Glitter rides emission, not the specular lobe: these facets are sub-pixel, so there
+                // is no normal for a real highlight to sit on. Feeding bloom is the point — a glint
+                // that does not bleed is a white dot, not a spark.
+                surface.emission = surf.emission;
 
                 InputData input = (InputData)0;
                 input.positionWS = i.positionWS;

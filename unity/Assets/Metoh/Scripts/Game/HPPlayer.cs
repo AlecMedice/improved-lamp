@@ -141,7 +141,9 @@ namespace Metoh.Game
         private Material _recMat;
         private byte _builtRole = 255;
         private Color _baseBodyColor;
-        private Avatar _avatar;
+        // The body is held behind ICharacterBody, never as a concrete Avatar: CharacterFactory decides
+        // whether this player is a generated figure or an imported model, and nothing here may care.
+        private ICharacterBody _avatar;
         private TorchBeam _beam;
         // Animation drive. Speed and yaw rate are measured from the TRANSFORM rather than read from the
         // sim, so the owner and a remote (whose transform is interpolated by FishNet) go down one code
@@ -1528,7 +1530,7 @@ namespace Metoh.Game
                 // reading as a silhouette that swallows the torch is half of what makes it scary.
                 _bodyMat = MeshUtil.Surface(_baseBodyColor, 0.08f, ProcTex.FurNormal, 1.15f, 2.2f);
                 _eyeMat = MeshUtil.Emissive(Color.black, MeshUtil.Rgb(0xffcc55), 3.5f);
-                _avatar = Avatar.BuildYeti(_visualRoot, _bodyMat, _eyeMat, variant);
+                _avatar = CharacterFactory.BuildYeti(_visualRoot, _bodyMat, _eyeMat, variant);
             }
             else
             {
@@ -1540,7 +1542,10 @@ namespace Metoh.Game
                 // how you tell teammates apart at range, so spending it on the gear too would blur the
                 // one signal it carries.
                 _gearMat = MeshUtil.Surface(MeshUtil.Rgb(0x3a3630), 0.16f, ProcTex.FabricNormal, 0.7f, 3.5f);
-                _avatar = Avatar.BuildSearcher(_visualRoot, _bodyMat, _gearMat, variant);
+                _avatar = CharacterFactory.BuildSearcher(_visualRoot, _bodyMat, _gearMat, variant);
+                // An imported model does not use _bodyMat, so the colour has to be pushed through the
+                // body rather than baked into the material it may not be wearing.
+                _avatar.SetTint(_baseBodyColor);
 
                 // The torch rides the HAND now, not a point floating at eye height. A remote searcher's
                 // beam therefore swings with their arm and sweeps as they walk, which is most of how
@@ -1703,14 +1708,14 @@ namespace Metoh.Game
             // _baseBodyColor and stop there — the field was assigned and never applied to anything, so
             // a specialty dealt mid-session recoloured nobody. Pushed to the material now, and only on
             // an actual change: this runs every frame for every player.
-            if (!IsYeti && _bodyMat != null && !string.IsNullOrEmpty(Specialty.Value))
+            if (!IsYeti && _avatar != null && !string.IsNullOrEmpty(Specialty.Value))
             {
                 int hex = SpecialtyColors.TryGetValue(Specialty.Value, out int c) ? c : 0x9aa2aa;
                 Color dealt = MeshUtil.Rgb(hex);
                 if (dealt != _baseBodyColor)
                 {
                     _baseBodyColor = dealt;
-                    _bodyMat.color = dealt;
+                    _avatar.SetTint(dealt);
                 }
             }
 

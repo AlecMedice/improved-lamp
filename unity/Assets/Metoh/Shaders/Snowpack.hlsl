@@ -17,6 +17,7 @@ struct SurfaceMix
     half3 albedo;
     half  smoothness;
     float3 normalTS;
+    half3 emission;   // ice glitter — see MixSnowpack. Ignored by the depth-normals pass.
 };
 
 // ---------------------------------------------------------------- noise
@@ -125,10 +126,60 @@ SurfaceMix MixSnowpack(float3 positionWS, float3 geoNormal)
     half smoothness = lerp(_SnowSmoothness, _RockSmoothness, rock);
     smoothness = lerp(smoothness, _SnowSmoothness * 0.55, drift);
 
+    // --- ice glitter ----------------------------------------------------------------
+    //
+    // The one cue that says "snow" and that a smoothness value alone can never produce. Real snowpack
+    // is a field of ice facets at a scale far below a pixel; a normal map cannot represent them,
+    // because averaging a million random facets into one texel is exactly what destroys the effect.
+    // What you actually see is a sparse scatter of individual points that flare and die as you move —
+    // it is the MOTION that reads, not the brightness.
+    //
+    // Modelled as a lattice of micro-facets, one per cell, each with a fixed random orientation, lit
+    // only when it happens to point back at the viewer. View-direction rather than a half-vector is
+    // the physically right call HERE specifically: every meaningful light in this game is a torch
+    // held at the camera, so the light and view directions are the same ray. That also makes the
+    // glitter a torch-reveal — it appears where you point, which is free atmosphere.
+    half3 emission = 0;
+    float sparkFade = saturate(1.0 - dist / 45.0) * (1.0 - rock);
+    if (_SparkleStrength > 0.001 && sparkFade > 0.001)
+    {
+        float2 cell = uv * max(_SparkleDensity, 0.01);
+        float2 id = floor(cell);
+        float h = MetohHash21(id);
+
+        // Only a sparse minority of cells hold a facet aimed anywhere useful. A glint in every cell
+        // is a uniform shimmer, which is the cheap-looking failure mode this is trying to avoid.
+        if (h > 0.86)
+        {
+            float h2 = MetohHash21(id + 37.19);
+            float h3 = MetohHash21(id + 91.53);
+
+            // Round the glint off inside its cell so it is a point of light, not a lit square.
+            // Named `falloff`: `point` is an HLSL geometry-shader primitive keyword, and using it as
+            // a variable is a compile error on some targets and silently fine on others.
+            float2 f = frac(cell) - 0.5;
+            float falloff = saturate(1.0 - length(f) * 2.6);
+
+            float3 facet = normalize(float3(h2 * 2.0 - 1.0, 1.6, h3 * 2.0 - 1.0));
+            float3 viewDir = normalize(_WorldSpaceCameraPos - positionWS);
+            // A very tight lobe — a facet either catches you or it does not. A soft one smears every
+            // glint into a haze and loses the flicker that carries the whole effect.
+            float glint = pow(saturate(dot(facet, viewDir)), 90.0);
+
+            // Grazing angles see far more of the surface's facets per pixel, which is why snow
+            // sparkles hardest looking down a slope away from you rather than at your own boots.
+            float graze = saturate(1.0 - abs(dot(geoNormal, viewDir)));
+
+            emission = _SparkleColor.rgb * (glint * falloff * sparkFade
+                                            * (0.35 + 0.65 * graze) * _SparkleStrength);
+        }
+    }
+
     SurfaceMix o;
     o.albedo = albedo;
     o.smoothness = smoothness;
     o.normalTS = n;
+    o.emission = emission;
     return o;
 }
 

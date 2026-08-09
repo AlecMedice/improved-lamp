@@ -58,7 +58,7 @@ namespace Metoh.Game
             // the one thing the world has to distinguish its surfaces with: the basin is blue, the
             // trail is warm, the tents and prayer flags are the only saturated things out there, and
             // desaturating the frame was quietly spending all of that.
-            _colorAdjustments.saturation.Override(-2f);
+            _colorAdjustments.saturation.Override(BaseSaturation);
             // Contrast up from 12. With the terrain now spanning bare rock to open snowpack there is
             // finally a real range in the image to expand; at 12 the new dark end was being lifted
             // back toward the same mid-grey everything already sat in.
@@ -155,6 +155,9 @@ namespace Metoh.Game
         /// </summary>
         private const float BaseExposure = 0.35f;
 
+        /// <summary>Gameplay saturation. Read by both Awake and ApplyExposure — see the note there.</summary>
+        private const float BaseSaturation = -2f;
+
         private void ApplyExposure()
         {
             if (_colorAdjustments == null) return;
@@ -165,7 +168,10 @@ namespace Metoh.Game
             _colorAdjustments.postExposure.Override(ev);
             // Green phosphor cast + desaturation while glassing; neutral otherwise.
             _colorAdjustments.colorFilter.Override(_nightVision ? new Color(0.55f, 1f, 0.6f) : Color.white);
-            _colorAdjustments.saturation.Override(_nightVision ? -55f : -6f);
+            // BaseSaturation, not a second literal. This line used to restore -6 — the exact value
+            // Awake had just deliberately moved away from — so the tuned grade survived only until the
+            // first SetYetiVision/SetTitleBrightness call, i.e. never in an actual match. One constant.
+            _colorAdjustments.saturation.Override(_nightVision ? -55f : BaseSaturation);
         }
     }
 }

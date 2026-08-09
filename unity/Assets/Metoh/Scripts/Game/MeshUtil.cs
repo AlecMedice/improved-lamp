@@ -80,7 +80,7 @@ namespace Metoh.Game
         /// <paramref name="variant"/> picks a deterministic shape from the hash — build a handful and
         /// deal them out so a stand of trees isn't one tree stamped 2,400 times. It must NOT come from
         /// an RNG stream: the forest's stream is in lockstep with the collider builder's
-        /// (UNITY_PORT_NOTES [rng-lockstep]) and drawing one extra number here would offset every tree after it.
+        /// (UNITY_NOTES [rng-lockstep]) and drawing one extra number here would offset every tree after it.
         /// </summary>
         public static Mesh Conifer(float height, float baseRadius, int rings, int segments, int tiers, int variant)
         {
@@ -237,7 +237,7 @@ namespace Metoh.Game
         /// <paramref name="xScale"/>/<paramref name="zScale"/> squash the revolution off-circular, and
         /// that is what makes this usable for bodies at all: a torso is far wider than it is deep, and a
         /// circular one reads as a barrel — which is precisely the "stack of primitives" problem
-        /// (UNITY_PORT_NOTES [legibility]) reappearing on a creature instead of on a tree.
+        /// (UNITY_NOTES [legibility]) reappearing on a creature instead of on a tree.
         ///
         /// THE SEAM IS SEALED EXPLICITLY. The wrap column duplicates column 0's position so the two can
         /// carry different U — without that the texture runs backwards across one strip. But
@@ -382,6 +382,99 @@ namespace Metoh.Game
         }
 
         /// <summary>
+        /// A ring, centred on the origin with its hole along +Y — belts, cuffs, collars, a hood ruff.
+        ///
+        /// WHY THIS IS WORTH A PRIMITIVE. A body built only from ellipsoids and tapered limbs has no
+        /// way to say "this is a person wearing clothes" rather than "this is a person-shaped solid".
+        /// Clothing announces itself at the places it STOPS — the hem, the belt, where a sleeve ends
+        /// at a glove, where a trouser leg ends at a boot. Each of those is a ring, and each one is a
+        /// hard horizontal break in a silhouette that would otherwise be one continuous taper. At the
+        /// range these are read at, those breaks do more than any amount of surface detail: they are
+        /// the difference between a mannequin and a figure in a parka.
+        ///
+        /// Wound to match <see cref="Lathe"/> exactly, which is the only reason the normals come out
+        /// facing outward. The cross-section is traversed COUNTERCLOCKWISE in the (radius, y) half
+        /// plane — outer equator, over the top, down the inside, under the bottom — which is the same
+        /// direction <see cref="Blob"/>'s profile runs, and consistent winding is what that buys.
+        ///
+        /// <paramref name="xScale"/>/<paramref name="zScale"/> squash the ring off-circular. A hood
+        /// ruff is wider than it is tall, and a belt is wider than it is deep, for the same reason a
+        /// torso is: bodies are flat front-to-back and a circular ring around one reads as a hoop.
+        /// </summary>
+        public static Mesh Torus(float majorRadius, float minorRadius, int majorSegs, int minorSegs,
+                                 int variant, float jag = 0f, float xScale = 1f, float zScale = 1f)
+        {
+            majorSegs = Mathf.Max(majorSegs, 5);
+            minorSegs = Mathf.Max(minorSegs, 4);
+            int cols = majorSegs + 1, rows = minorSegs + 1;
+
+            var verts = new Vector3[rows * cols];
+            var uvs = new Vector2[rows * cols];
+            for (int r = 0; r < rows; r++)
+            {
+                // Wrapped so the last row lands on the first row's exact angle — a ring closes in BOTH
+                // directions, unlike a lathe, which only has the one seam column.
+                int rw = r % minorSegs;
+                float b = rw / (float)minorSegs * Mathf.PI * 2f;
+                float ringRad = majorRadius + Mathf.Cos(b) * minorRadius;
+                float y = Mathf.Sin(b) * minorRadius;
+                for (int s = 0; s < cols; s++)
+                {
+                    int sw = s % majorSegs;
+                    float a = sw / (float)majorSegs * Mathf.PI * 2f;
+                    float k = jag > 0f
+                        ? 1f + (Hash01(variant * 7919 + rw * 131 + sw * 37) - 0.5f) * 2f * jag
+                        : 1f;
+                    float rr = ringRad * k;
+
+                    int i = r * cols + s;
+                    verts[i] = new Vector3(Mathf.Cos(a) * rr * xScale, y * k, Mathf.Sin(a) * rr * zScale);
+                    uvs[i] = new Vector2(s / (float)majorSegs, r / (float)minorSegs);
+                }
+            }
+
+            var tris = new System.Collections.Generic.List<int>(rows * majorSegs * 6);
+            for (int r = 0; r < rows - 1; r++)
+            {
+                for (int s = 0; s < majorSegs; s++)
+                {
+                    int a = r * cols + s, b2 = a + 1;
+                    int c = (r + 1) * cols + s, d = c + 1;
+                    tris.Add(a); tris.Add(c); tris.Add(d);
+                    tris.Add(a); tris.Add(d); tris.Add(b2);
+                }
+            }
+
+            var mesh = new Mesh();
+            mesh.vertices = verts;
+            mesh.uv = uvs;
+            mesh.triangles = tris.ToArray();
+            mesh.RecalculateNormals();
+
+            // Seal BOTH seams, for the reason spelled out on Lathe: RecalculateNormals averages by
+            // vertex index, so co-located duplicates each see half the surrounding faces and light
+            // differently. A ring has two of them — one down the major seam, one around the minor.
+            var norms = mesh.normals;
+            for (int r = 0; r < rows; r++)
+            {
+                int a = r * cols, b = r * cols + majorSegs;
+                Vector3 avg = (norms[a] + norms[b]).normalized;
+                norms[a] = avg; norms[b] = avg;
+            }
+            for (int s = 0; s < cols; s++)
+            {
+                int a = s, b = (rows - 1) * cols + s;
+                Vector3 avg = (norms[a] + norms[b]).normalized;
+                norms[a] = avg; norms[b] = avg;
+            }
+            mesh.normals = norms;
+
+            mesh.RecalculateTangents();
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        /// <summary>
         /// An A-frame ridge tent: two sagging fabric slopes over a ridge line, closed at both ends.
         ///
         /// The camp tents were <c>Cone(radius, height, 4)</c> — a four-sided pyramid. A pyramid has a
@@ -472,7 +565,7 @@ namespace Metoh.Game
 
         /// <summary>
         /// Deterministic 0..1 hash. Not an RNG — it takes no state and advances nothing, which is
-        /// precisely why it is safe to call from inside the forest loop (UNITY_PORT_NOTES [rng-lockstep]).
+        /// precisely why it is safe to call from inside the forest loop (UNITY_NOTES [rng-lockstep]).
         ///
         /// PUBLIC because it is the project's canonical index hash: every builder that wants
         /// per-instance variation must go through something like this rather than reach for a

@@ -64,7 +64,22 @@ namespace Metoh.Game
             {
                 _appliedOnce = true;
                 urp.msaaSampleCount = 1; // MSAA is a luxury this GPU can't afford
-                Debug.Log($"[HPQuality] renderScale {urp.renderScale:0.00}, MSAA off, " +
+
+                // HDR is ASSERTED, not assumed. It defaults on, but it is a checkbox on an asset that
+                // lives in the live project and not in this repo — so nothing in version control
+                // prevents it being switched off, and switching it off silently guts the entire look
+                // rather than producing an error. Every highlight feature we have depends on colours
+                // being allowed above 1.0: bloom has nothing to threshold at 0.85, ACES has no
+                // highlight roll-off left to do, split toning's warm highlight tint has no highlights
+                // to tint, the torch beam and eyeshine stop blooming, and the snowpack's ice glitter —
+                // which is emission specifically so it bleeds — clips to flat white dots.
+                //
+                // This is the one graphics setting where the failure mode is "everything looks
+                // slightly cheap and no single thing looks broken", which is the hardest kind to
+                // diagnose from a play-test report. One line makes it impossible.
+                urp.supportsHDR = true;
+
+                Debug.Log($"[HPQuality] renderScale {urp.renderScale:0.00}, MSAA off, HDR on, " +
                           $"detail {(HighDetail ? "HIGH" : "LOW")}, shadow distance {urp.shadowDistance} m " +
                           $"(screen {Screen.width}x{Screen.height}).");
             }
