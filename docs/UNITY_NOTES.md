@@ -673,6 +673,86 @@ to fix everywhere else.
 > material, and a searcher has only two, so the extra parts cost per-renderer culling rather than draw
 > calls. The smallest pieces (pack lid, straps, cuffs) are gated on `HPQuality.HighDetail`.
 
+## [snow-glitter] Ice glitter, the saturation clobber, and asserted HDR — the 2026-08-08 graphics pass
+
+Three changes landed in the same commit that introduced [import]'s `ICharacterBody` seam. Compiled
+clean and synced via the headless rebuild ([workflow]) — 0 errors, 0 shader parse errors — but
+**unverified in Play mode**: nobody has yet stood in front of a torch-lit slope and watched it.
+Reasoned, not observed; treat the tuning dials below as a starting point, not a finished value, and
+update this note once someone has.
+
+### Saturation clobber — a real bug
+
+`PostFX.Awake()` set `saturation` to `-2f`, with a comment explaining why the previous `-6f` was
+wrong (a near-monochrome grade was fighting the only surfaces the world has to distinguish itself
+with — the blue basin, the warm trail, the tents and prayer flags). `ApplyExposure()` then
+re-overrode it to the literal `-6f` on every call — and it's called from `SetYetiVision` /
+`SetTitleBrightness`, i.e. the moment a role is assigned. **The tuned value never survived to a
+single frame of actual play.** Fixed with one `BaseSaturation` constant read by both sites. Same
+general shape as [feedback]'s bugs: a later write silently overriding an earlier, deliberate one,
+with no error anywhere to catch it.
+
+### Ice glitter on the snowpack
+
+`Snowpack.hlsl` / `Snowpack.shader`. The one cue that says "snow" that a smoothness value alone can
+never produce — real snowpack is a field of ice facets far below a pixel in scale, and averaging a
+million random facets into one texel is exactly what destroys the effect. What reads is a sparse
+scatter of points that flare and die as you move; **it's the motion that sells it, not the
+brightness.**
+
+Modelled as a lattice of micro-facets, one per cell, fixed hashed orientation, lit only when it
+happens to point back at the viewer:
+- **View direction, not a half-vector** — every meaningful light in this game is a torch held at the
+  camera, so light and view are the same ray; this also makes the glitter a torch-reveal.
+- **Sparse** (`h > 0.86`, ~14% of cells) — a glint in every cell is a uniform shimmer, the
+  cheap-looking failure this avoids.
+- **Tight lobe** (`pow(..., 90)`) and a **grazing weight** — snow sparkles hardest looking down a
+  slope away from you, not at your boots.
+- Fades out by 45 m, suppressed on exposed rock.
+- Rides `surface.emission`, not the specular lobe — the facets are sub-pixel, so there's no normal
+  for a real highlight to sit on, and emission is what lets bloom pick it up.
+
+Structural notes: `SurfaceMix` gained a `half3 emission` field that `MixSnowpack` always writes
+(zero-initialised), so both the lit pass and the DepthNormals pass (which discards it) stay safe —
+this relies on the compiler dead-code-eliminating the glitter maths in that pass, so if
+DepthNormals ever shows up hot in a profile, guard with a `#define` rather than forking the function
+([materials]'s "do not split `MixSnowpack`" rule still applies: both passes must produce the
+identical normal or SSAO occludes against a surface that isn't the one being drawn). The local
+variable is named `falloff`, not `point` — `point` is an HLSL geometry-shader keyword, and using it
+as a variable compiles on some targets and fails on others.
+
+Tuning dials (material properties, drag live in the inspector): `_SparkleStrength` (default `1.4`,
+range 0–4, `0` disables entirely), `_SparkleDensity` (facets/metre, default `55`), `_SparkleColor`
+(default a cool blue-white — ice, not sunlight). Peak emission at the defaults sits around `1.3`,
+just above the `0.85` bloom threshold in `PostFX` — retuning one shifts the other's character.
+
+If it doesn't show up: confirm `HDR on` appears in the `[HPQuality]` startup log (below); check
+you're not looking at rock or past the 45 m fade; and check you're moving — a static screenshot
+under-sells the effect badly. Not investigated: whether it reads well against the Yeti's `+0.9`-stop
+role exposure or the binocular night-vision path's `+2.0` stops and green filter — both lift
+emission along with everything else and neither has been checked.
+
+### HDR asserted
+
+`HPQuality`'s existing `!_appliedOnce` block now sets `urp.supportsHDR = true` explicitly. Nothing
+in this repo can otherwise stop it being switched off — it's a checkbox on the URP pipeline asset,
+which lives in `Metoh_port` and is outside version control — and switching it off doesn't error, it
+just guts bloom, ACES rolloff, split toning and the new glitter all at once. That failure mode —
+*everything looks slightly cheap and nothing looks broken* — is the hardest one to diagnose from a
+play-test report, which is why it's worth one line rather than a note to check it by hand.
+`[HPQuality]`'s startup log now includes `HDR on`.
+
+### Reviewed alongside this pass and found clean
+
+`Avatar` implements every `ICharacterBody` member. Both call sites that reach past the interface for
+a `Transform` (torch-light parenting in `HPPlayer` / `TitleActors`) use `TorchAnchor`, which
+`ModelBody` falls back to `HeadAnchor` for when an imported model has no `TorchHand` anchor. The
+specialty-recolour path's `_bodyMat.color` → `_avatar.SetTint()` swap is correct, including its
+every-frame change guard. `MeshUtil.Torus`'s two seam-sealing loops overlap at four corner vertices
+and — because the second loop consumes the first loop's already-averaged values — converge on one
+shared normal rather than one clobbering the other; winding, index bounds and the wrapped hash all
+hold up.
+
 ## [import] Importing character models — the seam, and how to use it
 
 Bodies are generated at runtime so that cloning the repo and pressing play works with no asset files in

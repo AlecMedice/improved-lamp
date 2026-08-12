@@ -13,9 +13,10 @@ were renamed — web visuals are abandoned; the Unity build carries the snow re-
 Read `docs/` for the full picture — every file there is current, nothing is a stale plan:
 - `GAME_DESIGN.md` — the GDD, source of truth for rules · `STORY.md` — world + the five characters
 - `CHARACTER_FUNC_DEV.md` — searcher specialties, the evidence/casting system, the duffel
-- `ROADMAP.md` — phases (two build logs were retired once their durable lessons were folded into
-  `UNITY_NOTES.md`: `July19Work.md`, deleted 2026-08-05, and `Metoh_migration.md`, deleted
-  2026-08-08 — both are in git history if you ever need the original narrative)
+- `ROADMAP.md` — phases (three build/handoff logs were retired once their durable lessons were
+  folded into `UNITY_NOTES.md`: `July19Work.md`, deleted 2026-08-05; `Metoh_migration.md`, deleted
+  2026-08-08; and `yeti.md` (the ice-glitter/`ICharacterBody` handoff), deleted 2026-08-11 — all
+  three are in git history if you ever need the original narrative)
 - `UNITY_NOTES.md` — Unity traps, conventions and remaining work;
   **read before touching the Unity build**. Its sections are cited by **bracketed id**
   (`[rng-lockstep]`, `[materials]`, `[bodies]`), never by number — cite the id, never the position.
