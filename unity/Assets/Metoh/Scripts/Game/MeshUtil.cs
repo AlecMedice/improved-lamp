@@ -173,7 +173,15 @@ namespace Metoh.Game
         /// beachballs. Deforming the radius costs nothing at these counts and there are only a few
         /// dozen of them in the world.
         /// </summary>
-        public static Mesh Rock(float radius, int rings, int segments, int variant)
+        /// <param name="xScale">Squash factors baked into the MESH rather than applied by the
+        /// transform. This is not a convenience: a non-uniform transform scale shears tangent space,
+        /// so a normal map on the result is being read through a skew, and it stretches UV tiling
+        /// anisotropically so one surface shows its grain at different densities depending on which
+        /// way it faces. Building the proportions in keeps the UVs (which are in metres here) honest
+        /// and the tangents square. The cave mounds carried a 13 : 7.2 : 11 transform squash until
+        /// this existed.</param>
+        public static Mesh Rock(float radius, int rings, int segments, int variant,
+                                float xScale = 1f, float zScale = 1f, float yScale = 1f)
         {
             rings = Mathf.Max(rings, 3);
             segments = Mathf.Max(segments, 4);
@@ -198,7 +206,9 @@ namespace Metoh.Game
                     float rr = radius * (0.78f + broad * 0.30f + fine * 0.12f);
 
                     int i = r * (segments + 1) + s;
-                    verts[i] = new Vector3(sp * Mathf.Cos(theta) * rr, cp * rr, sp * Mathf.Sin(theta) * rr);
+                    verts[i] = new Vector3(sp * Mathf.Cos(theta) * rr * xScale,
+                                           cp * rr * yScale,
+                                           sp * Mathf.Sin(theta) * rr * zScale);
                     uvs[i] = new Vector2(s / (float)segments * radius * 2f, r / (float)rings * radius * 2f);
                 }
             }
@@ -581,6 +591,76 @@ namespace Metoh.Game
         }
 
         /// <summary>Flat ellipse disc in the XZ plane (fan). Used for the lake surface.</summary>
+        /// <summary>
+        /// A cave throat: a tapering tube of INWARD-facing faces with a closed back — the shape a hole
+        /// actually is.
+        ///
+        /// WHY THIS TYPE HAD TO EXIST. Every previous cave mouth was a convex mass (a scaled sphere,
+        /// then an irregular Rock) painted near-black. Convex geometry bulges toward the viewer and can
+        /// only read as a dark ROCK; concavity is not a texture problem or a lighting problem, it is a
+        /// topology problem, and the only fix is faces that point back at you from the far side.
+        ///
+        /// Windings are reversed against every other generator here, which is the whole trick: you are
+        /// meant to be standing inside the bore looking out through its walls. It also means the throat
+        /// is invisible from behind, so it can be pushed into a hillside without capping it.
+        ///
+        /// It narrows and drops as it recedes (<paramref name="depth"/> along -Z after the caller's
+        /// 180° yaw), because a passage that keeps its bore reads as a pipe. The jag is hashed from
+        /// <paramref name="variant"/> so each crevasse gets its own irregular bore.
+        /// </summary>
+        public static Mesh Throat(float mouthRadiusX, float mouthRadiusY, float depth,
+                                  int segments, int rings, int variant)
+        {
+            segments = Mathf.Max(segments, 6);
+            rings = Mathf.Max(rings, 3);
+            int cols = segments + 1;
+
+            var verts = new Vector3[rings * cols];
+            var uvs = new Vector2[rings * cols];
+            for (int r = 0; r < rings; r++)
+            {
+                float t = r / (float)(rings - 1);
+                // Cubic taper: wide at the lip, closing fast. A linear taper reads as a funnel.
+                float shrink = Mathf.Lerp(1f, 0.06f, t * t * t);
+                float z = t * depth;
+                float sag = t * t * 0.9f; // the floor rises / the roof drops as it goes back
+                for (int s = 0; s < cols; s++)
+                {
+                    int sw = s % segments;
+                    float a = sw / (float)segments * Mathf.PI * 2f;
+                    float k = 1f + (Hash01(variant * 7717 + r * 131 + sw * 29) - 0.5f) * 0.34f;
+                    float x = Mathf.Cos(a) * mouthRadiusX * shrink * k;
+                    float y = Mathf.Sin(a) * mouthRadiusY * shrink * k - sag;
+                    verts[r * cols + s] = new Vector3(x, y, z);
+                    uvs[r * cols + s] = new Vector2(s / (float)segments, z);
+                }
+            }
+
+            var tris = new System.Collections.Generic.List<int>(rings * segments * 6);
+            for (int r = 0; r < rings - 1; r++)
+            {
+                for (int s = 0; s < segments; s++)
+                {
+                    int a = r * cols + s, b = a + 1;
+                    int c = (r + 1) * cols + s, d = c + 1;
+                    // REVERSED against Lathe's winding — these faces must be visible from inside the
+                    // bore. Wind them the usual way and the throat vanishes entirely, leaving a hole
+                    // you can see the hillside through.
+                    tris.Add(a); tris.Add(d); tris.Add(c);
+                    tris.Add(a); tris.Add(b); tris.Add(d);
+                }
+            }
+
+            var m = new Mesh { name = "Throat" };
+            m.SetVertices(verts);
+            m.SetUVs(0, uvs);
+            m.SetTriangles(tris, 0);
+            m.RecalculateNormals();
+            m.RecalculateTangents();
+            m.RecalculateBounds();
+            return m;
+        }
+
         public static Mesh EllipseDisc(float rx, float rz, int segments)
         {
             var mesh = new Mesh();
@@ -631,6 +711,90 @@ namespace Metoh.Game
                 Object.Destroy(probe);
             }
             return _unitCube;
+        }
+
+        /// <summary>
+        /// A box whose UVs are in METRES, so a normal map keeps the same texel density on every face
+        /// no matter how the box is proportioned.
+        ///
+        /// THE BUG THIS FIXES was everywhere. Unity's primitive cube gives each face 0..1 UVs, so a
+        /// material tiled at, say, 1.4 repeats puts 1.4 repeats across a face regardless of its real
+        /// size. Scale that cube to the basecamp hut's 6.6 x 2.5 x 2.3 and the timber grain is
+        /// stretched about 3x along the long walls compared with the ends — same plank texture,
+        /// visibly different plank width depending on which side you are standing at. Every AddBox
+        /// object had it: hut, sill, roof slabs, ridge beam, crates, tower platform and rails.
+        ///
+        /// Taking the size here rather than scaling a shared cube is what makes the fix possible: UVs
+        /// have to be built from the real dimensions, and a transform scale applied afterwards cannot
+        /// know them. Each face is unwrapped against the two world axes it spans, which also means
+        /// adjacent faces agree at the corners.
+        /// </summary>
+        public static Mesh MetricBox(Vector3 size)
+        {
+            Vector3 h = size * 0.5f;
+            var verts = new System.Collections.Generic.List<Vector3>(24);
+            var uvs = new System.Collections.Generic.List<Vector2>(24);
+            var norms = new System.Collections.Generic.List<Vector3>(24);
+            var tris = new System.Collections.Generic.List<int>(36);
+
+            void Face(Vector3 n, Vector3 u, Vector3 v, float uLen, float vLen)
+            {
+                int b = verts.Count;
+                Vector3 c = Vector3.Scale(n, h);      // face centre
+                Vector3 hu = u * (uLen * 0.5f), hv = v * (vLen * 0.5f);
+                verts.Add(c - hu - hv); verts.Add(c + hu - hv);
+                verts.Add(c + hu + hv); verts.Add(c - hu + hv);
+                // UV in metres — this is the entire point of the type.
+                uvs.Add(new Vector2(0f, 0f)); uvs.Add(new Vector2(uLen, 0f));
+                uvs.Add(new Vector2(uLen, vLen)); uvs.Add(new Vector2(0f, vLen));
+                for (int i = 0; i < 4; i++) norms.Add(n);
+                tris.Add(b); tris.Add(b + 2); tris.Add(b + 1);
+                tris.Add(b); tris.Add(b + 3); tris.Add(b + 2);
+            }
+
+            Face(Vector3.up,      Vector3.right,   Vector3.forward, size.x, size.z);
+            Face(Vector3.down,    Vector3.right,   Vector3.back,    size.x, size.z);
+            Face(Vector3.forward, Vector3.left,    Vector3.up,      size.x, size.y);
+            Face(Vector3.back,    Vector3.right,   Vector3.up,      size.x, size.y);
+            Face(Vector3.right,   Vector3.forward, Vector3.up,      size.z, size.y);
+            Face(Vector3.left,    Vector3.back,    Vector3.up,      size.z, size.y);
+
+            var m = new Mesh { name = "MetricBox" };
+            m.SetVertices(verts);
+            m.SetUVs(0, uvs);
+            m.SetNormals(norms);
+            m.SetTriangles(tris, 0);
+            m.RecalculateTangents(); // normal-mapped geometry needs tangents or it renders flat
+            m.RecalculateBounds();
+            return m;
+        }
+
+        /// <summary>
+        /// A <see cref="Surface"/> that also sways in the wind — the forest's material.
+        ///
+        /// Falls back to a plain Lit surface if the shader is missing. That matters more than it
+        /// looks: Shader.Find returns null only for a MISSING file, while a shader that fails to
+        /// COMPILE returns a valid object that renders MAGENTA (the trap UNITY_NOTES flags for
+        /// Metoh/Snowpack, and the reason the terrain shader went a whole pass without ever parsing).
+        /// A silently rigid forest is a far better failure than a magenta one.
+        /// </summary>
+        public static Material Sway(Color color, float smoothness, Texture2D normal, float normalScale,
+                                    float tiling, float strength)
+        {
+            var shader = Shader.Find("Metoh/TreeSway");
+            if (shader == null) return Surface(color, smoothness, normal, normalScale, tiling);
+
+            var m = new Material(shader);
+            m.SetColor("_BaseColor", color);
+            m.SetFloat("_Smoothness", smoothness);
+            m.SetTextureScale("_BaseMap", new Vector2(tiling, tiling));
+            if (normal != null)
+            {
+                m.SetTexture("_BumpMap", normal);
+                m.SetFloat("_BumpScale", normalScale);
+            }
+            m.SetFloat("_WindStrength", strength);
+            return m;
         }
 
         /// <summary>URP Lit material with a flat base colour. Kept for props that genuinely want no

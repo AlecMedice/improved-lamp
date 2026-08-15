@@ -421,6 +421,34 @@ namespace Metoh.Game
         public const int SoloSearcherBots = 4;
 
         /// <summary>
+        /// Where every CPU brain's night actually went, written once when the match ends.
+        ///
+        /// This is the instrument the AI rewrite is tuned against (docs/AI Rewrite.md). "The bots felt
+        /// aimless" is not actionable; "they spent 78% of the night in SWEEP and 2% in FILM" is — it
+        /// says the search is working and the payoff is not, which is a weight to change rather than a
+        /// mystery to reproduce. Banked totals sit alongside so behaviour can be read against outcome:
+        /// a bot with a healthy spread of actions and zero banked proof is failing somewhere specific.
+        /// </summary>
+        private void LogBotSummary()
+        {
+            HPLog.Event("AI", $"— match summary (difficulty {BotDifficulty.Level}, yeti mode {YetiBot.AiMode}) —");
+            foreach (var p in LivePlayers())
+            {
+                if (p == null || !p.IsBot) continue;
+                if (p.IsYeti)
+                {
+                    if (p.YetiBrain != null) HPLog.Event("AI", $"  yeti     {p.YetiBrain.DbgHistogram}");
+                }
+                else if (p.SearcherBrain != null)
+                {
+                    string who = p.CharacterName.Value != "" ? p.CharacterName.Value : "searcher";
+                    HPLog.Event("AI", $"  {who,-22} banked {p.StatBanked.Value}  downed {p.StatIncaps.Value}  " +
+                                      $"{p.SearcherBrain.DbgHistogram}");
+                }
+            }
+        }
+
+        /// <summary>
         /// The CPU expedition, for PLAY AS YETI. Same construction as the Yeti bot — server-owned
         /// HPPlayers with no connection — but flagged as NOT wanting the monster, so the normal role
         /// deal in DoStartMatch hands them searcher roles and DealSpecialties gives each a distinct
@@ -463,6 +491,39 @@ namespace Metoh.Game
         {
             double x = (_rng.NextDouble() - 0.5) * 8;
             double z = 18 + (_rng.NextDouble() - 0.5) * 4;
+            return new Vector3((float)x, (float)_world.GetHeight(x, z), (float)z);
+        }
+
+        /// <summary>How many bot searchers have been placed this round — drives the fan-out below.</summary>
+        private int _botPlaceSlot;
+
+        /// <summary>
+        /// A start position for a CPU searcher, fanned around camp instead of stacked in it.
+        ///
+        /// WHY THIS IS NOT JUST CampSpot(). That returns x in [-4,+4], z in [16,20] — an 8 m x 4 m box.
+        /// Every bot was placed by it, so four searchers spawned on top of one another, and since they
+        /// then ran identical deterministic decisions they never separated. That is the whole reason
+        /// the owner reported "only one searcher spawned as AI": four overlapping avatars at night, in
+        /// fog, are one silhouette. They were all there and all moving; they were just moving together.
+        ///
+        /// Spreading them on a ring at distinct bearings fixes the read AND the behaviour, because
+        /// each one starts its first belief sweep from different ground and facing outward — so their
+        /// coverage claims diverge immediately rather than having to be untangled later.
+        /// </summary>
+        private Vector3 BotCampSpot(int slot, out float yaw)
+        {
+            const float ring = 16f;
+            // Golden-angle spacing so any bot count spreads evenly without a table, and adjacent slots
+            // never land adjacent on the ring.
+            float ang = slot * 2.39996f + (float)_rng.NextDouble() * 0.35f;
+            double x = Mathf.Cos(ang) * ring;
+            double z = 18f + Mathf.Sin(ang) * ring;
+
+            float half = (float)Sim.World.Size / 2f - 12f;
+            x = Mathf.Clamp((float)x, -half, half);
+            z = Mathf.Clamp((float)z, -half, half);
+
+            yaw = ang; // face outward, away from camp: the direction each will search first
             return new Vector3((float)x, (float)_world.GetHeight(x, z), (float)z);
         }
 
@@ -546,7 +607,11 @@ namespace Metoh.Game
                 }
                 else
                 {
-                    if (p.IsBot) p.ServerBotPlace(CampSpot(), 0f);
+                    if (p.IsBot)
+                    {
+                        Vector3 spot = BotCampSpot(_botPlaceSlot++, out float byaw);
+                        p.ServerBotPlace(spot, byaw);
+                    }
                     else p.TargetTeleport(p.Owner, CampSpot(), 0f);
                 }
             }
@@ -607,7 +672,11 @@ namespace Metoh.Game
                 }
                 else
                 {
-                    if (p.IsBot) p.ServerBotPlace(CampSpot(), 0f);
+                    if (p.IsBot)
+                    {
+                        Vector3 spot = BotCampSpot(_botPlaceSlot++, out float byaw);
+                        p.ServerBotPlace(spot, byaw);
+                    }
                     else p.TargetTeleport(p.Owner, CampSpot(), 0f);
                 }
             }
@@ -647,6 +716,14 @@ namespace Metoh.Game
 
         private void ResetMatchState(List<HPPlayer> players)
         {
+            // The CPU team's shared intent is static, so like the F3 dev levers it outlives the match
+            // that filled it. A stale sector claim or a live "Wren is down" call-out leaking into the
+            // next match would have the new team walking to a body that no longer exists. Reset here
+            // rather than at spawn, because this is the one function all three paths back to the lobby
+            // already go through (start, return, abort).
+            TeamBlackboard.ResetMatch();
+            _botPlaceSlot = 0;
+
             Winner.Value = WinnerNone;
             NightNumber.Value = 1;
             TimeOfDay.Value = 0f;
@@ -1552,6 +1629,7 @@ namespace Metoh.Game
                     MatchPhase.Value = PhaseResults;
                     HPLog.Event("MATCH", $"over — {(Winner.Value == WinnerHunters ? "SEARCHERS" : "YETI")} win " +
                                          $"on night {NightNumber.Value}, proof {StoredProof}/{VideosRequired.Value}");
+                    LogBotSummary();
                     HPLog.Flush();
                 }
             }

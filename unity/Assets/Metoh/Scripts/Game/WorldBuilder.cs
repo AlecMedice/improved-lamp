@@ -113,6 +113,18 @@ namespace Metoh.Game
         private static readonly Color TrailCol = MeshUtil.Rgb(0x94a0ab);
 
         /// <summary>
+        /// How far the trodden channel sinks below the terrain, and how high the shoulders heap.
+        ///
+        /// VISUAL ONLY, and deliberately small. Terrain height lives in the parity-locked sim
+        /// (Terrain.GetHeight) and that is what players actually stand on, so any channel deep enough
+        /// to notice would read as a mismatch between where your feet are and what you can see. A few
+        /// centimetres is all the relief a raking torch beam needs — the goal is an edge that catches
+        /// light, not a trench.
+        /// </summary>
+        private const float TrailSinkDepth = 0.05f;
+        private const float TrailBermHeight = 0.11f;
+
+        /// <summary>
         /// Terrain height above which trees read as snow-caked: all-light crowns, and the top cone
         /// dropped so they look stunted by altitude.
         ///
@@ -360,6 +372,7 @@ namespace Metoh.Game
             BuildLogs();
             BuildLake();
             BuildBasecamp();
+            BuildWreck();
             BuildDuffel();
             BuildCaves();
             BuildTower();
@@ -536,6 +549,10 @@ namespace Metoh.Game
             Mesh trunk = MeshUtil.TaperedCylinder(0.4f, 0.22f, 3f, tSegs);
             var crowns = new Mesh[TreeVariants];
             var crownsStunted = new Mesh[TreeVariants];
+            // Kept so the sway bake knows how tall each tree actually is — the weight ramp has to be
+            // normalised per tree or a stunted spire sways as if it were a full-height one.
+            var crownH = new float[TreeVariants];
+            var crownHStunted = new float[TreeVariants];
             for (int v = 0; v < TreeVariants; v++)
             {
                 // Height and width wander per variant so the stand has a mix of lean spires and
@@ -546,12 +563,19 @@ namespace Metoh.Game
                 // Above the snowline: shorter and broader, weighed down and wind-stunted by altitude.
                 crownsStunted[v] = MeshUtil.Conifer(h * 0.66f, r * 1.08f, Mathf.Max(cRings - 2, 3), cSegs,
                     tiers: 3, variant: v + 64);
+                crownH[v] = h;
+                crownHStunted[v] = h * 0.66f;
             }
 
             int cells = ForestGrid * ForestGrid;
             var trunkC = NewCombineBuckets(cells);
             var crownDarkC = NewCombineBuckets(cells);
             var crownLightC = NewCombineBuckets(cells);
+            // Per-instance sway metadata, kept exactly parallel to the combine buckets above:
+            // (baseY, 1/treeHeight, phase). BakeSwayData walks the two lists together after the merge.
+            var trunkS = NewSwayBuckets(cells);
+            var crownDarkS = NewSwayBuckets(cells);
+            var crownLightS = NewSwayBuckets(cells);
             int treeIndex = 0;
 
             for (int i = 0; i < Sim.World.TreeCount; i++)
@@ -587,6 +611,14 @@ namespace Metoh.Game
                 int variant = (treeIndex * 7 + cell * 3) % TreeVariants;
                 Mesh crown = aboveSnowline ? crownsStunted[variant] : crowns[variant];
                 crownBucket[cell].Add(CI(crown, pos + Vector3.up * (1.5f * (float)s), rotQ, scale));
+
+                // Sway metadata for BOTH pieces of this tree. Phase is hashed from the tree index, not
+                // drawn — this loop is the RNG-lockstep loop, and one extra rand() here would move
+                // every tree after it ([rng-lockstep]).
+                float treeH = (1.5f + (aboveSnowline ? crownHStunted[variant] : crownH[variant])) * (float)s;
+                var meta = new Vector3(y, 1f / Mathf.Max(0.5f, treeH), MeshUtil.Hash01(treeIndex * 8191 + 17));
+                trunkS[cell].Add(meta);
+                (aboveSnowline || treeIndex % 2 != 0 ? crownLightS : crownDarkS)[cell].Add(meta);
                 treeIndex++;
             }
 
@@ -599,12 +631,18 @@ namespace Metoh.Game
             // by shader rather than by material, so 64 tinted variants batch the same as one.
             for (int c = 0; c < cells; c++)
             {
-                NewCombinedGo($"Trunks{c}", trunkC[c], MeshUtil.Surface(
-                    TintByCell(TrunkCol, c, 0.10f), 0.16f, ProcTex.BarkNormal, 0.9f, 1.5f));
-                NewCombinedGo($"CrownsDark{c}", crownDarkC[c], MeshUtil.Surface(
-                    TintByCell(CrownDark, c, 0.12f), 0.20f, ProcTex.BarkNormal, 0.45f, 2.5f));
-                NewCombinedGo($"CrownsLight{c}", crownLightC[c], MeshUtil.Surface(
-                    TintByCell(CrownLight, c, 0.08f), 0.38f, ProcTex.SnowNormal, 0.7f, 2.5f));
+                // Trunks sway far less than crowns — the weight ramp already handles most of that
+                // (a trunk's vertices are all near its own base), but halving the strength keeps a
+                // 40 cm bole from visibly bending, which is the thing that reads as rubber.
+                NewCombinedGo($"Trunks{c}", trunkC[c], MeshUtil.Sway(
+                    TintByCell(TrunkCol, c, 0.10f), 0.16f, ProcTex.BarkNormal, 0.9f, 1.5f, 0.10f),
+                    trunkS[c]);
+                NewCombinedGo($"CrownsDark{c}", crownDarkC[c], MeshUtil.Sway(
+                    TintByCell(CrownDark, c, 0.12f), 0.20f, ProcTex.BarkNormal, 0.45f, 2.5f, 0.26f),
+                    crownDarkS[c]);
+                NewCombinedGo($"CrownsLight{c}", crownLightC[c], MeshUtil.Sway(
+                    TintByCell(CrownLight, c, 0.08f), 0.38f, ProcTex.SnowNormal, 0.7f, 2.5f, 0.20f),
+                    crownLightS[c]);
             }
         }
 
@@ -765,14 +803,26 @@ namespace Metoh.Game
             // Packed and scuffed, so duller than the open snowpack it cuts through — the smoothness
             // difference is a second cue on top of the albedo one, and it survives at grazing angles
             // where albedo contrast washes out.
-            var mat = MeshUtil.Surface(TrailCol, 0.22f, ProcTex.SnowNormal, 0.55f, 1f / 4f);
+            // PACKED snow, not powder. Until this pass the trail shared SnowNormal with the open
+            // snowpack and only differed in albedo — identical micro-relief, so it caught the moon and
+            // the torch exactly like the drift beside it, and the eye reads lighting response long
+            // before it reads colour. That is why it looked like a painted stripe. ProcTex.PackedSnow-
+            // Normal is boot dishes and scuff instead of crystal grain, and the smoothness drop on top
+            // gives a second cue that survives at grazing angles where albedo contrast washes out.
+            var mat = MeshUtil.Surface(TrailCol, 0.16f, ProcTex.PackedSnowNormal, 0.9f, 1f / 3f);
+            // Loose snow shoulders, pushed aside by weeks of boots. Powder again, and slightly
+            // brighter than the trail, so the berm catches a rim of light along both edges — that rim
+            // is what reads as a trodden channel rather than a decal laid on flat ground.
+            var bermMat = MeshUtil.Surface(DriftCol, 0.34f, ProcTex.SnowNormal, 0.85f, 1f / 3f,
+                                           ProcTex.SnowDetailNormal, 7f);
             // Local, NOT a field: Build() runs again on every reseed, and a counter that survived the
             // rebuild would hand each session a different trail-colour assignment for the same world.
             int pathIndex = 0;
             foreach (var path in World.Paths)
             {
                 var verts = new List<Vector3>();
-                var tris = new List<int>();
+                var tris = new List<int>();   // submesh 0 — the trodden channel
+                var berms = new List<int>();  // submesh 1 — the loose shoulders
                 for (int i = 0; i < path.Pts.Count; i++)
                 {
                     // Segment direction, averaged at the joints so corners don't pinch.
@@ -787,21 +837,57 @@ namespace Metoh.Game
                     // Narrow toward the far end so a trail fades out instead of stopping dead.
                     float taper = Mathf.Lerp(1f, 0.55f, i / (float)Mathf.Max(1, path.Pts.Count - 1));
                     float w = (float)path.HalfWidth * taper;
-                    for (int side = -1; side <= 1; side += 2)
+
+                    // FIVE columns per station, not two. The trail is now a trodden CHANNEL:
+                    //
+                    //   outer berm | inner berm | centre | inner berm | outer berm
+                    //     +berm         0          -sink       0          +berm
+                    //
+                    // The old ribbon was two verts at a flat +0.04, i.e. a flat plane hovering above
+                    // the snow with a hard polygon edge — which is the definition of a decal, and no
+                    // amount of texture work fixes a silhouette that reads as a sticker. Sinking the
+                    // centre and raising a lip either side gives real geometry for the moon and the
+                    // torch to rake across, and the berm crest is what draws the eye along the route.
+                    //
+                    // This is VISUAL ONLY. Terrain height lives in the parity-locked sim
+                    // (Terrain.GetHeight), and players walk on that, so the channel must stay shallow
+                    // enough that nobody reads a mismatch between where they stand and what they see —
+                    // hence centimetres, not a trench. Changing the real heightfield would be a sim
+                    // change and would need both sims plus a golden regen ([parity-lock]).
+                    for (int col = 0; col < 5; col++)
                     {
-                        double px = path.Pts[i].X + nx * w * side;
-                        double pz = path.Pts[i].Z + nz * w * side;
-                        verts.Add(new Vector3((float)px, (float)World.GetHeight(px, pz) + 0.04f, (float)pz));
+                        float side = col - 2f;                 // -2..2
+                        float lateral = w * (Mathf.Abs(side) > 1.5f ? 1.18f : Mathf.Abs(side) * 0.62f) * Mathf.Sign(side);
+                        float dy = Mathf.Abs(side) > 1.5f ? TrailBermHeight       // outer: heaped lip
+                                 : Mathf.Abs(side) > 0.5f ? TrailBermHeight * 0.35f
+                                 : -TrailSinkDepth;                                // centre: trodden down
+                        double px = path.Pts[i].X + nx * lateral;
+                        double pz = path.Pts[i].Z + nz * lateral;
+                        verts.Add(new Vector3((float)px, (float)World.GetHeight(px, pz) + dy, (float)pz));
                     }
                 }
                 for (int i = 0; i + 1 < path.Pts.Count; i++)
                 {
-                    // Winding matters: vertex `a` is the RIGHT edge (the side loop runs -1 first), so
-                    // (a,b,c) is the order whose normal points up. Get it backwards and the ribbon is
-                    // lit from underneath and backface-culled from above — an invisible trail.
-                    int a = i * 2, b = a + 1, c = a + 2, d = a + 3;
-                    tris.Add(a); tris.Add(b); tris.Add(c);
-                    tris.Add(b); tris.Add(d); tris.Add(c);
+                    // Four quads per span now that each station has five columns, stitched across.
+                    //
+                    // Winding still matters and the rule is unchanged: with `b` one column further
+                    // across than `a`, (a,b,c) is the order whose normal points up. Get it backwards
+                    // and the ribbon is lit from underneath and backface-culled from above — an
+                    // invisible trail, which is the bug this comment was left here to prevent.
+                    int row = i * 5, next = (i + 1) * 5;
+                    for (int col = 0; col < 4; col++)
+                    {
+                        int a = row + col, b = a + 1;
+                        int c = next + col, d = c + 1;
+                        // Outer quads are the berms and get powder; the middle two are the trodden
+                        // channel and get packed snow. Two submeshes on one mesh rather than two
+                        // meshes, because they share every vertex along the seam — splitting them
+                        // into separate meshes would duplicate that edge and let the two materials
+                        // pull apart under RecalculateNormals, showing as a crease down each side.
+                        var into = (col == 0 || col == 3) ? berms : tris;
+                        into.Add(a); into.Add(b); into.Add(c);
+                        into.Add(b); into.Add(d); into.Add(c);
+                    }
                 }
                 var mesh = new Mesh();
                 mesh.SetVertices(verts);
@@ -810,11 +896,18 @@ namespace Metoh.Game
                 var tuv = new Vector2[verts.Count];
                 for (int i = 0; i < verts.Count; i++) tuv[i] = new Vector2(verts[i].x, verts[i].z);
                 mesh.SetUVs(0, tuv);
+                mesh.subMeshCount = 2;
                 mesh.SetTriangles(tris, 0);
+                mesh.SetTriangles(berms, 1);
+                // Normals BEFORE tangents, and both are required: the channel now has real relief, and
+                // a normal-mapped mesh with no tangents renders flat (see CLAUDE.md on hand-built
+                // meshes having to supply their own).
                 mesh.RecalculateNormals();
                 mesh.RecalculateTangents();
                 mesh.RecalculateBounds();
-                NewMeshGo("Trail", mesh, mat);
+                var trailGo = NewMeshGo("Trail", mesh, mat);
+                trailGo.GetComponent<MeshRenderer>().sharedMaterials = new[] { mat, bermMat };
+                BuildTrailDetail(path);
                 BuildTrailMarkers(path, pathIndex++);
             }
         }
@@ -1035,6 +1128,59 @@ namespace Metoh.Game
             AddBox(root, "RidgeBeam", new Vector3(0, 3.58f, 0), new Vector3(7.2f, 0.16f, 0.22f), MeshUtil.Rgb(0x5f513f));
 
             AddBox(root, "Window", new Vector3(1.6f, 1.9f, 0), new Vector3(1.6f, 0.7f, 2.34f), MeshUtil.Rgb(0xffd98a), emissive: MeshUtil.Rgb(0xffb24d), glow: 1.4f);
+            // A frame around it. A glowing rectangle flush with the wall reads as a decal; a reveal
+            // and a sill say the wall has thickness, which is most of what makes a box read as built.
+            AddBox(root, "WinFrameT", new Vector3(1.6f, 2.30f, 1.18f), new Vector3(1.9f, 0.14f, 0.10f), MeshUtil.Rgb(0x4a3f31));
+            AddBox(root, "WinFrameB", new Vector3(1.6f, 1.50f, 1.18f), new Vector3(1.9f, 0.16f, 0.16f), MeshUtil.Rgb(0x4a3f31));
+            AddBox(root, "WinMullion", new Vector3(1.6f, 1.9f, 1.19f), new Vector3(0.08f, 0.70f, 0.06f), MeshUtil.Rgb(0x3c3428));
+
+            // --- door -------------------------------------------------------------
+            // The hut had no way in. That is the kind of thing the eye notices without naming it:
+            // a shelter you cannot enter is a prop, and camp is the one structure players approach
+            // deliberately and repeatedly.
+            AddBox(root, "DoorFrame", new Vector3(-1.7f, 1.05f, 1.17f), new Vector3(1.12f, 2.10f, 0.12f), MeshUtil.Rgb(0x4a3f31));
+            AddBox(root, "Door", new Vector3(-1.7f, 1.00f, 1.22f), new Vector3(0.92f, 1.95f, 0.08f), MeshUtil.Rgb(0x6b5a44));
+            AddBox(root, "DoorBrace", new Vector3(-1.7f, 1.55f, 1.27f), new Vector3(0.92f, 0.10f, 0.04f), MeshUtil.Rgb(0x4a3f31));
+            AddBox(root, "Step", new Vector3(-1.7f, 0.10f, 1.55f), new Vector3(1.3f, 0.20f, 0.7f), MeshUtil.Rgb(0x5f513f));
+
+            // --- stovepipe --------------------------------------------------------
+            // Somebody is keeping warm in there. The thin vertical is also the only slim element on an
+            // otherwise blocky silhouette, and it is what stops the roofline reading as a solid slab.
+            var pipeMat = MeshUtil.Surface(MeshUtil.Rgb(0x2b2b2e), 0.34f, ProcTex.MetalNormal, 0.9f, 2.5f);
+            var pipe = NewMeshGo("Stovepipe", MeshUtil.TaperedCylinder(0.13f, 0.115f, 1.9f, 8), pipeMat);
+            pipe.transform.SetParent(root.transform, false);
+            pipe.transform.localPosition = new Vector3(-2.3f, 3.1f, 0f);
+            var cowl = NewMeshGo("PipeCowl", MeshUtil.TaperedCylinder(0.20f, 0.16f, 0.16f, 8), pipeMat);
+            cowl.transform.SetParent(root.transform, false);
+            cowl.transform.localPosition = new Vector3(-2.3f, 5.02f, 0f);
+            if (HPQuality.HighDetail) BuildChimneySmoke(root.transform, new Vector3(-2.3f, 5.15f, 0f));
+
+            // --- snow load + icicles ------------------------------------------------
+            // It snows here every night (Weather runs during the title cinematic too), so bare timber
+            // eaves are a continuity error as much as a shading one.
+            var snowMat = MeshUtil.Surface(MeshUtil.Rgb(0xeef4f8), 0.30f, ProcTex.SnowNormal, 0.8f, 1.2f,
+                                           ProcTex.SnowDetailNormal, 6f);
+            for (int side = -1; side <= 1; side += 2)
+            {
+                var cap = NewMeshGo("RoofSnow", MeshUtil.MetricBox(new Vector3(7.15f, 0.10f, 1.98f)), snowMat);
+                cap.transform.SetParent(root.transform, false);
+                cap.transform.localPosition = new Vector3(0f, 3.19f, side * 0.755f);
+                cap.transform.localRotation = Quaternion.Euler(side * 34f, 0f, 0f);
+            }
+            // Icicles along both eaves. Hashed length/offset per index, never an RNG draw
+            // ([rng-lockstep]) — and they hang from the eave line, which is where meltwater runs.
+            var iceMat = MeshUtil.Surface(MeshUtil.Rgb(0xd8ecf5), 0.72f, ProcTex.IceNormal, 0.6f, 3f);
+            for (int i = 0; i < 14; i++)
+            {
+                float t = i / 13f;
+                float side = (i % 2 == 0) ? 1f : -1f;
+                float len = 0.16f + MeshUtil.Hash01(i * 37 + 9) * 0.30f;
+                var ice = NewMeshGo("Icicle", MeshUtil.TaperedCylinder(0.035f, 0.004f, len, 5), iceMat);
+                ice.transform.SetParent(root.transform, false);
+                ice.transform.localPosition =
+                    new Vector3(Mathf.Lerp(-3.4f, 3.4f, t) + MeshUtil.Hash01(i * 13) * 0.2f, 2.62f, side * 1.62f);
+                ice.transform.localRotation = Quaternion.Euler(180f, 0f, 0f); // TaperedCylinder grows +Y
+            }
 
             // Two A-frame tents in expedition orange, pitched clear of the hut's collider box.
             for (int i = -1; i <= 1; i += 2)
@@ -1094,6 +1240,299 @@ namespace Metoh.Game
         /// reads as a destination from across the clearing. Purely a landmark — the deposit rule is
         /// server-side (GameManager.TryDeposit) and Yeti can do nothing to it.
         /// </summary>
+        /// <summary>
+        /// Scatter along a trail: frozen bootprints, sled ruts, and grit worn through where the pack
+        /// is thinnest.
+        ///
+        /// WHY GEOMETRY AND NOT A TEXTURE. The channel and its berms give the route a cross-section,
+        /// but along its LENGTH it is still perfectly uniform, and uniformity at that scale is what
+        /// reads as "a mesh someone extruded". Real trail is episodic — a patch of scuffed prints,
+        /// then bare grit where a rock sits proud, then a smooth stretch. These are a handful of tiny
+        /// meshes per path and they are what stop the eye sliding along it.
+        ///
+        /// Everything here is hashed from the point index, never drawn from an RNG stream
+        /// ([rng-lockstep]): the trail must look identical on every machine, and the forest placement
+        /// stream runs nowhere near this but the habit is the point.
+        /// </summary>
+        private void BuildTrailDetail(ForestPath path)
+        {
+            if (!HPQuality.HighDetail) return; // pure decoration, first thing to drop ([perf])
+
+            var printMat = MeshUtil.Surface(MeshUtil.Rgb(0x7f8c98), 0.13f, ProcTex.PackedSnowNormal, 1.1f, 1.4f);
+            var gritMat = MeshUtil.Surface(MeshUtil.Rgb(0x574f49), 0.09f, ProcTex.RockNormal, 1.0f, 2.2f);
+            var rutMat = MeshUtil.Surface(MeshUtil.Rgb(0x8894a1), 0.20f, ProcTex.PackedSnowNormal, 1.0f, 1.0f);
+
+            for (int i = 1; i + 1 < path.Pts.Count; i++)
+            {
+                Vec2 p = path.Pts[i];
+                Vec2 nxt = path.Pts[i + 1];
+                float dx = (float)(nxt.X - p.X), dz = (float)(nxt.Z - p.Z);
+                float len = Mathf.Sqrt(dx * dx + dz * dz);
+                if (len < 1e-3f) continue;
+                float ux = dx / len, uz = dz / len;      // along
+                float nx = -uz, nz = ux;                 // across
+                float w = (float)path.HalfWidth;
+                int h = i * 7919;
+
+                // BOOTPRINTS — a cluster of shallow ovals pressed into the channel, staggered either
+                // side of the centreline like an actual gait rather than dotted down the middle.
+                if (MeshUtil.Hash01(h) < 0.55f)
+                {
+                    int n = 3 + (int)(MeshUtil.Hash01(h + 1) * 4f);
+                    for (int k = 0; k < n; k++)
+                    {
+                        float t = (k + 0.5f) / n;
+                        float lateral = ((k % 2 == 0) ? -1f : 1f) * w * 0.22f;
+                        double px = p.X + ux * (len * t) + nx * lateral;
+                        double pz = p.Z + uz * (len * t) + nz * lateral;
+                        var pr = NewMeshGo("Bootprint", MeshUtil.EllipseDisc(0.15f, 0.09f, 7), printMat);
+                        pr.transform.position = new Vector3((float)px,
+                            (float)World.GetHeight(px, pz) - TrailSinkDepth + 0.012f, (float)pz);
+                        pr.transform.rotation = Quaternion.Euler(0f, Mathf.Atan2(ux, uz) * Mathf.Rad2Deg, 0f);
+                    }
+                }
+
+                // GRIT — where boots have worn the pack through to the scree underneath. Only on the
+                // centreline, because that is where the wear is.
+                if (MeshUtil.Hash01(h + 31) < 0.3f)
+                {
+                    double px = p.X + ux * (len * 0.5f);
+                    double pz = p.Z + uz * (len * 0.5f);
+                    var g = NewMeshGo("Grit", MeshUtil.EllipseDisc(0.34f + MeshUtil.Hash01(h + 5) * 0.3f, 0.22f, 9), gritMat);
+                    g.transform.position = new Vector3((float)px,
+                        (float)World.GetHeight(px, pz) - TrailSinkDepth + 0.016f, (float)pz);
+                    g.transform.rotation = Quaternion.Euler(0f, MeshUtil.Hash01(h + 9) * 360f, 0f);
+                }
+
+                // RUTS — a pair of parallel sled grooves running the length of a span. Rarer, and they
+                // are the one detail that implies the expedition hauled something heavy up here.
+                if (MeshUtil.Hash01(h + 77) < 0.22f)
+                {
+                    for (int s = -1; s <= 1; s += 2)
+                    {
+                        double px = p.X + ux * (len * 0.5f) + nx * w * 0.3f * s;
+                        double pz = p.Z + uz * (len * 0.5f) + nz * w * 0.3f * s;
+                        var r = NewMeshGo("Rut", MeshUtil.EllipseDisc(0.07f, len * 0.42f, 6), rutMat);
+                        r.transform.position = new Vector3((float)px,
+                            (float)World.GetHeight(px, pz) - TrailSinkDepth + 0.010f, (float)pz);
+                        r.transform.rotation = Quaternion.Euler(0f, Mathf.Atan2(ux, uz) * Mathf.Rad2Deg, 0f);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Cold air spilling out of a crevasse and pooling at the threshold.
+        ///
+        /// Alpha-blended and very faint. The point is not to be noticed as an effect — it is to be the
+        /// one thing MOVING at the mouth, because a completely static opening reads as a painted
+        /// backdrop the moment you walk toward it, however good its geometry is.
+        /// </summary>
+        private void BuildCrevasseMist(Transform parent)
+        {
+            var mat = new Material(Shader.Find("Universal Render Pipeline/Particles/Unlit"));
+            mat.SetFloat("_Surface", 1f);
+            mat.SetFloat("_Blend", 0f); // alpha — mist occludes, it does not glow
+            mat.SetFloat("_ZWrite", 0f);
+            mat.renderQueue = 3000;
+            mat.SetTexture("_BaseMap", ProcTex.SoftDot);
+            mat.mainTexture = ProcTex.SoftDot;
+
+            var go = new GameObject("CrevasseMist");
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = new Vector3(0f, 0.35f, 1.6f);
+            var ps = go.AddComponent<ParticleSystem>();
+            var main = ps.main;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.startLifetime = new ParticleSystem.MinMaxCurve(5f, 10f);
+            main.startSpeed = new ParticleSystem.MinMaxCurve(0.18f, 0.5f);
+            main.startSize = new ParticleSystem.MinMaxCurve(1.4f, 3.0f);
+            main.gravityModifier = 0.008f; // cold air SINKS — the opposite of the smoke systems
+            main.maxParticles = 34;
+            main.startColor = new ParticleSystem.MinMaxGradient(new Color(0.72f, 0.82f, 0.90f, 0.13f));
+
+            var emission = ps.emission;
+            emission.rateOverTime = 3.2f;
+
+            var shape = ps.shape;
+            shape.shapeType = ParticleSystemShapeType.Box;
+            shape.scale = new Vector3(4.4f, 0.5f, 1.2f);
+
+            var col = ps.colorOverLifetime;
+            col.enabled = true;
+            var g = new Gradient();
+            g.SetKeys(
+                new[] { new GradientColorKey(new Color(0.78f, 0.87f, 0.94f), 0f),
+                        new GradientColorKey(new Color(0.66f, 0.76f, 0.86f), 1f) },
+                new[] { new GradientAlphaKey(0f, 0f), new GradientAlphaKey(1f, 0.3f), new GradientAlphaKey(0f, 1f) });
+            col.color = new ParticleSystem.MinMaxGradient(g);
+
+            // Creeps outward and downhill, away from the mouth.
+            var vel = ps.velocityOverLifetime;
+            vel.enabled = true;
+            vel.space = ParticleSystemSimulationSpace.Local;
+            vel.z = new ParticleSystem.MinMaxCurve(0.15f, 0.55f);
+
+            var noise = ps.noise;
+            noise.enabled = true;
+            noise.strength = new ParticleSystem.MinMaxCurve(0.22f);
+            noise.frequency = 0.22f;
+            noise.quality = ParticleSystemNoiseQuality.Low;
+
+            go.GetComponent<ParticleSystemRenderer>().sharedMaterial = mat;
+        }
+
+        /// <summary>A thin, slow column from the stovepipe. Same material story as the campfire smoke:
+        /// alpha-blended, never additive, or the column glows.</summary>
+        private void BuildChimneySmoke(Transform parent, Vector3 localPos)
+        {
+            var mat = new Material(Shader.Find("Universal Render Pipeline/Particles/Unlit"));
+            mat.SetFloat("_Surface", 1f);
+            mat.SetFloat("_Blend", 0f);
+            mat.SetFloat("_ZWrite", 0f);
+            mat.renderQueue = 3000;
+            mat.SetTexture("_BaseMap", ProcTex.SoftDot);
+            mat.mainTexture = ProcTex.SoftDot;
+
+            var go = new GameObject("ChimneySmoke");
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = localPos;
+            var ps = go.AddComponent<ParticleSystem>();
+            var main = ps.main;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.startLifetime = new ParticleSystem.MinMaxCurve(4f, 8f);
+            main.startSpeed = new ParticleSystem.MinMaxCurve(0.5f, 1.1f);
+            main.startSize = new ParticleSystem.MinMaxCurve(0.25f, 0.5f);
+            main.gravityModifier = -0.015f;
+            main.maxParticles = 45;
+            main.startColor = new ParticleSystem.MinMaxGradient(new Color(0.55f, 0.56f, 0.58f, 0.22f));
+
+            var emission = ps.emission;
+            emission.rateOverTime = 5f;
+
+            var shape = ps.shape;
+            shape.shapeType = ParticleSystemShapeType.Cone;
+            shape.angle = 6f;
+            shape.radius = 0.10f;
+
+            var size = ps.sizeOverLifetime;
+            size.enabled = true;
+            size.size = new ParticleSystem.MinMaxCurve(1f, SmokeGrowCurve());
+
+            var col = ps.colorOverLifetime;
+            col.enabled = true;
+            col.color = new ParticleSystem.MinMaxGradient(SmokeGradient());
+
+            var vel = ps.velocityOverLifetime;
+            vel.enabled = true;
+            vel.space = ParticleSystemSimulationSpace.World;
+            vel.x = new ParticleSystem.MinMaxCurve(-1.2f, -0.35f); // same wind the snow uses
+            vel.z = new ParticleSystem.MinMaxCurve(-0.35f, 0.45f);
+
+            go.GetComponent<ParticleSystemRenderer>().sharedMaterial = mat;
+        }
+
+        /// <summary>
+        /// The wreck: a half-buried tracked snowcat at the edge of camp, nose-down and long dead.
+        ///
+        /// WHY IT IS HERE. Camp was all timber, canvas and snow — three soft, matte, similar materials,
+        /// so nothing in it caught light differently from anything else. A steel hull with cracked
+        /// glass is the one hard, dented, semi-metallic surface on the map, and it is what the new
+        /// MetalNormal exists for: a torch sweeping across dented panel reads completely unlike a
+        /// torch sweeping across a plank wall. It also answers a question the camp never did — how did
+        /// five people and their gear get up a Himalayan valley — and answers it with something that
+        /// visibly failed, which is the right note for this game.
+        ///
+        /// PLACEMENT IS DERIVED, NOT DRAWN. Its position comes from the seeded RV transform by fixed
+        /// offsets, so it consumes no random numbers and cannot perturb the forest stream
+        /// ([rng-lockstep]). Its collider is appended in WorldData.BuildColliders AFTER the tree loop
+        /// for exactly the same reason.
+        /// </summary>
+        private void BuildWreck()
+        {
+            Vector3 at = WreckPosition(out float yawDeg);
+            var root = new GameObject("Wreck");
+            root.transform.parent = transform;
+            root.transform.SetPositionAndRotation(at, Quaternion.Euler(0f, yawDeg, 0f));
+
+            // Nose-down and canted: a vehicle that stopped where it broke, not one that parked.
+            var hull = new GameObject("Hull");
+            hull.transform.SetParent(root.transform, false);
+            hull.transform.localRotation = Quaternion.Euler(-13f, 0f, 6f);
+
+            var steel = MeshUtil.Surface(MeshUtil.Rgb(0x5c4a3a), 0.34f, ProcTex.MetalNormal, 1.0f, 0.55f, metallic: 0.55f);
+            var rust = MeshUtil.Surface(MeshUtil.Rgb(0x6d4426), 0.14f, ProcTex.MetalNormal, 1.1f, 0.8f, metallic: 0.25f);
+            var glass = MeshUtil.Surface(MeshUtil.Rgb(0x2b3a40), 0.88f, ProcTex.IceNormal, 0.5f, 1.4f, metallic: 0.2f);
+            var track = MeshUtil.Surface(MeshUtil.Rgb(0x23201e), 0.10f, ProcTex.MetalNormal, 1.2f, 1.6f);
+
+            AddBoxTo(hull, "Body", new Vector3(0f, 0.85f, 0f), new Vector3(3.5f, 1.25f, 2.0f), steel);
+            AddBoxTo(hull, "Cab", new Vector3(0.85f, 1.85f, 0f), new Vector3(1.7f, 1.0f, 1.85f), steel);
+            AddBoxTo(hull, "Windscreen", new Vector3(1.62f, 1.90f, 0f), new Vector3(0.10f, 0.72f, 1.55f), glass);
+            AddBoxTo(hull, "SideGlass", new Vector3(0.85f, 1.95f, 0.93f), new Vector3(1.35f, 0.55f, 0.06f), glass);
+            AddBoxTo(hull, "Bonnet", new Vector3(-1.35f, 1.35f, 0f), new Vector3(1.1f, 0.35f, 1.8f), rust);
+
+            // Tracks. Half-sunk, so only the top run shows — which is what sells "buried" without
+            // needing to deform the terrain under it.
+            for (int s = -1; s <= 1; s += 2)
+            {
+                AddBoxTo(hull, "Track", new Vector3(0f, 0.28f, s * 1.05f), new Vector3(3.7f, 0.55f, 0.42f), track);
+                for (int w = 0; w < 4; w++)
+                {
+                    var road = NewMeshGo("Roller", MeshUtil.TaperedCylinder(0.26f, 0.26f, 0.30f, 8), rust);
+                    road.transform.SetParent(hull.transform, false);
+                    road.transform.localPosition = new Vector3(-1.35f + w * 0.9f, 0.30f, s * 1.05f);
+                    road.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+                }
+            }
+
+            // A sprung hatch and a bent exhaust: the two silhouette breaks that stop it reading as a
+            // stack of boxes at the distance you actually see it from.
+            var hatch = NewMeshGo("Hatch", MeshUtil.MetricBox(new Vector3(0.9f, 0.06f, 0.8f)), rust);
+            hatch.transform.SetParent(hull.transform, false);
+            hatch.transform.localPosition = new Vector3(0.2f, 2.38f, -0.35f);
+            hatch.transform.localRotation = Quaternion.Euler(0f, 12f, -58f);
+
+            var stack = NewMeshGo("Exhaust", MeshUtil.Limb(0.07f, 0.055f, 0.9f, 5, 6, 733, 0.05f), rust);
+            stack.transform.SetParent(hull.transform, false);
+            stack.transform.localPosition = new Vector3(-0.6f, 1.5f, -0.78f);
+            stack.transform.localRotation = Quaternion.Euler(18f, 0f, 26f);
+
+            // Drifted snow banking against the windward flank — the thing that actually says "this has
+            // been here since before you arrived".
+            var snow = MeshUtil.Surface(MeshUtil.Rgb(0xe6eef4), 0.32f, ProcTex.SnowNormal, 0.8f, 1.1f,
+                                        ProcTex.SnowDetailNormal, 6f);
+            for (int i = 0; i < 5; i++)
+            {
+                float t = i / 4f;
+                var bank = NewMeshGo("Drift", MeshUtil.Blob(1.05f, 0.34f, 0.7f, 5, 9, 640 + i, 0.24f), snow);
+                bank.transform.SetParent(root.transform, false);
+                bank.transform.localPosition = new Vector3(Mathf.Lerp(-1.9f, 1.9f, t), 0.12f, -1.25f - MeshUtil.Hash01(i * 19) * 0.3f);
+            }
+        }
+
+        /// <summary>
+        /// Where the wreck sits, derived from the seeded basecamp transform. Shared with
+        /// <c>WorldData.BuildColliders</c>, which must place its collider on the same spot — the two
+        /// are kept in step by both being pure functions of <c>WorldData.Rv</c> and these constants.
+        /// </summary>
+        internal static Vector3 WreckPosition(out float yawDeg)
+        {
+            double ry = WorldData.Rv.Ry;
+            double ox = System.Math.Cos(ry) * WorldData.WreckAlong - System.Math.Sin(ry) * WorldData.WreckAcross;
+            double oz = -System.Math.Sin(ry) * WorldData.WreckAlong - System.Math.Cos(ry) * WorldData.WreckAcross;
+            double x = WorldData.Rv.X + ox, z = WorldData.Rv.Z + oz;
+            yawDeg = (float)(ry * Mathf.Rad2Deg + WorldData.WreckYawOffsetDeg);
+            return new Vector3((float)x, (float)World.GetHeight(x, z), (float)z);
+        }
+
+        /// <summary>AddBox with an explicit material, for props that are not sawn timber.</summary>
+        private void AddBoxTo(GameObject parent, string name, Vector3 localPos, Vector3 size, Material mat)
+        {
+            var go = NewMeshGo(name, MeshUtil.MetricBox(size), mat);
+            go.transform.SetParent(parent.transform, false);
+            go.transform.localPosition = localPos;
+        }
+
         private void BuildDuffel()
         {
             Vector3 at = DuffelPosition();
@@ -1174,28 +1613,42 @@ namespace Metoh.Game
 
                 // The icefall the crevasse is cut into — irregular now rather than a stretched sphere,
                 // which is what it read as from any angle that showed its outline against the sky.
-                var mound = NewMeshGo("Mound", MeshUtil.Rock(1f, 9, 14, caveIndex + 3), rock);
+                // Built at its real proportions via Lathe's xScale/zScale rather than squashed by the
+                // transform. NON-UNIFORM TRANSFORM SCALE ON NORMAL-MAPPED GEOMETRY IS A BUG: it skews
+                // tangent space, so the ice normals were being sheared, and it stretches UV tiling
+                // anisotropically so the grain ran at different densities across one surface. This was
+                // the biggest mesh in every cave and it had a 13 : 7.2 : 11 squash on it. Same class of
+                // problem as the AddBox UV stretch, and the brow below was worse at 6 : 1.
+                var mound = NewMeshGo("Mound", MeshUtil.Rock(6.5f, 9, 14, caveIndex + 3, 2.0f, 1.7f), rock);
                 mound.transform.SetParent(root.transform, false);
                 mound.transform.localPosition = new Vector3(0f, 1.1f, -3.4f);
-                mound.transform.localScale = new Vector3(13f, 7.2f, 11f);
 
-                // The opening. Was a scaled SPHERE, which is the single worst shape available for a
-                // hole: a sphere is convex, so the "recess" bulged outward and read as a black
-                // beachball parked against the ice. An irregular mass reads as a crack because its
-                // outline is broken — and the outline is all you get, since the interior is unlit.
-                var mouth = NewMeshGo("Mouth", MeshUtil.Rock(1f, 8, 12, caveIndex + 11), voidMat);
-                mouth.transform.SetParent(root.transform, false);
-                mouth.transform.localPosition = new Vector3(0f, 1.5f, 0.7f);
-                mouth.transform.localScale = new Vector3(4.6f, 3.9f, 4.2f);
+                // THE OPENING — now an actual recess, which it never was.
+                //
+                // It has been a convex mass twice: first a scaled sphere ("a black beachball parked
+                // against the ice"), then an irregular Rock, which broke the outline but was still
+                // CONVEX. That is the whole problem, and no amount of lumpiness fixes it: a convex
+                // surface bulges toward the viewer, so it can only ever read as a dark rock. Head-on
+                // with the throat glow behind it you could just about believe it; from any angle you
+                // could not.
+                //
+                // MeshUtil.Throat builds inward-facing faces receding into unlit black — genuine
+                // concavity. It reads as an opening from every angle, it frames the Yeti properly
+                // when it emerges, and it gives the mist something to sit inside.
+                var throat = NewMeshGo("Throat", MeshUtil.Throat(2.5f, 1.9f, 7.5f, 14, 7, caveIndex + 11), voidMat);
+                throat.transform.SetParent(root.transform, false);
+                throat.transform.localPosition = new Vector3(0f, 1.45f, 0.55f);
+                throat.transform.localRotation = Quaternion.Euler(0f, 180f, 0f); // bore points into the hill
 
                 // Overhanging brow above the opening — the strongest "this is an entrance" cue, and
                 // formerly a rotated cube. A straight horizontal edge is the one line that never occurs
                 // in broken ice, so it read as a lintel somebody had installed.
-                var brow = NewMeshGo("Brow", MeshUtil.Rock(1f, 7, 12, caveIndex + 23), darkRock);
+                // Proportions in the mesh, not the transform — this one was the worst offender at a
+                // 6 : 1 squash, which sheared its normals hardest of anything in the scene.
+                var brow = NewMeshGo("Brow", MeshUtil.Rock(1.95f, 7, 12, caveIndex + 23, 2.0f, 0.87f, 0.32f), darkRock);
                 brow.transform.SetParent(root.transform, false);
                 brow.transform.localPosition = new Vector3(0f, 3.4f, 1.4f);
                 brow.transform.localRotation = Quaternion.Euler(-14f, 0f, 0f);
-                brow.transform.localScale = new Vector3(3.9f, 0.62f, 1.7f);
 
                 // Icicles across the brow — the detail that says ICE rather than rock, and the one
                 // piece of geometry here small enough to read as detail at the range you approach from.
@@ -1228,6 +1681,60 @@ namespace Metoh.Game
                 // "the red mouth" — which is what a landmark actually is. The colours are the lung-ta
                 // five, so the world's existing visual language covers it rather than needing a new
                 // one, and the mast is tall enough to clear the treeline and be picked out at range.
+                // --- the ice-cavern layer -----------------------------------------------------
+                //
+                // The three things that separate "a hole in a grey lump" from "a crevasse in a
+                // glacier". Each is cheap; together they are most of the read.
+                //
+                // 1. TRANSLUCENT LIP. Real glacier ice carries light a short way into itself, so an
+                //    edge lit from behind glows rather than going to silhouette. URP/Lit has no
+                //    subsurface term, so this fakes it the way the rest of the project does — a thin
+                //    emissive shell on the lip only, tinted the throat's cold blue. It is what makes
+                //    the opening read as ICE rather than as painted rock.
+                var lipIce = MeshUtil.Surface(MeshUtil.Rgb(0x9fd4ea), 0.80f, ProcTex.IceNormal, 0.7f, 0.8f,
+                                              emission: MeshUtil.Rgb(0x2d5f7d), emissionIntensity: 0.55f);
+                for (int i = 0; i < 8; i++)
+                {
+                    float a = i / 8f * Mathf.PI * 2f;
+                    float rr = 0.55f + MeshUtil.Hash01(caveIndex * 311 + i * 17) * 0.5f;
+                    var chunk = NewMeshGo("LipIce", MeshUtil.Rock(rr, 5, 8, caveIndex * 9 + i, 1.3f, 0.8f), lipIce);
+                    chunk.transform.SetParent(root.transform, false);
+                    chunk.transform.localPosition = new Vector3(Mathf.Cos(a) * 2.7f, 1.45f + Mathf.Sin(a) * 2.1f, 0.95f);
+                }
+
+                // 2. RIME creeping out across the ground from the threshold — frost the cold breath of
+                //    the crevasse has laid down. It ties the mouth to the snow it sits in; without it
+                //    the whole assembly reads as parked on the surface.
+                var rime = MeshUtil.Surface(MeshUtil.Rgb(0xe9f6fb), 0.55f, ProcTex.IceNormal, 0.6f, 1.4f);
+                for (int i = 0; i < 6; i++)
+                {
+                    float t = i / 5f;
+                    var patch = NewMeshGo("Rime", MeshUtil.EllipseDisc(2.6f - t * 1.5f, 1.7f - t * 0.9f, 11), rime);
+                    patch.transform.SetParent(root.transform, false);
+                    float fz = 2.2f + t * 4.2f;
+                    patch.transform.localPosition = new Vector3((MeshUtil.Hash01(caveIndex * 71 + i) - 0.5f) * 2.4f, 0.03f, fz);
+                }
+
+                // 3. ICICLE CURTAIN at varying depths INSIDE the bore, not just across the brow. Teeth
+                //    receding into the dark are what give the throat a sense of scale — with nothing
+                //    inside it, a black hole has no depth cue at all no matter how concave it is.
+                for (int i = 0; i < (HPQuality.HighDetail ? 12 : 6); i++)
+                {
+                    float h01 = MeshUtil.Hash01(caveIndex * 613 + i * 41);
+                    float depth = 0.4f + h01 * 3.2f;                       // how far back it hangs
+                    float len = 0.4f + MeshUtil.Hash01(caveIndex * 97 + i) * 1.3f;
+                    float across = (MeshUtil.Hash01(caveIndex * 53 + i * 7) - 0.5f) * 3.6f * (1f - depth * 0.2f);
+                    var spike = NewMeshGo("ThroatIcicle",
+                        MeshUtil.Limb(0.015f, 0.075f, len, 5, 5, caveIndex * 80 + i, 0.14f), ice);
+                    spike.transform.SetParent(root.transform, false);
+                    spike.transform.localPosition = new Vector3(across, 3.05f - len - depth * 0.25f, 0.5f - depth);
+                }
+
+                // 4. MIST pooling at the threshold. Cold air spills out of a crevasse and sits low, and
+                //    a slow drift across the opening is the one moving thing here — which is what stops
+                //    the mouth reading as a painted backdrop when you approach it.
+                if (HPQuality.HighDetail) BuildCrevasseMist(root.transform);
+
                 int ident = caveIndex % FlagCols.Length;
                 Color identCol = MeshUtil.Rgb(FlagCols[ident]);
                 BuildMarkerMast(root.transform, new Vector3(0f, 0f, 4.6f), 7.5f, ident);
@@ -1324,12 +1831,37 @@ namespace Metoh.Game
             root.transform.position = new Vector3(towerXZ.x, baseY, towerXZ.y);
             root.transform.parent = transform;
             var wood = MeshUtil.Surface(MeshUtil.Rgb(0x5a5148), 0.12f, ProcTex.BarkNormal, 1.0f, 1.2f); // grey-weathered timber
-            Mesh post = MeshUtil.TaperedCylinder(0.22f, 0.18f, 10f, 5);
-            foreach (var off in new[] { new Vector2(-1.4f, -1.4f), new Vector2(1.4f, -1.4f), new Vector2(-1.4f, 1.4f), new Vector2(1.4f, 1.4f) })
+            // 9 segments, not 5. A 5-segment cylinder is a PENTAGON, and at the diameter of a 10 m
+            // structural post that is plainly visible as a flat-sided stick — the same primitive tell
+            // [legibility] catches on the trees.
+            Mesh post = MeshUtil.TaperedCylinder(0.22f, 0.18f, 10f, 9);
+            var legOffsets = new[] { new Vector2(-1.4f, -1.4f), new Vector2(1.4f, -1.4f), new Vector2(1.4f, 1.4f), new Vector2(-1.4f, 1.4f) };
+            foreach (var off in legOffsets)
             {
                 var leg = NewMeshGo("Leg", post, wood);
                 leg.transform.parent = root.transform;
                 leg.transform.localPosition = new Vector3(off.x, 0f, off.y);
+            }
+
+            // --- cross-bracing ----------------------------------------------------
+            // The tower was four unbraced vertical posts holding a platform 10 m up, which is not a
+            // thing that stands, and the eye knows it without being able to name it. Bracing is also
+            // the single cheapest silhouette win here: it turns a bare rectangle into a lattice, and a
+            // lattice is what a fire lookout READS as from a distance — which matters, because this is
+            // a landmark players navigate by long before they can resolve any of its detail.
+            var brace = MeshUtil.Surface(MeshUtil.Rgb(0x4e453c), 0.12f, ProcTex.BarkNormal, 0.9f, 1.4f);
+            for (int side = 0; side < 4; side++)
+            {
+                Vector2 a = legOffsets[side], b = legOffsets[(side + 1) % 4];
+                // Two tiers of X-bracing plus a horizontal girt between them.
+                for (int tier = 0; tier < 2; tier++)
+                {
+                    float y0 = 0.7f + tier * 4.3f, y1 = y0 + 4.1f;
+                    AddStrut(root, brace, new Vector3(a.x, y0, a.y), new Vector3(b.x, y1, b.y), 0.055f);
+                    AddStrut(root, brace, new Vector3(b.x, y0, b.y), new Vector3(a.x, y1, a.y), 0.055f);
+                }
+                AddStrut(root, brace, new Vector3(a.x, 4.9f, a.y), new Vector3(b.x, 4.9f, b.y), 0.07f);
+                AddStrut(root, brace, new Vector3(a.x, 0.55f, a.y), new Vector3(b.x, 0.55f, b.y), 0.07f);
             }
             // Platform TOP aligned to the sim's climb height, so feet stand ON the boards.
             AddBox(root, "Platform", new Vector3(0, TowerClimbH - 0.175f, 0), new Vector3(3.6f, 0.35f, 3.6f), MeshUtil.Rgb(0x7a5a3a));
@@ -1341,13 +1873,15 @@ namespace Metoh.Game
                     alongX ? new Vector3(3.6f, 0.1f, 0.1f) : new Vector3(0.1f, 0.1f, 3.6f), MeshUtil.Rgb(0x6a4a2c));
             }
 
-            var lamp = new GameObject("TowerLamp").AddComponent<Light>();
-            lamp.transform.parent = root.transform;
-            lamp.transform.localPosition = new Vector3(0, TowerClimbH + 0.9f, 0);
-            lamp.type = LightType.Point;
-            lamp.color = MeshUtil.Rgb(0xffb060);
-            lamp.range = 30f;
-            lamp.intensity = 1.6f;
+            // --- the brazier ------------------------------------------------------
+            // Was a bare Light component with NO MESH AT ALL — light pouring out of empty air above
+            // the deck. An iron fire basket is both the honest answer and the right one for a
+            // wilderness lookout: this valley has no power, so every other warm light in the game is
+            // a flame or a lamp somebody carried up, and a floating glow was the one thing breaking
+            // that rule. It reuses the campfire's flicker and particles wholesale (see Campfire.cs),
+            // which is most of why this is cheap.
+            BuildBrazier(root.transform, new Vector3(1.15f, TowerClimbH, 1.15f));
+            BuildTowerViewer(root.transform, new Vector3(-1.0f, TowerClimbH, -1.0f));
 
             // Ladder on the face toward map centre (the side searchers approach from). Its line sits
             // just outside the collider so the foot is on open ground; the rails+rungs are render-only.
@@ -1360,50 +1894,543 @@ namespace Metoh.Game
             BuildLadderMesh(root, baseY, towerXZ, toCentre, faceR);
         }
 
+        /// <summary>
+        /// The ladder. Was, accurately, a pile of sticks.
+        ///
+        /// The old one was two `TaperedCylinder(..., 4)` rails and rungs of the same — and FOUR
+        /// SEGMENTS IS A SQUARE. So they were not round rails at all, they were square posts, floating
+        /// at the tower face with nothing joining them to it and nothing at the top to grab. Every
+        /// piece was also the same diameter, which is the tell that reads as "sticks" rather than
+        /// "ladder": on a real one the stiles are chunky and the rungs are slimmer, and that contrast
+        /// is most of the recognition.
+        ///
+        /// What makes this one read as built: round stiles (9 segments) that TAPER, rungs let into
+        /// them at a smaller diameter, standoff brackets bolting it to the tower at three heights, and
+        /// a safety hoop over the last stretch. The hoop is doing double duty — it is what a real fire
+        /// lookout has, and it visually terminates the climb instead of the ladder just stopping.
+        /// </summary>
         private void BuildLadderMesh(GameObject root, float baseY, Vector2 towerXZ, Vector2 toCentre, float faceR)
         {
             var wood = MeshUtil.Surface(MeshUtil.Rgb(0x5a3f24), 0.12f, ProcTex.BarkNormal, 1.0f, 1.2f);
+            var iron = MeshUtil.Surface(MeshUtil.Rgb(0x39332e), 0.30f, ProcTex.MetalNormal, 0.9f, 2.0f, metallic: 0.5f);
             float topLocalY = TowerClimbH; // ladder runs from ground to the platform surface
-            Vector2 side = new Vector2(-toCentre.y, toCentre.x); // perpendicular, for the two rails
+            Vector2 side = new Vector2(-toCentre.y, toCentre.x); // perpendicular, for the two stiles
             var localFace = new Vector3(toCentre.x * faceR, 0, toCentre.y * faceR); // relative to root
+            const float halfW = 0.32f;
 
-            // Two vertical rails.
-            foreach (float s in new[] { -0.32f, 0.32f })
+            // Two stiles — round, and thicker at the foot where the load is.
+            foreach (float s in new[] { -halfW, halfW })
             {
-                var rail = NewMeshGo("LadderRail", MeshUtil.TaperedCylinder(0.06f, 0.06f, topLocalY, 4), wood);
+                var rail = NewMeshGo("LadderStile", MeshUtil.TaperedCylinder(0.075f, 0.055f, topLocalY, 9), wood);
                 rail.transform.parent = root.transform;
                 rail.transform.localPosition = localFace + new Vector3(side.x * s, 0, side.y * s);
             }
-            // Rungs every 0.5 m.
-            Mesh rung = MeshUtil.TaperedCylinder(0.05f, 0.05f, 0.64f, 4);
-            for (float h = 0.4f; h < topLocalY; h += 0.5f)
+
+            // Rungs — slimmer than the stiles, and inset so they read as let INTO them rather than
+            // laid across the front.
+            Mesh rung = MeshUtil.TaperedCylinder(0.036f, 0.036f, halfW * 2f - 0.03f, 8);
+            var rungRot = Quaternion.LookRotation(new Vector3(toCentre.x, 0, toCentre.y)) * Quaternion.Euler(0, 90, 90);
+            for (float h = 0.34f; h < topLocalY - 0.1f; h += 0.34f)
             {
                 var r = NewMeshGo("Rung", rung, wood);
                 r.transform.parent = root.transform;
                 r.transform.localPosition = localFace + new Vector3(0, h, 0);
-                // lay it flat, spanning the two rails
-                r.transform.localRotation = Quaternion.LookRotation(new Vector3(toCentre.x, 0, toCentre.y)) * Quaternion.Euler(0, 90, 90);
+                r.transform.localRotation = rungRot;
+            }
+
+            // Standoff brackets. Without these the ladder hangs in space beside the tower; with them
+            // it is bolted to it, which is the difference between a prop and a structure.
+            foreach (float h in new[] { 1.6f, 5.0f, 8.4f })
+            {
+                for (int s = -1; s <= 1; s += 2)
+                {
+                    Vector3 outer = localFace + new Vector3(side.x * halfW * s, h, side.y * halfW * s);
+                    Vector3 inner = new Vector3(toCentre.x * 1.35f, h, toCentre.y * 1.35f);
+                    AddStrut(root, iron, outer, inner, 0.035f);
+                }
+            }
+
+            // Safety hoop over the top stretch — five arcs behind the climber.
+            for (int i = 0; i < 5; i++)
+            {
+                float h = topLocalY - 2.6f + i * 0.62f;
+                var hoop = NewMeshGo("LadderHoop", MeshUtil.Torus(0.42f, 0.028f, 14, 5, 0), iron);
+                hoop.transform.parent = root.transform;
+                hoop.transform.localPosition = localFace + new Vector3(toCentre.x * 0.18f, h, toCentre.y * 0.18f);
+                // Torus lies in XZ; stand it up and face it along the ladder.
+                hoop.transform.localRotation = Quaternion.LookRotation(new Vector3(toCentre.x, 0, toCentre.y)) *
+                                               Quaternion.Euler(90f, 0f, 0f);
             }
         }
 
+        /// <summary>
+        /// The mounted tower viewer — the coin-operated binoculars from a scenic overlook (owner's
+        /// reference, 2026-08-14), without the coin slot doing anything.
+        ///
+        /// Binoculars were previously not an object at all: glassing was a pure ability, hold-B on the
+        /// deck, with no model anywhere. This gives it the thing you can see from the ground and walk
+        /// up to, while keeping it bolted to the tower — a pocketable pair would delete the tower's
+        /// whole reason to exist, since glassing IS the reward for climbing.
+        ///
+        /// See <see cref="TowerViewer"/> for why the aiming animation needs no new networking.
+        /// </summary>
+        private void BuildTowerViewer(Transform parent, Vector3 localPos)
+        {
+            var painted = MeshUtil.Surface(MeshUtil.Rgb(0x2f4f45), 0.42f, ProcTex.MetalNormal, 0.8f, 1.8f, metallic: 0.45f);
+            var iron = MeshUtil.Surface(MeshUtil.Rgb(0x39332e), 0.30f, ProcTex.MetalNormal, 0.9f, 2.2f, metallic: 0.55f);
+            var glass = MeshUtil.Surface(MeshUtil.Rgb(0x1b2b33), 0.92f, ProcTex.IceNormal, 0.4f, 2f, metallic: 0.3f);
+
+            var root = new GameObject("TowerViewer");
+            root.transform.SetParent(parent, false);
+            root.transform.localPosition = localPos;
+
+            // Cast base and column. Heavy and tapered — these things are bolted down because they get
+            // leaned on, and that heft is most of what makes the silhouette recognisable.
+            var plate = NewMeshGo("ViewerBase", MeshUtil.TaperedCylinder(0.30f, 0.24f, 0.07f, 12), iron);
+            plate.transform.SetParent(root.transform, false);
+            var column = NewMeshGo("ViewerColumn", MeshUtil.TaperedCylinder(0.115f, 0.085f, 1.16f, 10), painted);
+            column.transform.SetParent(root.transform, false);
+            column.transform.localPosition = new Vector3(0f, 0.07f, 0f);
+
+            // The yoke yaws; the head pitches inside it. Two transforms, because a single one cannot
+            // do both without the eyepieces rolling as it swings.
+            var yoke = new GameObject("Yoke").transform;
+            yoke.SetParent(root.transform, false);
+            yoke.localPosition = new Vector3(0f, 1.23f, 0f);
+
+            var collar = NewMeshGo("Collar", MeshUtil.TaperedCylinder(0.10f, 0.10f, 0.09f, 10), iron);
+            collar.transform.SetParent(yoke, false);
+            for (int s = -1; s <= 1; s += 2)
+            {
+                var arm = NewMeshGo("YokeArm", MeshUtil.MetricBox(new Vector3(0.05f, 0.26f, 0.07f)), painted);
+                arm.transform.SetParent(yoke, false);
+                arm.transform.localPosition = new Vector3(s * 0.20f, 0.17f, 0f);
+            }
+
+            var head = new GameObject("Head").transform;
+            head.SetParent(yoke, false);
+            head.localPosition = new Vector3(0f, 0.29f, 0f);
+
+            // Twin barrels plus the housing between them — the shape that says "binoculars" instantly
+            // even as a silhouette, which is how it will usually be seen.
+            AddBoxTo(head.gameObject, "Housing", Vector3.zero, new Vector3(0.34f, 0.20f, 0.30f), painted);
+            for (int s = -1; s <= 1; s += 2)
+            {
+                var barrel = NewMeshGo("Barrel", MeshUtil.TaperedCylinder(0.075f, 0.062f, 0.42f, 10), painted);
+                barrel.transform.SetParent(head, false);
+                barrel.transform.localPosition = new Vector3(s * 0.105f, 0f, 0.14f);
+                barrel.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+
+                var lens = NewMeshGo("Lens", MeshUtil.TaperedCylinder(0.058f, 0.058f, 0.012f, 12), glass);
+                lens.transform.SetParent(head, false);
+                lens.transform.localPosition = new Vector3(s * 0.105f, 0f, 0.56f);
+                lens.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+
+                var cup = NewMeshGo("Eyecup", MeshUtil.TaperedCylinder(0.045f, 0.055f, 0.05f, 10), iron);
+                cup.transform.SetParent(head, false);
+                cup.transform.localPosition = new Vector3(s * 0.105f, 0f, -0.19f);
+                cup.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+            }
+            // Handles either side, and the coin box — the two details that make it read as the
+            // seaside-overlook object rather than as a generic scope. The box is decoration only:
+            // nothing charges the player anything.
+            for (int s = -1; s <= 1; s += 2)
+            {
+                var grip = NewMeshGo("Handle", MeshUtil.TaperedCylinder(0.022f, 0.022f, 0.20f, 8), iron);
+                grip.transform.SetParent(head, false);
+                grip.transform.localPosition = new Vector3(s * 0.21f, -0.06f, -0.05f);
+                grip.transform.localRotation = Quaternion.Euler(0f, 0f, s * 22f);
+            }
+            AddBoxTo(root, "CoinBox", new Vector3(0.14f, 0.86f, 0f), new Vector3(0.12f, 0.20f, 0.10f), iron);
+
+            root.AddComponent<TowerViewer>().Init(yoke, head);
+        }
+
+        /// <summary>
+        /// A timber/iron strut between two local points. Used for the tower's cross-bracing and the
+        /// ladder's standoffs — anywhere a member has to connect two places rather than stand up.
+        ///
+        /// The maths worth stating: TaperedCylinder builds along +Y, so the rotation is
+        /// FromToRotation(up, delta) and the length is the delta's magnitude. Getting this wrong gives
+        /// struts that are the right length pointing the wrong way, which looks like a bug in the
+        /// layout rather than in the rotation.
+        /// </summary>
+        private void AddStrut(GameObject parent, Material mat, Vector3 from, Vector3 to, float radius)
+        {
+            Vector3 delta = to - from;
+            float len = delta.magnitude;
+            if (len < 1e-3f) return;
+            var go = NewMeshGo("Strut", MeshUtil.TaperedCylinder(radius, radius, len, 7), mat);
+            go.transform.parent = parent.transform;
+            go.transform.localPosition = from;
+            go.transform.localRotation = Quaternion.FromToRotation(Vector3.up, delta / len);
+        }
+
+        /// <summary>
+        /// The lookout's fire basket: an iron brazier on a stand, burning all night.
+        ///
+        /// Shares <see cref="Campfire"/> and <see cref="BuildFireParticles"/> with the camp fire, so
+        /// it flickers on the same summed-sine model and needs no code of its own. Scaled down and
+        /// dimmed — it is a beacon seen from the valley floor, not a hearth you warm your hands at.
+        /// </summary>
+        private void BuildBrazier(Transform parent, Vector3 localPos)
+        {
+            var iron = MeshUtil.Surface(MeshUtil.Rgb(0x332d28), 0.28f, ProcTex.MetalNormal, 1.0f, 2.2f, metallic: 0.55f);
+            var root = new GameObject("Brazier");
+            root.transform.SetParent(parent, false);
+            root.transform.localPosition = localPos;
+
+            // Tripod stand.
+            for (int i = 0; i < 3; i++)
+            {
+                float a = i / 3f * Mathf.PI * 2f;
+                AddStrut(root, iron, new Vector3(Mathf.Cos(a) * 0.34f, 0f, Mathf.Sin(a) * 0.34f),
+                                     new Vector3(Mathf.Cos(a) * 0.13f, 0.62f, Mathf.Sin(a) * 0.13f), 0.028f);
+            }
+            // The basket: a bowl plus a rim, so the fire sits INSIDE something.
+            var bowl = NewMeshGo("Basket", MeshUtil.TaperedCylinder(0.16f, 0.42f, 0.34f, 12), iron);
+            bowl.transform.SetParent(root.transform, false);
+            bowl.transform.localPosition = new Vector3(0f, 0.60f, 0f);
+            var rim = NewMeshGo("BasketRim", MeshUtil.Torus(0.42f, 0.035f, 14, 6, 0), iron);
+            rim.transform.SetParent(root.transform, false);
+            rim.transform.localPosition = new Vector3(0f, 0.94f, 0f);
+
+            // Coals in the basket, on their own emissive material so Campfire can pulse them.
+            var emberMat = MeshUtil.Emissive(MeshUtil.Rgb(0x3a1b0c), MeshUtil.Rgb(0xff6a1e), 2.4f);
+            for (int i = 0; i < 6; i++)
+            {
+                float a = MeshUtil.Hash01(i * 61 + 3) * Mathf.PI * 2f;
+                float r = Mathf.Sqrt(MeshUtil.Hash01(i * 23 + 5)) * 0.26f;
+                var coal = NewMeshGo("Coal", MeshUtil.Rock(0.075f + MeshUtil.Hash01(i * 13) * 0.05f, 4, 6, i + 40), emberMat);
+                coal.transform.SetParent(root.transform, false);
+                coal.transform.localPosition = new Vector3(Mathf.Cos(a) * r, 0.86f, Mathf.Sin(a) * r);
+            }
+
+            var light = new GameObject("BrazierLight").AddComponent<Light>();
+            light.transform.SetParent(root.transform, false);
+            light.transform.localPosition = new Vector3(0f, 1.15f, 0f);
+            light.type = LightType.Point;
+            light.color = MeshUtil.Rgb(0xffb060);
+            light.range = 34f;
+            light.intensity = 2.4f;
+            root.AddComponent<Campfire>().Init(light, emberMat, 2.4f);
+
+            if (HPQuality.HighDetail) BuildFireParticles(root.transform, 0.62f, new Vector3(0f, 0.9f, 0f));
+        }
+
+        /// <summary>
+        /// The camp fire. See <see cref="Campfire"/> for the full rationale — in short, this was one
+        /// static emissive cone and a constant light, and a fire is defined by movement.
+        /// </summary>
         private void BuildCamp()
         {
+            float gy = (float)World.GetHeight(0, 0);
+            var root = new GameObject("Campfire");
+            root.transform.parent = transform;
+            root.transform.position = new Vector3(0f, gy, 0f);
+
+            // --- scorched ground -------------------------------------------------
+            // Sits 1 cm proud and is nearly black: without it the stones and logs look placed ON the
+            // snow, and a fire that has burned all night has very obviously melted down into it.
+            var scorch = NewMeshGo("Scorch", MeshUtil.EllipseDisc(2.3f, 2.1f, 18),
+                MeshUtil.Surface(MeshUtil.Rgb(0x241d18), 0.18f, ProcTex.RockNormal, 0.5f, 0.6f));
+            scorch.transform.SetParent(root.transform, false);
+            scorch.transform.localPosition = new Vector3(0f, 0.01f, 0f);
+
+            // --- ring of stones ---------------------------------------------------
+            // Hashed radius/offset per stone rather than a perfect circle: a ring somebody actually
+            // built is uneven. Index-hashed, never an RNG draw ([rng-lockstep]).
             var rock = MeshUtil.Surface(MeshUtil.Rgb(0x3a3a3a), 0.10f, ProcTex.RockNormal, 1.1f, 1.5f);
-            for (int i = 0; i < 7; i++)
+            for (int i = 0; i < 9; i++)
             {
-                float a = i / 7f * Mathf.PI * 2f;
-                Boulder(rock, Mathf.Cos(a) * 1.2f, Mathf.Sin(a) * 1.2f, 0.22);
+                float a = i / 9f * Mathf.PI * 2f + MeshUtil.Hash01(i * 31) * 0.22f;
+                float r = 1.15f + MeshUtil.Hash01(i * 17 + 5) * 0.28f;
+                Boulder(rock, Mathf.Cos(a) * r, Mathf.Sin(a) * r, 0.19 + MeshUtil.Hash01(i * 7 + 3) * 0.10);
             }
-            var ember = NewMeshGo("Embers", MeshUtil.Cone(0.6f, 1.1f, 8),
-                MeshUtil.Emissive(MeshUtil.Rgb(0xff7a2a), MeshUtil.Rgb(0xff5a1e), 2f));
-            ember.transform.position = new Vector3(0, (float)World.GetHeight(0, 0), 0);
-            var fire = new GameObject("Campfire").AddComponent<Light>();
-            fire.transform.parent = transform;
-            fire.transform.position = new Vector3(0, (float)World.GetHeight(0, 0) + 1.2f, 0);
+
+            // --- fuel -------------------------------------------------------------
+            // Four charred limbs leaning into a cone. The flame needs something to come out of; a
+            // flame with no fuel under it reads as a floating effect rather than as a fire.
+            var charred = MeshUtil.Surface(MeshUtil.Rgb(0x2a221c), 0.06f, ProcTex.BarkNormal, 1.0f, 1.2f);
+            for (int i = 0; i < 4; i++)
+            {
+                float a = i / 4f * Mathf.PI * 2f + 0.5f;
+                var log = NewMeshGo("Log", MeshUtil.Limb(0.085f, 0.055f, 1.25f, 5, 7, 900 + i * 13, 0.05f), charred);
+                log.transform.SetParent(root.transform, false);
+                log.transform.localPosition = new Vector3(Mathf.Cos(a) * 0.42f, 0.06f, Mathf.Sin(a) * 0.42f);
+                // Lean the tops INWARD. Limb builds along +Y, so the Z-tilt tips the top toward local
+                // +X and the yaw then aims that tilt. Unity's Euler(0,θ,0) maps +X to (cosθ, 0, -sinθ),
+                // and the top has to travel toward the centre — i.e. along (-cos a, -sin a) — which
+                // solves to θ = 180° - a. Yawing by -a instead (the intuitive guess) points every log
+                // outward and builds a fountain rather than a fire.
+                log.transform.localRotation = Quaternion.Euler(0f, 180f - a * Mathf.Rad2Deg, 0f) *
+                                              Quaternion.Euler(0f, 0f, 34f + MeshUtil.Hash01(i * 41) * 8f);
+            }
+            // One fallen log across the ring — asymmetry, and it breaks the tidy cone silhouette.
+            var spent = NewMeshGo("SpentLog", MeshUtil.Limb(0.10f, 0.07f, 1.6f, 6, 5, 977, 0.06f), charred);
+            spent.transform.SetParent(root.transform, false);
+            spent.transform.localPosition = new Vector3(0.35f, 0.10f, -0.7f);
+            spent.transform.localRotation = Quaternion.Euler(0f, 28f, 96f);
+
+            // --- ember bed ---------------------------------------------------------
+            // What still reads once the flames drop, and what lights the stones from beneath. One
+            // shared material so Campfire can pulse every coal with a single SetColor.
+            var emberMat = MeshUtil.Emissive(MeshUtil.Rgb(0x3a1b0c), MeshUtil.Rgb(0xff6a1e), 2.6f);
+            for (int i = 0; i < 11; i++)
+            {
+                float a = MeshUtil.Hash01(i * 53 + 1) * Mathf.PI * 2f;
+                float r = Mathf.Sqrt(MeshUtil.Hash01(i * 29 + 7)) * 0.62f; // sqrt: even area, not centre-clumped
+                var coal = NewMeshGo("Coal", MeshUtil.Rock(0.10f + MeshUtil.Hash01(i * 11) * 0.07f, 4, 6, i), emberMat);
+                coal.transform.SetParent(root.transform, false);
+                coal.transform.localPosition = new Vector3(Mathf.Cos(a) * r, 0.05f, Mathf.Sin(a) * r);
+            }
+
+            // --- light -------------------------------------------------------------
+            var fire = new GameObject("FireLight").AddComponent<Light>();
+            fire.transform.SetParent(root.transform, false);
+            fire.transform.localPosition = new Vector3(0f, 1.0f, 0f);
             fire.type = LightType.Point;
             fire.color = MeshUtil.Rgb(0xff7a3a);
             fire.range = 40f;
             fire.intensity = 3.5f;
+            fire.shadows = HPQuality.HighDetail ? LightShadows.Soft : LightShadows.None;
+
+            root.AddComponent<Campfire>().Init(fire, emberMat, 3.5f);
+
+            // --- flame, sparks, smoke ------------------------------------------------
+            // Skipped entirely on low detail: three emitters is exactly the kind of steady cost [perf]
+            // says to keep off the integrated-GPU path, and the ember bed plus the flicker still sells
+            // a fire without them.
+            if (HPQuality.HighDetail) BuildFireParticles(root.transform);
+        }
+
+        /// <summary>
+        /// Flame, sparks and smoke. Particles rather than an animated mesh because a flame's outline
+        /// is stochastic — a vertex-animated cone just reads as a wobbling cone.
+        /// </summary>
+        /// <param name="scale">Overall size of the fire. The brazier reuses this at 0.62 — everything
+        /// that has a length unit scales, and everything that is a RATE does not, because a smaller
+        /// fire has smaller tongues at the same frequency, not fewer slower ones.</param>
+        /// <param name="offset">Local origin, so a basket fire starts at the rim and not at the feet.</param>
+        private void BuildFireParticles(Transform parent, float scale = 1f, Vector3 offset = default)
+        {
+            // Additive and unlit: fire EMITS, so it must not be shaded by the scene, and overlapping
+            // tongues have to accumulate rather than occlude each other.
+            var flameMat = new Material(Shader.Find("Universal Render Pipeline/Particles/Unlit"));
+            flameMat.SetFloat("_Surface", 1f);                 // transparent
+            flameMat.SetFloat("_Blend", 1f);                   // additive
+            flameMat.SetFloat("_ZWrite", 0f);
+            flameMat.renderQueue = 3000;
+            flameMat.SetTexture("_BaseMap", ProcTex.SoftDot);
+            flameMat.mainTexture = ProcTex.SoftDot;
+
+            // FLAME ------------------------------------------------------------------
+            var flameGo = new GameObject("Flame");
+            flameGo.transform.SetParent(parent, false);
+            flameGo.transform.localPosition = offset + new Vector3(0f, 0.12f * scale, 0f);
+            var flame = flameGo.AddComponent<ParticleSystem>();
+            var fmain = flame.main;
+            fmain.simulationSpace = ParticleSystemSimulationSpace.World;
+            fmain.startLifetime = new ParticleSystem.MinMaxCurve(0.36f, 0.72f);
+            fmain.startSpeed = new ParticleSystem.MinMaxCurve(1.1f * scale, 2.3f * scale);
+            fmain.startSize = new ParticleSystem.MinMaxCurve(0.22f * scale, 0.46f * scale);
+            fmain.gravityModifier = -0.05f;      // hot gas rises: negative gravity, not upward velocity
+            fmain.maxParticles = 140;
+            fmain.startColor = new ParticleSystem.MinMaxGradient(
+                new Color(1f, 0.55f, 0.16f, 0.85f), new Color(1f, 0.80f, 0.34f, 0.85f));
+
+            var femit = flame.emission;
+            femit.rateOverTime = 55f;
+
+            var fshape = flame.shape;
+            fshape.shapeType = ParticleSystemShapeType.Cone;
+            fshape.angle = 14f;
+            fshape.radius = 0.30f * scale;
+
+            // Tapering as it rises is what makes tongues instead of a column of dots.
+            var fsize = flame.sizeOverLifetime;
+            fsize.enabled = true;
+            fsize.size = new ParticleSystem.MinMaxCurve(1f, SizeCurve());
+
+            // Orange at the base to dark red at the tip, fading out — a flame does not just vanish,
+            // it cools through the reds first.
+            var fcol = flame.colorOverLifetime;
+            fcol.enabled = true;
+            fcol.color = new ParticleSystem.MinMaxGradient(FlameGradient());
+
+            // Turbulence. Without it every tongue rises on a clean parabola and the whole thing reads
+            // as a fountain.
+            var fnoise = flame.noise;
+            fnoise.enabled = true;
+            fnoise.strength = new ParticleSystem.MinMaxCurve(0.55f);
+            fnoise.frequency = 1.4f;
+            fnoise.quality = ParticleSystemNoiseQuality.Medium;
+            flameGo.GetComponent<ParticleSystemRenderer>().sharedMaterial = flameMat;
+
+            // SPARKS ------------------------------------------------------------------
+            var sparkGo = new GameObject("Sparks");
+            sparkGo.transform.SetParent(parent, false);
+            sparkGo.transform.localPosition = offset + new Vector3(0f, 0.35f * scale, 0f);
+            var spark = sparkGo.AddComponent<ParticleSystem>();
+            var smain = spark.main;
+            smain.simulationSpace = ParticleSystemSimulationSpace.World;
+            smain.startLifetime = new ParticleSystem.MinMaxCurve(1.3f, 3.0f);
+            smain.startSpeed = new ParticleSystem.MinMaxCurve(1.8f * scale, 3.6f * scale);
+            smain.startSize = new ParticleSystem.MinMaxCurve(0.020f * scale, 0.055f * scale);
+            smain.gravityModifier = -0.14f;
+            smain.maxParticles = 90;
+            smain.startColor = new ParticleSystem.MinMaxGradient(
+                new Color(1f, 0.72f, 0.30f, 1f), new Color(1f, 0.94f, 0.66f, 1f));
+
+            var semit = spark.emission;
+            semit.rateOverTime = 11f;
+
+            var sshape = spark.shape;
+            sshape.shapeType = ParticleSystemShapeType.Cone;
+            sshape.angle = 20f;
+            sshape.radius = 0.22f * scale;
+
+            // Sparks wander much harder than flame — they are small enough for the air to throw around.
+            var snoise = spark.noise;
+            snoise.enabled = true;
+            snoise.strength = new ParticleSystem.MinMaxCurve(1.5f);
+            snoise.frequency = 0.7f;
+            snoise.quality = ParticleSystemNoiseQuality.Low;
+
+            var scol = spark.colorOverLifetime;
+            scol.enabled = true;
+            scol.color = new ParticleSystem.MinMaxGradient(SparkGradient());
+            sparkGo.GetComponent<ParticleSystemRenderer>().sharedMaterial = flameMat;
+
+            // SMOKE -------------------------------------------------------------------
+            // Alpha-blended, NOT additive: smoke occludes. Sharing the additive material would make
+            // the column glow, which is the single most common way a fire effect goes wrong.
+            var smokeMat = new Material(Shader.Find("Universal Render Pipeline/Particles/Unlit"));
+            smokeMat.SetFloat("_Surface", 1f);
+            smokeMat.SetFloat("_Blend", 0f);   // alpha
+            smokeMat.SetFloat("_ZWrite", 0f);
+            smokeMat.renderQueue = 3000;
+            smokeMat.SetTexture("_BaseMap", ProcTex.SoftDot);
+            smokeMat.mainTexture = ProcTex.SoftDot;
+
+            var smokeGo = new GameObject("Smoke");
+            smokeGo.transform.SetParent(parent, false);
+            smokeGo.transform.localPosition = offset + new Vector3(0f, 0.9f * scale, 0f);
+            var smoke = smokeGo.AddComponent<ParticleSystem>();
+            var kmain = smoke.main;
+            kmain.simulationSpace = ParticleSystemSimulationSpace.World;
+            kmain.startLifetime = new ParticleSystem.MinMaxCurve(3.5f, 6.5f);
+            kmain.startSpeed = new ParticleSystem.MinMaxCurve(0.7f * scale, 1.4f * scale);
+            kmain.startSize = new ParticleSystem.MinMaxCurve(0.5f * scale, 1.0f * scale);
+            kmain.gravityModifier = -0.02f;
+            kmain.maxParticles = 70;
+            kmain.startColor = new ParticleSystem.MinMaxGradient(new Color(0.14f, 0.13f, 0.13f, 0.30f));
+
+            var kemit = smoke.emission;
+            kemit.rateOverTime = 9f;
+
+            var kshape = smoke.shape;
+            kshape.shapeType = ParticleSystemShapeType.Cone;
+            kshape.angle = 10f;
+            kshape.radius = 0.28f * scale;
+
+            // Grows as it rises and dissipates — smoke expands as it cools and mixes.
+            var ksize = smoke.sizeOverLifetime;
+            ksize.enabled = true;
+            ksize.size = new ParticleSystem.MinMaxCurve(1f, SmokeGrowCurve());
+
+            var kcol = smoke.colorOverLifetime;
+            kcol.enabled = true;
+            kcol.color = new ParticleSystem.MinMaxGradient(SmokeGradient());
+
+            // Drift downwind, matching the direction Weather blows the snow.
+            var kvel = smoke.velocityOverLifetime;
+            kvel.enabled = true;
+            kvel.space = ParticleSystemSimulationSpace.World;
+            kvel.x = new ParticleSystem.MinMaxCurve(-0.9f, -0.2f);
+            kvel.z = new ParticleSystem.MinMaxCurve(-0.3f, 0.4f);
+
+            var knoise = smoke.noise;
+            knoise.enabled = true;
+            knoise.strength = new ParticleSystem.MinMaxCurve(0.35f);
+            knoise.frequency = 0.35f;
+            knoise.quality = ParticleSystemNoiseQuality.Low;
+            smokeGo.GetComponent<ParticleSystemRenderer>().sharedMaterial = smokeMat;
+        }
+
+        private static AnimationCurve SizeCurve()
+        {
+            // Puff out fast, then taper to a point: the shape of a tongue of flame.
+            var c = new AnimationCurve();
+            c.AddKey(0f, 0.55f);
+            c.AddKey(0.25f, 1f);
+            c.AddKey(1f, 0.10f);
+            return c;
+        }
+
+        private static AnimationCurve SmokeGrowCurve()
+        {
+            var c = new AnimationCurve();
+            c.AddKey(0f, 0.45f);
+            c.AddKey(1f, 1.9f);
+            return c;
+        }
+
+        private static Gradient FlameGradient()
+        {
+            var g = new Gradient();
+            g.SetKeys(
+                new[]
+                {
+                    new GradientColorKey(new Color(1.00f, 0.80f, 0.40f), 0.00f),
+                    new GradientColorKey(new Color(1.00f, 0.46f, 0.12f), 0.45f),
+                    new GradientColorKey(new Color(0.55f, 0.11f, 0.03f), 1.00f),
+                },
+                new[]
+                {
+                    new GradientAlphaKey(0.00f, 0.00f),
+                    new GradientAlphaKey(1.00f, 0.16f),
+                    new GradientAlphaKey(0.00f, 1.00f),
+                });
+            return g;
+        }
+
+        private static Gradient SparkGradient()
+        {
+            var g = new Gradient();
+            g.SetKeys(
+                new[]
+                {
+                    new GradientColorKey(new Color(1.00f, 0.90f, 0.60f), 0.00f),
+                    new GradientColorKey(new Color(1.00f, 0.42f, 0.10f), 1.00f),
+                },
+                new[]
+                {
+                    new GradientAlphaKey(1.00f, 0.00f),
+                    new GradientAlphaKey(0.85f, 0.55f),
+                    new GradientAlphaKey(0.00f, 1.00f),
+                });
+            return g;
+        }
+
+        private static Gradient SmokeGradient()
+        {
+            var g = new Gradient();
+            g.SetKeys(
+                new[]
+                {
+                    // Warm right at the base, where the flame is still lighting it, then plain grey.
+                    new GradientColorKey(new Color(0.42f, 0.30f, 0.22f), 0.00f),
+                    new GradientColorKey(new Color(0.17f, 0.17f, 0.18f), 0.35f),
+                    new GradientColorKey(new Color(0.22f, 0.23f, 0.25f), 1.00f),
+                },
+                new[]
+                {
+                    new GradientAlphaKey(0.00f, 0.00f),
+                    new GradientAlphaKey(0.55f, 0.20f),
+                    new GradientAlphaKey(0.00f, 1.00f),
+                });
+            return g;
         }
 
         /// <summary>
@@ -1774,7 +2801,15 @@ namespace Metoh.Game
             return new Color(c.r * k, c.g * k, c.b * k, c.a);
         }
 
-        private GameObject NewCombinedGo(string name, List<CombineInstance> combines, Material mat)
+        private static List<Vector3>[] NewSwayBuckets(int n)
+        {
+            var b = new List<Vector3>[n];
+            for (int i = 0; i < n; i++) b[i] = new List<Vector3>();
+            return b;
+        }
+
+        private GameObject NewCombinedGo(string name, List<CombineInstance> combines, Material mat,
+                                         List<Vector3> swayMeta = null)
         {
             // Chunking leaves empty buckets (a grid cell that is all lake, or all camp clearing).
             // An empty combine yields a zero-vertex mesh and a renderer that costs culling work for
@@ -1782,8 +2817,50 @@ namespace Metoh.Game
             if (combines.Count == 0) return null;
             var mesh = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
             mesh.CombineMeshes(combines.ToArray(), true, true);
+            if (swayMeta != null) BakeSwayData(mesh, combines, swayMeta);
             mesh.RecalculateBounds();
             return NewMeshGo(name, mesh, mat);
+        }
+
+        /// <summary>
+        /// Write per-vertex sway data into UV2 of a merged forest chunk. Without this the sway shader
+        /// has nothing to drive it and the forest renders rigid.
+        ///
+        /// THE PROBLEM THIS SOLVES. After CombineMeshes a chunk is one mesh of ~40 trees, and a vertex
+        /// in it knows only its own position — not which tree it belongs to, nor how far up that tree
+        /// it sits. Both are needed: sway has to be zero at each trunk's OWN base (a chunk-space height
+        /// would leave uphill trees rigid and make downhill ones thrash, because they stand on sloped
+        /// ground at different altitudes), and each tree needs its own phase or the whole stand leans
+        /// in unison, which reads as the ground tilting.
+        ///
+        /// Both are recoverable here because the combine list is walked in the same order it was
+        /// built: instance i contributed exactly `combines[i].mesh.vertexCount` vertices, in order, and
+        /// `swayMeta[i]` is that tree's (baseY, 1/height, phase). So the spans line up by construction.
+        ///
+        /// The vertices are already in world space — CombineMeshes baked each instance's TRS in — so
+        /// the height comparison is a straight subtraction and needs no transform.
+        /// </summary>
+        private static void BakeSwayData(Mesh mesh, List<CombineInstance> combines, List<Vector3> swayMeta)
+        {
+            var verts = mesh.vertices;
+            var uv2 = new Vector2[verts.Length];
+            int v = 0;
+            int n = Mathf.Min(combines.Count, swayMeta.Count);
+            for (int i = 0; i < n; i++)
+            {
+                Mesh src = combines[i].mesh;
+                if (src == null) continue;
+                int count = src.vertexCount;
+                Vector3 meta = swayMeta[i]; // (baseY, 1/height, phase)
+                for (int k = 0; k < count && v < verts.Length; k++, v++)
+                {
+                    float weight = Mathf.Clamp01((verts[v].y - meta.x) * meta.y);
+                    uv2[v] = new Vector2(weight, meta.z);
+                }
+            }
+            // Any tail left over (a defensive case — the two lists are built in lockstep) stays at
+            // zero weight, i.e. rigid, which is the safe failure: a still tree, never a flying one.
+            mesh.SetUVs(1, uv2);
         }
 
         private GameObject NewMeshGo(string name, Mesh mesh, Material mat)
@@ -1797,19 +2874,24 @@ namespace Metoh.Game
 
         private void AddBox(GameObject parent, string name, Vector3 localPos, Vector3 size, Color color, Color? emissive = null, float glow = 1f)
         {
-            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            go.name = name;
-            Object.Destroy(go.GetComponent<UnityEngine.Collider>());
+            // Built from MetricBox rather than a scaled primitive cube — see MeshUtil.MetricBox for
+            // the UV-stretching bug that fixes. It was visible on every structure in the game: the
+            // hut's plank grain ran about 3x wider on the long walls than on the ends, from one
+            // material, because a primitive cube gives every face 0..1 UVs regardless of its size.
+            var go = NewMeshGo(name, MeshUtil.MetricBox(size), null);
             go.transform.parent = parent.transform;
             go.transform.localPosition = localPos;
             go.transform.localRotation = Quaternion.identity;
-            go.transform.localScale = size;
+            go.transform.localScale = Vector3.one; // the size lives in the mesh now, not the transform
             // Everything AddBox builds is a made object — hut planks, crates, the tower platform and
             // rails — so they all get sawn-timber grain. A lit window is the exception: emission is
             // the whole point of it and surface detail would only fight the glow.
+            //
+            // Tiling is now REPEATS PER METRE, since MetricBox's UVs are in metres: 0.42 gives a plank
+            // roughly 2.4 m long, the same on every face of every box whatever its proportions.
             go.GetComponent<MeshRenderer>().sharedMaterial = emissive.HasValue
                 ? MeshUtil.Emissive(color, emissive.Value, glow)
-                : MeshUtil.Surface(color, 0.13f, ProcTex.BarkNormal, 0.85f, 1.4f);
+                : MeshUtil.Surface(color, 0.13f, ProcTex.BarkNormal, 0.85f, 0.42f);
         }
     }
 }

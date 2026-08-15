@@ -102,6 +102,16 @@ namespace Metoh.Game
                 HPPlayer.BotDriveTrace = !HPPlayer.BotDriveTrace;
                 HPLog.Event("DEV", $"bot drive trace: {HPPlayer.BotDriveTrace}");
             }
+            if (kb.uKey.wasPressedThisFrame)
+            {
+                BotDifficulty.Level = (BotSkill)(((int)BotDifficulty.Level + 1) % 3);
+                HPLog.Event("DEV", $"bot difficulty: {BotDifficulty.Level}");
+            }
+            if (kb.hKey.wasPressedThisFrame)
+            {
+                _showBelief = !_showBelief;
+                HPLog.Event("DEV", $"belief heatmap: {_showBelief}");
+            }
 #endif
         }
 
@@ -224,7 +234,10 @@ namespace Metoh.Game
             lines.AppendLine($"  [O] pause      {(YetiBot.Paused ? "PAUSED (frozen, can't grab)" : "running")}");
             lines.AppendLine($"  [K] speed      {YetiBot.SpeedMul:0.00}x");
             lines.AppendLine($"  [P] ai mode    {AiModeLabel()}");
+            lines.AppendLine($"  [U] difficulty {BotDifficulty.Label}");
+            lines.AppendLine($"  [H] belief map {OnOff(_showBelief)} (where the CPU Yeti thinks you are)");
             lines.AppendLine($"  [J] drive trace {OnOff(HPPlayer.BotDriveTrace)} (per-bot movement → Console; noisy)");
+            if (_showBelief) lines.Append(BeliefBlock());
             lines.AppendLine();
             lines.Append($"[F3] closes  ·  renderScale lives in the Esc pause menu  ·  log → {LogLabel()}");
 
@@ -241,14 +254,77 @@ namespace Metoh.Game
 
         private static string OnOff(bool b) => b ? "ON " : "off";
 
+        private static bool _showBelief;
+
+        /// <summary>
+        /// The CPU Yeti's belief field, drawn as text in the overlay it already owns.
+        ///
+        /// A texture heatmap would be prettier and would have meant a RenderTexture, an upload path
+        /// and a second draw call in the panel whose whole job is to measure frame cost. Characters
+        /// cost nothing and answer the only question that matters while tuning: is the bright patch
+        /// where the player actually is? Watch it lag behind you when you break line of sight, and
+        /// spread outward the longer you stay hidden — that spreading IS the diffusion working, and
+        /// it is the single clearest way to see that the bot is guessing rather than knowing.
+        ///
+        /// Downsampled 32 -> 16 columns so the block stays readable next to the rest of the panel.
+        /// North is up, matching MapView (-Z = North), so it reads the same way as the in-game map.
+        /// </summary>
+        private static string BeliefBlock()
+        {
+            HPPlayer bf = null;
+            foreach (var p in HPPlayer.All) if (p != null && p.IsYeti && p.IsBot) { bf = p; break; }
+            var belief = bf != null && bf.YetiBrain != null ? bf.YetiBrain.Belief : null;
+            if (belief == null) return "      (no CPU Yeti brain to read)\n";
+
+            const int Res = BeliefMap.Res;   // 32
+            const int Step = 2;              // -> 16 columns
+            const int Out = Res / Step;
+
+            // Scale against the field's own peak: probabilities are ~1/1024 at uniform, so a fixed
+            // scale would render every cell blank until the instant of a sighting.
+            float peak = 0f;
+            for (int i = 0; i < Res * Res; i++) { float v = belief.Raw(i); if (v > peak) peak = v; }
+            if (peak <= 0f) peak = 1f;
+
+            var sb = new System.Text.StringBuilder(Out * (Out + 8) + 64);
+            sb.Append('\n');
+            // -Z is North, so walk z from high index (south) down to 0 (north) to put north at the top.
+            for (int oz = Out - 1; oz >= 0; oz--)
+            {
+                sb.Append("      ");
+                for (int ox = 0; ox < Out; ox++)
+                {
+                    float v = 0f;
+                    for (int dz = 0; dz < Step; dz++)
+                        for (int dx = 0; dx < Step; dx++)
+                        {
+                            int z = oz * Step + dz, x = ox * Step + dx;
+                            float s = belief.Raw(z * Res + x);
+                            if (s > v) v = s;   // max, not mean: a hot cell must survive downsampling
+                        }
+                    float t = v / peak;
+                    sb.Append(t > 0.75f ? '#' : t > 0.45f ? '+' : t > 0.18f ? ':' : t > 0.05f ? '.' : ' ');
+                    sb.Append(' ');
+                }
+                sb.Append('\n');
+            }
+            sb.Append($"      peak {peak:0.0000}   # hot · blank cold   (north up, {BeliefMap.CellSize * Step:0} m/char)\n");
+            return sb.ToString();
+        }
+
         /// <summary>Spell out what each AI mode actually changes — the mode name alone doesn't say
         /// which of the bot's information sources it just took away.</summary>
         private static string AiModeLabel()
         {
             switch (YetiBot.AiMode)
             {
-                case YetiBot.Mode.Hunt:  return "HUNT   (knows roughly where you are — the beeline)";
-                case YetiBot.Mode.Track: return "TRACK  (sight/hearing/snow prints only)";
+                // Hunt no longer means omniscience. It used to prowl at the nearest searcher's true
+                // position, which is what the old label called "the beeline"; it now works a belief
+                // field and is allowed to plan (ambush, guard a downed body, a standing hint that
+                // searchers must come back to camp). Track strips the planning and the camp prior and
+                // leaves pure reaction to sensed evidence.
+                case YetiBot.Mode.Hunt:  return "HUNT   (belief-driven: patrols, ambushes, guards bait)";
+                case YetiBot.Mode.Track: return "TRACK  (reactive: sight/hearing/snow prints only)";
                 default:                 return "RANDOM (roams; engages only if it senses you)";
             }
         }
@@ -272,7 +348,12 @@ namespace Metoh.Game
 
             string tag = bf.IsBot ? "CPU" : "human";
             var brain = bf.YetiBrain;
-            string ai = brain != null ? "  ai:" + brain.DbgState : "  ai:NO-BRAIN";
+            // The chosen action alone doesn't answer "why THAT one" — the runner-up and its score is
+            // what turns a puzzling decision into a visibly wrong weight. Confidence is the belief
+            // peak: high means it thinks it knows where you are, near-zero means it is guessing.
+            string ai = brain != null
+                ? $"  ai:{brain.DbgState} (conf {brain.DbgConfidence:0.000})  [{brain.DbgScores}]"
+                : "  ai:NO-BRAIN";
             if (me == null) return $"yeti: {tag}{ai}";
 
             Vector3 d = bf.transform.position - me.transform.position;
@@ -285,9 +366,14 @@ namespace Metoh.Game
         }
 
         /// <summary>
-        /// One line per CPU searcher: who they are and what their brain is doing. With five of them
-        /// running the ladder at once, "why is nobody filming me" is otherwise unanswerable without
-        /// attaching a debugger.
+        /// One line per CPU searcher: who they are, what their brain chose, and how sure they are
+        /// about the Yeti. With four of them scoring nine actions at once, "why is nobody filming me"
+        /// is otherwise unanswerable without attaching a debugger.
+        ///
+        /// The per-searcher SCORES are deliberately not on this line — four bots times three scores is
+        /// far too wide to read. The chosen action plus a confidence number is enough to spot the odd
+        /// one out, and the full breakdown for every bot goes to the play-test log on each transition
+        /// (SearcherBot.LateUpdate), which is where you look once you know who to look at.
         /// </summary>
         private static string SearcherBotLine()
         {
@@ -298,7 +384,8 @@ namespace Metoh.Game
                 var brain = p.SearcherBrain;
                 string who = p.CharacterName.Value != "" ? p.CharacterName.Value.Split(' ')[0] : "bot";
                 string carried = p.CarriedTotal > 0 ? $"+{p.CarriedTotal}" : "";
-                parts.Add($"{who}:{(brain != null ? brain.DbgState : "NO-BRAIN")}{carried}");
+                if (brain == null) { parts.Add($"{who}:NO-BRAIN"); continue; }
+                parts.Add($"{who}:{brain.DbgState}{carried}({brain.DbgConfidence:0.00})");
             }
             return parts.Count == 0 ? "cpu searchers: none" : "cpu searchers: " + string.Join("  ", parts);
         }

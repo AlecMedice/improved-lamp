@@ -55,6 +55,38 @@ namespace Metoh.Game
         public static Texture2D FabricNormal => _fabric ??= BuildNormal(128, "FabricNormal", 1.2f,
             (x, y) => (Mathf.Sin(x * 1.4f) * Mathf.Sin(y * 1.4f)) * 0.5f + 0.5f);
 
+        private static Texture2D _packed, _metal;
+
+        /// <summary>
+        /// Trodden trail snow — and the reason trails stopped reading as decals.
+        ///
+        /// The packed trail used to share <see cref="SnowNormal"/> with virgin powder, just tiled
+        /// differently. That is why it read as "snow of a different colour" rather than as a different
+        /// material: identical micro-relief, so it caught the moon and the torch in exactly the same
+        /// way as the drift beside it, and the eye reads lighting response long before it reads albedo.
+        ///
+        /// Packed snow is physically the opposite of powder. Powder is a loose fractal of ice crystals
+        /// — fine, uniform, sparkly. Packed snow has been crushed by boots into overlapping DISHES,
+        /// partially melted and refrozen, so it is broadly smoother but pitted at bootprint scale, with
+        /// hard little rims where one press cut into another. So: cellular dishes carry the shape,
+        /// scuff striations run along it, and the fine crystal grain is mostly gone (0.18, against
+        /// SnowNormal's 0.65) because that is exactly what walking on it destroys.
+        /// </summary>
+        public static Texture2D PackedSnowNormal => _packed ??= BuildNormal(256, "PackedSnowNormal", 1.9f,
+            (x, y) => Cells(x, y, 256, 7) * 0.55f                       // boot dishes
+                    + Fbm(x * 3.5f, y * 0.6f, 256, 9, 3, 0.5f) * 0.27f  // scuff, dragged along the path
+                    + Fbm(x, y, 256, 20, 3, 0.5f) * 0.18f);             // what little crystal survives
+
+        /// <summary>
+        /// Dented, scratched steel panel for the wreck. Broad hail-and-age dents from the cell
+        /// function, then fine anisotropic scratches — the scratches are what sell it as metal rather
+        /// than as painted stone, because they catch a moving torch beam as bright streaks.
+        /// </summary>
+        public static Texture2D MetalNormal => _metal ??= BuildNormal(256, "MetalNormal", 2.6f,
+            (x, y) => (1f - Cells(x, y, 256, 5)) * 0.5f                 // shallow dents
+                    + Fbm(x * 9f, y * 0.35f, 256, 16, 3, 0.55f) * 0.34f // scratches
+                    + Fbm(x, y, 256, 4, 2, 0.5f) * 0.16f);              // panel warp
+
         /// <summary>
         /// A soft round dot — the sprite every particle in the game is drawn with (snow, breath,
         /// spindrift, motes in the torch beam).
@@ -169,6 +201,42 @@ namespace Metoh.Game
             float a = Mathf.Lerp(Hash(x0, y0, period), Hash(x0 + 1, y0, period), tx);
             float b = Mathf.Lerp(Hash(x0, y0 + 1, period), Hash(x0 + 1, y0 + 1, period), tx);
             return Mathf.Lerp(a, b, ty);
+        }
+
+        /// <summary>
+        /// Tileable cellular (Worley-lite) noise: distance to the nearest of one jittered feature
+        /// point per lattice cell, normalised to 0..1.
+        ///
+        /// Fbm cannot make this shape. Fractal noise is smooth blobs at every scale, so it gives
+        /// rolling dunes; what a bootprint or a dent needs is a DISH with a rim — a field that falls
+        /// away from scattered centres and creases where two of them meet. That crease is the whole
+        /// visual point, and it is what makes packed snow read as pressed rather than merely rougher.
+        ///
+        /// Only the 3x3 neighbourhood is searched, which is exact for one point per cell: a nearer
+        /// point cannot live two cells away. Coordinates wrap through <see cref="Hash"/>, so this
+        /// tiles as cleanly as everything else here.
+        /// </summary>
+        private static float Cells(float x, float y, int size, int period)
+        {
+            float fx = x / size * period, fy = y / size * period;
+            int x0 = Mathf.FloorToInt(fx), y0 = Mathf.FloorToInt(fy);
+            float best = 4f;
+            for (int dy = -1; dy <= 1; dy++)
+            {
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    int cx = x0 + dx, cy = y0 + dy;
+                    // Two decorrelated hashes place the feature point inside its cell. Reusing one
+                    // hash for both axes would line every point up on the cell diagonal.
+                    float px = cx + Hash(cx, cy, period);
+                    float py = cy + Hash(cx + 977, cy + 331, period);
+                    float ddx = fx - px, ddy = fy - py;
+                    float d2 = ddx * ddx + ddy * ddy;
+                    if (d2 < best) best = d2;
+                }
+            }
+            // sqrt then clamp: distances beyond one cell are already the flat "between dishes" region.
+            return Mathf.Clamp01(Mathf.Sqrt(best));
         }
 
         /// <summary>Fractal sum — the general-purpose "surface roughness" field.</summary>

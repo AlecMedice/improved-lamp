@@ -358,8 +358,13 @@ namespace Metoh.Game
         /// <summary>
         /// The Single Player page: pick which side you play against the CPU. No lobby and no
         /// internet — SoloPending tells GameManager to spawn the AI and drop you straight into night
-        /// one. Playing AS Yeti waits on CPU searchers (a much larger AI job — filming and routing
-        /// a five-strong team), so it's shown but disabled rather than hidden, to signal it's coming.
+        /// one.
+        ///
+        /// Both sides are live. PLAY AS YETI fields a full CPU team (GameManager.SoloSearcherBots)
+        /// which, since the 2026-08-14 AI rewrite, divides the map between its members, reads the
+        /// Yeti's trail for direction rather than walking to the newest print, and stages rescues
+        /// instead of piling onto a body. The old note here said they were "not clever yet"; that was
+        /// accurate for the priority-ladder version and is no longer the build being described.
         /// </summary>
         private void DrawSolo(float cx)
         {
@@ -383,7 +388,7 @@ namespace Metoh.Game
                 StartHost();
             }
             GUI.Label(new Rect(cx - 220f, y, 440f, 20f),
-                $"hunt {GameManager.SoloSearcherBots} CPU searchers — early, and they are not clever yet", _hintStyle);
+                $"hunt {GameManager.SoloSearcherBots} CPU searchers — they split up, and they read tracks", _hintStyle);
             y += 34f;
 
             if (MenuButton(cx, ref y, "BACK")) _page = Page.Root;

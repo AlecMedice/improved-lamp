@@ -33,6 +33,26 @@ namespace Metoh.Sim
         }
 
         /// <summary>
+        /// The derelict snowcat at the edge of camp, placed by fixed offsets from the Rv transform.
+        ///
+        /// DERIVED, NEVER DRAWN. These are constants and the collider below is appended AFTER the
+        /// tree loop, so nothing here consumes a random number and the forest stream is untouched
+        /// (see the BuildColliders header and UNITY_NOTES [rng-lockstep]). Adding a draw instead —
+        /// even one — would move every tree placed after it and silently desync the world.
+        ///
+        /// WorldBuilder.WreckPosition uses the same three constants to place the visual, which is what
+        /// keeps the hull and the thing you bump into on the same spot.
+        /// </summary>
+        public const double WreckAlong = -8.5;         // metres along the hut's long axis
+        public const double WreckAcross = 9.0;         // ...and out to its side
+        public const double WreckYawOffsetDeg = 62;    // slewed, because it stopped where it died
+        /// <summary>Body half-length used for the two collider circles.</summary>
+        public const double WreckHalfLength = 1.15;
+        public const double WreckRadius = 1.35;
+        /// <summary>Climbable: the hull is a real perch, and the Yeti's surface-climb should take it.</summary>
+        public const double WreckClimbH = 2.6;
+
+        /// <summary>
         /// Fallen-log obstacles (slow hunters, not Yeti). [cx, cz, angle(rad), length(m)].
         /// After the trunk is laid flat and turned by `angle`, its long axis in world XZ is
         /// (cos(angle), -sin(angle)); trunk radius is 0.38.
@@ -127,6 +147,17 @@ namespace Metoh.Sim
             foreach (double lx in new double[] { -2.2, 0, 2.2 })
             {
                 colliders.Add(new Collider(Rv.X + lx * c, Rv.Z + -lx * sn, 1.6, 2.8));
+            }
+
+            // Derelict snowcat — 2 circles along its hull. Placed from the Rv transform by constants,
+            // so no RNG draw happens here and the tree stream above is untouched ([rng-lockstep]).
+            double wx = Rv.X + (c * WreckAlong - sn * WreckAcross);
+            double wz = Rv.Z + (-sn * WreckAlong - c * WreckAcross);
+            double wc = System.Math.Cos(Rv.Ry + WreckYawOffsetDeg * System.Math.PI / 180.0);
+            double ws = System.Math.Sin(Rv.Ry + WreckYawOffsetDeg * System.Math.PI / 180.0);
+            foreach (double lx in new double[] { -WreckHalfLength, WreckHalfLength })
+            {
+                colliders.Add(new Collider(wx + lx * wc, wz + -lx * ws, WreckRadius, WreckClimbH));
             }
 
             // Caves — horseshoe of boulders; side + back solid, the mouth (toward centre) open.

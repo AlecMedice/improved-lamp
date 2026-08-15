@@ -26,6 +26,25 @@ export const LOOKOUT = { x: 220, z: -230, r: 2.4 };
 export const RV = { x: 9, z: -4, ry: -0.5 };
 
 /**
+ * The derelict snowcat at the edge of camp (Unity build), placed by fixed offsets from RV.
+ *
+ * DERIVED, NEVER DRAWN. These are constants and the collider is appended AFTER the tree loop, so
+ * nothing here consumes a random number and the forest stream is untouched — see the buildColliders
+ * header. Adding a draw instead, even one, would move every tree placed after it.
+ *
+ * Mirrors `WorldData.Wreck*` in csharp/Metoh.Sim exactly; the two sims are parity-checked, so any
+ * edit here has to be made there in the same breath and `golden.json` regenerated.
+ */
+export const WRECK = {
+  along: -8.5,        // metres along the hut's long axis
+  across: 9.0,        // ...and out to its side
+  yawOffsetDeg: 62,   // slewed, because it stopped where it died
+  halfLength: 1.15,
+  radius: 1.35,
+  climbH: 2.6,        // the hull is a real perch; Yeti's surface-climb should take it
+};
+
+/**
  * Fallen-log obstacles (slow hunters, not Yeti). [cx, cz, angle(rad), length(m)].
  * After the trunk mesh is laid flat (rotateZ) and turned by `angle`, its long axis in
  * world XZ is (cos(angle), -sin(angle)); trunk radius is 0.38.
@@ -96,6 +115,21 @@ export function buildColliders(seed: number, caves: readonly Cave[], paths: read
   const s = Math.sin(RV.ry);
   for (const lx of [-2.2, 0, 2.2]) {
     colliders.push({ x: RV.x + lx * c, z: RV.z + -lx * s, r: 1.6, climbH: 2.8 });
+  }
+
+  // Derelict snowcat — 2 circles along its hull. Placed from the RV transform by constants, so no
+  // RNG draw happens here and the tree stream above is untouched.
+  //
+  // The web build renders no wreck (its visuals are deliberately frozen at the Pacific-NW forest —
+  // see CLAUDE.md), so this is an unmodelled obstacle there. That is the same trade the RV/hut split
+  // already makes rather than a new one: the sim is shared and the two renderers have diverged on
+  // purpose. It stays in both so the parity harness keeps covering one collider list, not two.
+  const wc = Math.cos(RV.ry + (WRECK.yawOffsetDeg * Math.PI) / 180);
+  const ws = Math.sin(RV.ry + (WRECK.yawOffsetDeg * Math.PI) / 180);
+  const wx = RV.x + (c * WRECK.along - s * WRECK.across);
+  const wz = RV.z + (-s * WRECK.along - c * WRECK.across);
+  for (const lx of [-WRECK.halfLength, WRECK.halfLength]) {
+    colliders.push({ x: wx + lx * wc, z: wz + -lx * ws, r: WRECK.radius, climbH: WRECK.climbH });
   }
 
   // Caves — horseshoe of boulders; side + back are solid, the mouth (toward centre) is open.

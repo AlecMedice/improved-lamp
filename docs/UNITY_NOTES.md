@@ -753,6 +753,156 @@ and — because the second loop consumes the first loop's already-averaged value
 shared normal rather than one clobbering the other; winding, index bounds and the wrapped hash all
 hold up.
 
+## [camp-gfx] The camp and trail pass — 2026-08-14
+
+Owner's report: the graphics keep improving but are not there yet; start with camp (a dedicated fire,
+the RV, evidence bags), then trails and snow. What was actually found and done.
+
+**The campfire was the worst object in the game.** One `MeshUtil.Cone(0.6, 1.1, 8)` tinted orange
+plus a point light at a *constant* 3.5 intensity — no motion of any kind. Everything else in camp had
+been through a materials pass; this had not. It is the worst possible thing to leave static, because
+a fire is defined by movement and every player has a lifetime of reference for one. Rebuilt as
+`Campfire.cs` plus `WorldBuilder.BuildCamp`: charred lean-to logs, a hashed ember bed on one shared
+emissive material, additive flame particles with size-over-lifetime, sparks, alpha smoke, a scorch
+disc, and a flicker driven by **summed sines rather than `Random`** — random flicker changes by a
+large amount every frame, which reads as a failing bulb, and it is frame-rate dependent besides.
+
+**There is no RV.** It became a plank hut in the re-theme; `WorldData.Rv` survives only as the name
+of the seeded transform and its collider box, which is parity-locked. Owner's call was hut *and* a
+wreck, so the hut gained a door, window reveal and mullion, stovepipe with smoke, roof snow load and
+eave icicles — and a derelict snowcat was added beside it (`BuildWreck`).
+
+**`AddBox` had a UV bug affecting every structure in the game.** It scaled a `PrimitiveType.Cube`,
+whose faces each carry 0..1 UVs, so a material tiled at 1.4 put 1.4 repeats across a face regardless
+of its real size. On the 6.6 x 2.5 x 2.3 hut that stretched the timber grain about **3x wider on the
+long walls than on the ends, from one material**. Hut, sill, roof, ridge beam, crates, tower platform
+and rails all had it. Fixed by `MeshUtil.MetricBox`, whose UVs are in **metres**; tiling on AddBox is
+now repeats-per-metre and identical on every face of every box.
+
+**The evidence bags were already fine** and were left alone — the duffel (`Blob` body, slumped end,
+strap, tarp, lamp) and `ProofPile` (tipped bag, contents scattered by type, beacon column) had both
+had proper passes. The real gap there is feedback, not form: **the duffel looks identical at 0/3 and
+3/3 proof**, which is a [feedback] problem and is still open.
+
+**Trails read as decals for three reasons, all fixed.** They were a flat ribbon floating `+0.04` above
+the terrain with a hard polygon edge; they shared `SnowNormal` with virgin powder so packed trail had
+*identical micro-relief* to untouched drift; and they were perfectly uniform along their length. Now:
+five columns per station forming a trodden channel (sunk centre, heaped berms) as **two submeshes** so
+the shoulders can be powder while the channel is packed; a new `ProcTex.PackedSnowNormal` built from
+boot dishes and scuff rather than crystal grain; and `BuildTrailDetail` scattering hashed bootprints,
+grit and sled ruts along the route.
+
+> **The channel is visual only, and must stay that way.** Terrain height lives in the parity-locked
+> sim and is what players actually stand on, so a channel deep enough to notice would read as a
+> mismatch between where your feet are and what you can see. `TrailSinkDepth` is 5 cm.
+
+**`ProcTex.Cells`** — new tileable Worley-lite noise, and the reason packed snow and dented metal are
+possible at all. Fbm is smooth blobs at every scale, so it gives rolling dunes; a bootprint or a dent
+needs a **dish with a rim**, which needs distance-to-feature-point.
+
+### The wreck's collider, and how it avoided [rng-lockstep]
+
+Adding a collider means touching the parity-locked sim, which is legitimate for world *content* (that
+is what `WorldData` is for) but has one trap: `BuildColliders`' tree loop walks the RNG stream in
+lockstep with the renderer, so **a single new draw would move every tree after it**. So the wreck is
+placed by fixed constants offset from `Rv`, and its collider is appended *after* the tree loop —
+no random number is consumed anywhere.
+
+Mirrored in `shared/sim/world.ts` (`WRECK`) and `csharp/Metoh.Sim/WorldData.cs` (`Wreck*`), which must
+stay identical. The regen proved it clean: `colliderCount` 2423 → **2425**, `climbableCount` 19 → **21**
+(the hull is a real perch), `fallenLogCount` unchanged, and crucially **`first3` unchanged** — that
+last one is the evidence the tree stream was not perturbed. `PARITY OK`.
+
+> The web build renders no wreck (its visuals are frozen at the Pacific-NW forest on purpose), so it
+> gains an unmodelled obstacle there. That is the same trade the RV/hut split already makes, not a new
+> one, and keeping it in both sims is what lets the parity harness cover one collider list rather than
+> two.
+
+## [tower-trees-caves] The lookout, tree sway and the ice caverns — 2026-08-14
+
+### The lookout
+
+**The ladder genuinely was a pile of sticks.** Rails and rungs were both `TaperedCylinder(..., 4)`,
+and **four segments is a square** — so they were square posts, not round stiles, all at the same
+diameter, floating at the tower face with nothing joining them to it. Now: round tapered stiles (9
+segments), slimmer rungs let into them, iron standoff brackets bolting it to the tower at three
+heights, and a safety hoop over the last stretch that also visually terminates the climb.
+
+**The tower had no cross-bracing at all** — four unbraced verticals holding a platform 10 m up, which
+is not a thing that stands. Two tiers of X-bracing plus girts on all four faces. This is also the
+cheapest silhouette win available here: it turns a bare rectangle into a lattice, and a lattice is
+what a fire lookout *reads* as from the distance players actually navigate by.
+
+**The tower lamp had no mesh** — a bare `Light` component, light pouring out of empty air. Replaced
+with an iron brazier (tripod, basket, rim, coals) that reuses `Campfire` and `BuildFireParticles`
+wholesale at 0.62 scale. Every other warm light in this valley is a flame or a carried lamp; a
+floating glow was the one thing breaking that rule.
+
+**Binoculars are now an object** (`TowerViewer.cs`) — the coin-operated viewer from a scenic overlook
+(owner's reference). Mounted, not carried, and that is a design decision rather than a shortcut: a
+pocketable pair would delete the tower's reason to exist, since glassing IS the reward for climbing.
+
+> **The aiming animation adds no networking, on purpose.** `HPPlayer._glassing` is a plain local
+> bool, so a remote machine cannot know anyone is glassing. Rather than add a SyncVar — CLAUDE.md is
+> explicit that the animation layer reads only already-replicated state — the head aims from data
+> every machine already has: player position (on the deck, near the pedestal) and replicated yaw. The
+> cost is that it tracks a nearby player whether or not they are holding the key, which reads fine as
+> a heavy thing on a stiff mount being leaned on. Pitch is NOT replicated, so the head holds a fixed
+> cant rather than inventing a value.
+
+### Tree sway (`Metoh/TreeSway` + `Sway.hlsl`)
+
+There was none — `_Time` appeared only in the sky shader's star twinkle.
+
+**It has to be a vertex shader, and the reason is `CombineInstance`.** WorldBuilder merges every tree
+in a chunk into ONE mesh (~40 trees x 64 chunks) to keep draw calls sane. There is no per-tree
+transform left to rotate, and moving the chunk's GameObject slides forty trees sideways as a rigid
+slab. So the motion is per-vertex, and the vertex needs two things the merged mesh does not carry:
+
+- **`uv2.x` sway weight** — 0 at *that tree's own base*, rising to its crown. NOT chunk-relative
+  height: trees stand on sloped ground at different altitudes, so a chunk-space Y would leave uphill
+  trees rigid and make downhill ones thrash.
+- **`uv2.y` phase** — per tree, or the whole stand leans in unison and reads as the ground tilting.
+
+`BakeSwayData` recovers both after the merge: instance *i* contributed exactly
+`combines[i].mesh.vertexCount` vertices in order, so the spans line up with a parallel metadata list
+by construction. Phase is **hashed from the tree index, never drawn** — that loop is the
+[rng-lockstep] loop and one extra `rand()` would move every tree after it.
+
+**The displacement lives in `Sway.hlsl` because three passes must share it exactly.** Forward,
+ShadowCaster and DepthOnly all apply it; if they drift, the tree renders in one place, casts its
+shadow from another and writes depth from a third — shadows sliding off trunks and SSAO haloing empty
+air, miserable to diagnose because each pass looks right alone. One include makes that impossible
+rather than merely unlikely.
+
+Verified compiled: all three passes appear in the shader-compiler log under `Metoh/TreeSway`. Worth
+insisting on, since a shader that fails to compile returns a valid object and renders **magenta** —
+`MeshUtil.Sway` also falls back to a plain Lit surface if `Shader.Find` returns null, because a
+silently rigid forest is a far better failure than a magenta one.
+
+### The ice caverns
+
+**The mouth was never a hole.** It had been a convex mass twice — a scaled sphere ("a black
+beachball"), then an irregular `Rock`, which broke the outline but was *still convex*. That is the
+whole problem and lumpiness cannot fix it: convex geometry bulges toward the viewer, so it can only
+read as a dark rock. New `MeshUtil.Throat` builds inward-facing faces receding into unlit black —
+**windings reversed against every other generator here**, which is the trick: you are meant to be
+inside the bore looking out through its walls. It also means the throat is invisible from behind, so
+it can be pushed into a hillside without capping it.
+
+Plus the full cavern treatment: a translucent emissive lip (URP/Lit has no subsurface term, so this
+fakes ice carrying light the way the rest of the project fakes things), rime creeping out across the
+ground, an icicle curtain hanging at *varying depths inside* the bore (a black hole has no depth cue
+without something in it), and cold mist pooling at the threshold — sinking, not rising, and the one
+moving thing at the mouth.
+
+> **A real bug fixed in passing: non-uniform transform scale on normal-mapped geometry.** Every cave
+> piece was squashed by the transform — mound at 13 : 7.2 : 11, brow at 6 : 1. That shears tangent
+> space (so the normal map is read through a skew) and stretches UV tiling anisotropically (so one
+> surface shows its grain at different densities depending on which way it faces). `MeshUtil.Rock`
+> now takes `xScale`/`yScale`/`zScale` and bakes proportions into the mesh. Same class of problem as
+> the `AddBox` UV stretch in [camp-gfx].
+
 ## [import] Importing character models — the seam, and how to use it
 
 Bodies are generated at runtime so that cloning the repo and pressing play works with no asset files in

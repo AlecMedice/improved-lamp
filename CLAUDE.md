@@ -21,6 +21,12 @@ Read `docs/` for the full picture — every file there is current, nothing is a 
   **read before touching the Unity build**. Its sections are cited by **bracketed id**
   (`[rng-lockstep]`, `[materials]`, `[bodies]`), never by number — cite the id, never the position.
   (Other docs keep their own `§`-numbering; `GAME_DESIGN.md` §7.7 is unaffected.)
+- `Aug_14.md` — the 2026-08-14 day log: the CPU-brain rewrite (belief + utility, replacing two
+  priority ladders) and two graphics passes (camp/trails, then lookout/tree-sway/ice-caverns).
+  Read it for **what is untested and what is still open** — none of that day's work has run a frame,
+  and its "bugs found in passing" and "constraints that shaped the work" sections are the reusable
+  parts. It supersedes a planning doc (`AI Rewrite.md`) that was deleted before ever being committed,
+  so unlike the retired logs below there is no git history to fall back on.
 
 This file is the fast orientation + conventions.
 

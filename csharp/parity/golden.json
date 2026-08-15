@@ -220,7 +220,7 @@
     ]
   },
   "colliderSummary": {
-    "count": 2423,
+    "count": 2425,
     "first3": [
       {
         "x": 221.2102703321725,
@@ -246,8 +246,8 @@
     }
   },
   "worldSummary": {
-    "colliderCount": 2423,
-    "climbableCount": 19,
+    "colliderCount": 2425,
+    "climbableCount": 21,
     "fallenLogCount": 10,
     "firstLog": {
       "cx": 120,

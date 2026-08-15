@@ -1,42 +1,34 @@
-// The CPU Yeti brain — the opponent in the offline single-player mode (and the fastest way to
-// test solo). This is meant to be a LEGITIMATE opponent someone plays without internet, not just a
-// dev prop, so it plays the actual stealth game rather than tracking you through walls.
+// The CPU Yeti brain — the opponent in offline single-player, and the fastest way to test solo.
+// Meant to be a LEGITIMATE opponent someone plays without internet, not a dev prop.
 //
-// It is INTENT ONLY. It never moves a transform or resolves an ability itself; it decides a
-// direction and a couple of booleans and hands them to HPPlayer.ServerBotDrive / ServerBotRoar /
-// ServerBotGrab, which run the exact same shared sim and the same GameManager.Try* authority a
-// human's input lands in. So the bot obeys identical collision, stamina, cooldowns and range — there
-// is no separate "AI physics" to drift out of parity with the real game.
+// REWRITTEN 2026-08-14 (docs/AI Rewrite.md). The sensing here was already honest and is KEPT: sight
+// needs line of sight, a lit torch is a beacon visible much farther, hearing scales with how loudly
+// you move and a crouch makes no sound at all. What was not honest was the FALLBACK. With nothing
+// perceived, the old brain prowled toward NearestSearcherRaw() — the true position of the nearest
+// searcher, through walls, from anywhere on the map — and since that was the default mode, "it
+// beelines at me" was the normal experience. The old code knew: Mode.Hunt's own doc comment called
+// it "omniscience, dressed up with jitter" and recommended play-testing Mode.Track instead.
 //
-// Runs on the HOST only, added to a bot player by HPPlayer.ServerBecomeBot. Plain MonoBehaviour (no
-// networking of its own) because everything it touches is already server-side.
+// The fallback is now a BeliefMap. When the Yeti loses you it does not consult your position; it
+// consults a probability field built from what it actually sensed, and that field DIFFUSES — the
+// longer since it saw you, the wider the area it has to consider. So losing it is real, and being
+// found again is the result of it working the odds rather than reading your transform.
 //
-// PERCEPTION is the point. A predator that always knows where you are isn't scary, it's unfair — and
-// it deletes the whole stealth layer (crouch = silent, flashlight = a beacon, break line of sight to
-// escape). So the bot SENSES: it sees you within a cone-free range only with clear line of sight,
-// sees your lit torch from much farther, hears you by how loudly you move (a sprint carries; a crouch
-// makes no sound at all), and then REMEMBERS your last position and searches it before giving up.
-// That loop — spotted, chase, lost behind the trees, hunt the area, fade back to wandering — is what
-// makes it read as a creature instead of a homing missile.
+// Behaviours, highest priority first:
+//   DRAG      — hauling a victim away from the duffel (a body dropped in the dark costs a search)
+//   DAZZLED   — blinded and ability-locked: get out of the beam instead of posing for the camera
+//   HUNT      — perceived right now: close, and use roar/grab
+//   STALK     — perceived, but far and unaware: approach along cover, torch-side, no sprint
+//   AMBUSH    — high belief nearby but nothing seen: sit still on the likely approach and wait
+//   GUARD     — a downed searcher is bait; hold off it and take whoever comes
+//   SEARCH    — work the belief field, densest ground first
+//   TRACK     — follow snow prints (the honest signal only the Yeti can read)
+//   PATROL    — nothing at all: sweep where searchers are likely to be, not at random
 //
-// TRACKING is how it finds you in the first place. The old brain closed the gap by walking at the
-// nearest searcher's true position — omniscience, dressed up with jitter. It now follows SNOW PRINTS
-// instead: the tracks searchers leave off-trail, which only the Yeti can see. That is the same
-// information the fiction says it has, so the behaviour is honest, and it makes the deep-snow mechanic
-// cut both ways — stay on the packed trails or in camp and you leave the bot genuinely nothing to
-// follow. The omniscient prowl survives only as a last resort when no track exists at all, so a team
-// that hides perfectly still isn't rewarded with a Yeti that wanders the far side of the map forever.
-//
-// The full behaviour set, in priority order:
-//   DAZZLED  — blinded, abilities locked: break off and get out of the beam rather than stand in it
-//   DRAG     — after a grab, haul the victim away from the duffel before dropping them
-//   HUNT     — perceived right now: close and use roar/grab
-//   SEARCH   — lost them: work the last-known position until memory expires
-//   TRACK    — follow the freshest snow print, and take a crevasse if the trail is cold and far
-//   PROWL    — no tracks anywhere: the old coarse instinct, as a floor
-//   WANDER   — nobody left to hunt
-//
-// All tuning here is first-guess and has NOT run in the editor. The named constants are the dials.
+// INTENT ONLY, and that must stay true: it never moves a transform or resolves an ability itself.
+// It hands intent to HPPlayer.ServerBot*, which run the same shared sim and the same
+// GameManager.Try* authority a human's input lands in — identical collision, stamina, cooldowns and
+// ranges, with no parallel "AI physics" to drift out of parity. HOST ONLY.
 using FishNet;
 using Metoh.Sim;
 using UnityEngine;
@@ -47,404 +39,498 @@ namespace Metoh.Game
     [RequireComponent(typeof(HPPlayer))]
     public class YetiBot : MonoBehaviour
     {
-        // --- perception (first-guess; editor-tune) ---------------------------------
-        /// <summary>Sees an unlit searcher this far, with clear line of sight (Yeti has night eyes).</summary>
-        private const float SightRange = 34f;
-        /// <summary>A lit flashlight is a beacon in the dark — seen this far, still needs line of sight.</summary>
-        private const float TorchSightRange = 80f;
-        /// <summary>Hears a sprinting searcher this far (through trees — hearing ignores line of sight).</summary>
-        private const float HearSprint = 30f;
-        /// <summary>Hears a walking searcher this far. A crouch-walker makes NO sound (design rule), so
-        /// there is no crouch hearing term at all — crouching past the bot in the dark actually works.</summary>
-        private const float HearWalk = 15f;
-        /// <summary>Below this speed (m/s) a searcher is treated as standing still and makes no sound.</summary>
-        private const float StillSpeed = 0.6f;
+        // --- memory / commitment ---------------------------------------------------
         /// <summary>Seconds the bot keeps hunting a last-known position after losing the searcher.</summary>
         private const float MemorySeconds = 7f;
+        private const float LoseRange = 85f;
 
-        // --- prowl: how the predator closes on prey it can't yet see/hear (first-guess) ---
-        private const float ProwlJitter = 30f;      // the prowl target is this coarse — an area, not a pixel
-        private const float ProwlRepick = 5f;       // re-aim only this often, so it lags your real movement
-        private const float ProwlSprintBeyond = 55f; // sprint to close from far, walk in so perception can catch you
-
-        // --- tracking: following snow prints (first-guess) -------------------------
-        /// <summary>Ignore prints older than this. Below the server's 35 s print lifetime on purpose —
-        /// a track at the edge of expiry is a lead to nowhere, and chasing it looks like confusion.</summary>
+        // --- tracking (snow prints) ------------------------------------------------
         private const float TrackMaxAge = 22f;
-        /// <summary>Re-choose which print to follow only this often, so it commits to a trail
-        /// instead of twitching between two searchers' tracks every frame.</summary>
         private const float TrackRepick = 2.5f;
-        /// <summary>Sprint toward a track farther than this; walk it in so perception can catch up.</summary>
         private const float TrackSprintBeyond = 30f;
-        /// <summary>Consider a print reached at this radius — then immediately look for a fresher one.</summary>
         private const float TrackReach = 4f;
 
-        // --- crevasse fast-travel (first-guess) ------------------------------------
-        /// <summary>Only bother travelling if it saves at least this much ground.</summary>
+        // --- crevasse fast-travel --------------------------------------------------
         private const float TravelWorthwhile = 120f;
-        /// <summary>Don't consider travelling more often than this (the server also has a cooldown).</summary>
         private const float TravelThinkInterval = 6f;
 
-        // --- reactions (first-guess) -----------------------------------------------
-        /// <summary>Seconds to retreat after being dazzled — long enough that the searcher's beam wins
-        /// them real distance, short enough that it comes back.</summary>
+        // --- reactions -------------------------------------------------------------
         private const float DazzleBreakSeconds = 3.5f;
-        // (How long a haul lasts is GameManager.CarrySeconds now — the server owns the carry timer,
-        // and the bot's own DragSeconds/DragClearOfDuffel early-drop went with the toggle release.)
 
-        // --- target preference (first-guess) ---------------------------------------
-        /// <summary>Score bonus for a searcher carrying proof — worth ~25 m of extra walk.</summary>
-        private const float CarrierBias = 25f;
-        /// <summary>Score bonus for a searcher currently stuck in a drift basin.</summary>
-        private const float BoggedBias = 15f;
-
-        /// <summary>Spend the roar on a lone target only inside this range, where the grab should land.
-        /// Comfortably under the ~25 m roar radius, so a single searcher at the fringe doesn't burn it.</summary>
+        /// <summary>Spend the roar on a lone target only inside this, where the grab should land.</summary>
         private const float RoarCommitRange = 14f;
 
-        // --- movement (first-guess) ------------------------------------------------
-        private const float LoseRange = 85f;   // drop a quarry once it's this far (hysteresis vs re-acquire)
-        private const float SprintBeyond = 8f; // sprint when the quarry is farther than this, else close carefully
+        // --- predator behaviours ---------------------------------------------------
+        /// <summary>Beyond this a perceived, unaware searcher is stalked rather than charged.</summary>
+        private const float StalkBeyond = 26f;
+        /// <summary>Belief peak above which sitting still and waiting beats walking around.</summary>
+        private const float AmbushConfidence = 0.05f;
+        /// <summary>How long an ambush holds before it gives up and searches again.</summary>
+        private const float AmbushSeconds = 7f;
+        /// <summary>Stand this far off a downed body when guarding it — close enough to punish a
+        /// rescue, far enough that the rescuer commits before noticing.</summary>
+        private const float GuardStandoff = 13f;
+
+        // --- pressure governor -----------------------------------------------------
+        /// <summary>
+        /// After a grab the bot deliberately eases off for a while.
+        ///
+        /// Not mercy — pacing. A predator that converts every success straight into the next hunt
+        /// removes the part of the night the game is actually about (the searching), and a team that
+        /// never gets a quiet minute never gets to bank, so matches end in a shutout that teaches the
+        /// player nothing. Backing off also makes the next approach frightening again, because dread
+        /// needs a gap to grow in.
+        /// </summary>
+        private const float PressureBackoffSeconds = 18f;
+        private const float PressureBackoffRange = 55f;
+
+        // --- movement --------------------------------------------------------------
+        private const float SprintBeyond = 8f;
         private const float CornerReach = 1.5f;
         private const float RepathInterval = 0.4f;
-        private const float WanderGoalSeconds = 8f;
-        private const float WanderRadius = 120f;
+        private const float PatrolGoalSeconds = 8f;
 
         private HPPlayer _self;
-        // MUST be built in Awake, never as a field initializer: NavMeshPath's constructor calls
-        // InitializeNavMeshPath, which Unity forbids from a MonoBehaviour constructor. C# compiles
-        // field initializers into the constructor in declaration order, so a throw here abandons
-        // EVERY initializer below it (_corners, _lastPos, _speed) and leaves them null — the brain
-        // then dies on the first dereference of Update(), every frame, having never thought once.
-        private NavMeshPath _path;
+        private BotPerception _senses;
+        private BeliefMap _belief;
+        private UtilityChooser _chooser;
+        private BotRandom _rng;
+
+        private NavMeshPath _path; // see the note below — never a field initializer
         private Vector3[] _corners = System.Array.Empty<Vector3>();
         private int _corner;
         private float _repathAt;
 
-        // Perception memory.
-        private HPPlayer _quarry;         // who we're hunting (may currently be out of sight)
-        private Vector3 _lastKnown;       // where we last perceived them
-        private Vector3 _prowlTarget;     // coarse "head toward prey" goal while not yet perceiving anyone
-        private float _prowlUntil;        // re-aim the prowl target after this
-        private float _awareUntil;        // hunt the last-known spot until this time, then give up
-        private readonly System.Collections.Generic.Dictionary<HPPlayer, Vector3> _lastPos =
-            new System.Collections.Generic.Dictionary<HPPlayer, Vector3>();
-        private readonly System.Collections.Generic.Dictionary<HPPlayer, float> _speed =
-            new System.Collections.Generic.Dictionary<HPPlayer, float>();
+        // Sensing cache.
+        private Contact _contact;
+        private float _contactDist = float.MaxValue;
+        private float _perceiveAt;
+        private float _beliefAt;
 
-        // Wander.
-        private float _wanderUntil;
-        private Vector3 _wanderGoal;
+        // Memory.
+        private HPPlayer _quarry;
+        private Vector3 _lastKnown;
+        private float _awareUntil;
+        private float _backoffUntil;
 
-        // Tracking / reactions.
-        private ClueMarker _track;      // the print we're currently walking to
-        private float _trackRepickAt;   // re-choose a print after this
-        private float _travelThinkAt;   // next time we're allowed to consider a crevasse hop
-        private float _breakOffUntil;   // retreating from a flashlight beam until this time
-        private Vector3 _breakOffDir;   // the direction we bolted, held so the retreat is a line not a jitter
+        private Vector3 _patrolGoal;
+        private float _patrolUntil;
+        private Vector3 _ambushSpot;
+        private float _ambushUntil;
+
+        private ClueMarker _track;
+        private float _trackRepickAt;
+        private float _travelThinkAt;
+        private float _breakOffUntil;
+        private Vector3 _breakOffDir;
 
         private void Awake()
         {
             _self = GetComponent<HPPlayer>();
-            _path = new NavMeshPath(); // see the field — this cannot be an initializer
-            // The bake is on demand (WorldBuilder.EnsureNavMesh), and a bot waking up IS the demand —
-            // nothing else in the game reads a NavMesh. Asking here rather than from the spawn site
-            // means every path that creates a bot, now or later, gets a surface without knowing it
-            // had to arrange one. Idempotent: the second bot's call is free.
+            // MUST be built here, never as a field initializer: NavMeshPath's constructor calls
+            // InitializeNavMeshPath, which Unity forbids from a MonoBehaviour constructor. C# compiles
+            // field initializers into the constructor in declaration order, so a throw here abandons
+            // EVERY initializer below it and leaves them null — the brain then dies on the first
+            // dereference in Update(), every frame, having never thought once.
+            _path = new NavMeshPath();
+            _senses = new BotPerception();
+            _belief = new BeliefMap();
+            _chooser = new UtilityChooser();
+            _rng = BotRandom.For(_self);
+            // The bake is on demand and a bot waking up IS the demand — nothing else reads a NavMesh.
+            // Idempotent, so the second bot's call is free.
             WorldBuilder.EnsureNavMesh();
         }
 
         private void Update()
         {
-            // Host-authoritative and match-only. Clients hold a remote copy of the bot and never think
-            // for it; the lobby and results screens are inert.
-            //
-            // Each guard reports itself through DbgState rather than through the Console. It used to
-            // log a throttled line every second forever ("remove once the bot is confirmed hunting" —
-            // it is), which in the editor means a stack-trace capture and a Console row every second
-            // per bot, and there are five bots now. The overlay and the play-test log both read
-            // DbgState, so nothing is lost. Literals only: LateUpdate compares by reference.
-            if (!InstanceFinder.IsServerStarted) { DbgState = "off: not server"; return; }
-            if (_self == null) return; // no DbgState to set — the brain has no player
-            if (!_self.IsBot) { DbgState = "off: not a bot"; return; }
+            // Each guard reports through DbgState rather than the Console: this used to log a throttled
+            // line every second per bot forever, and in the editor that is a stack-trace capture and a
+            // Console row per second, times five bots. Literals only — LateUpdate compares by reference.
+            if (!InstanceFinder.IsServerStarted) { Force("off: not server"); return; }
+            if (_self == null) return;
+            if (!_self.IsBot) { Force("off: not a bot"); return; }
             var gm = GameManager.Instance;
-            if (gm == null) { DbgState = "off: no manager"; return; }
-            if (gm.MatchPhase.Value != GameManager.PhasePlaying) { DbgState = "off: not playing"; return; }
-            if (gm.IntermissionActive) { DbgState = "off: intermission"; return; }
-            if (_self.Status.Value != HPPlayer.StatusActive) { DbgState = "off: not active"; return; }
+            if (gm == null) { Force("off: no manager"); return; }
+            if (gm.MatchPhase.Value != GameManager.PhasePlaying) { Force("off: not playing"); return; }
+            if (gm.IntermissionActive) { Force("off: intermission"); return; }
+            if (_self.Status.Value != HPPlayer.StatusActive) { Force("off: not active"); return; }
+
             float dt = Mathf.Min(Time.deltaTime, 0.1f);
 
-            // The hearing sampler runs BEFORE the pause check, and this ordering is load-bearing. It
-            // measures speed as (distance since last sample) / dt. Skipping it while paused freezes
-            // _lastPos but not dt, so the first frame after unpausing divides a whole pause's worth of
-            // travel by one frame — every searcher reads as sprinting and the bot "hears" the entire
-            // map the instant you let it go. That defeats the point of pausing to watch it hunt.
-            UpdateHeardSpeeds(dt);
+            // BEFORE the pause check, and that ordering is load-bearing: this measures distance/dt, so
+            // skipping it while paused freezes the sample but not dt, and the first frame after
+            // unpausing divides a whole pause of travel by one frame. Every searcher then reads as
+            // sprinting and the bot "hears" the entire map the instant you let it go.
+            _senses.SampleSpeeds(dt);
 
-            // DEV freeze (F3). After the guards and before any steering: perception and the state
-            // machine below never run, so the bot holds position and holds its last state — which is
-            // what makes it inspectable. Abilities stop with it, so a paused Yeti standing next to you
-            // cannot grab you. It is still driven with a null input so the shared sim keeps ticking:
-            // otherwise stamina neither drains nor recovers and it resumes as winded as it paused.
+            // DEV freeze (F3). After the guards, before any steering: perception and scoring never run,
+            // so the bot holds position AND holds its last state, which is what makes it inspectable.
+            // Still driven with a null input so the shared sim keeps ticking — otherwise stamina
+            // neither drains nor recovers and it resumes as winded as it paused.
             if (Paused)
             {
-                DbgState = "PAUSED";
+                Force("PAUSED");
                 _self.ServerBotDrive(new MoveInput { W = false, Dt = dt });
                 return;
             }
 
-            Vector3 pos = transform.position;
-            HPPlayer seen = Perceive(pos);
-
-            if (seen != null)
+            if (Time.time >= _perceiveAt)
             {
-                _quarry = seen;
-                _lastKnown = seen.transform.position;
+                _perceiveAt = Time.time + 1f / BotBrainTuning.PerceiveHz;
+                Sense();
+            }
+            if (Time.time >= _beliefAt)
+            {
+                float bdt = 1f / BotBrainTuning.BeliefHz;
+                _beliefAt = Time.time + bdt;
+                TickBelief(bdt);
+            }
+            if (_chooser.ShouldDecide) Decide();
+
+            // Acting runs EVERY frame even though deciding does not: steering has to be smooth, and a
+            // bot that only updated its heading five times a second visibly stair-steps around corners.
+            Act(transform.position);
+        }
+
+        // --- sensing ----------------------------------------------------------------
+
+        private void Sense()
+        {
+            Vector3 pos = transform.position;
+            _contact = _senses.PerceiveSearcher(pos);
+            _contactDist = _contact.Who != null ? Mathf.Sqrt(BotPerception.Flat2(_contact.At, pos)) : float.MaxValue;
+
+            if (_contact.Who != null)
+            {
+                _quarry = _contact.Who;
+                _lastKnown = _contact.At;
                 _awareUntil = Time.time + MemorySeconds;
+                // A sighting is a hard fix; a sound is a bearing. Confidence carries that difference
+                // into the field rather than flattening both into "I know where you are".
+                if (_contact.Seen) _belief.Sighting(_contact.At);
+                else _belief.Rumour(_contact.At, 22f, _contact.Confidence);
             }
             else if (_quarry != null && (Time.time >= _awareUntil || FarLost(pos)))
             {
-                _quarry = null; // memory expired or they broke well clear — back to prowling
+                _quarry = null;
             }
+        }
 
-            // DRAG — a grab landed and we're hauling someone. Take them AWAY from the duffel: a body
-            // dropped at camp is a two-second rescue, a body dropped in the dark costs the team a
-            // search. Outranks everything below because the victim is already caught.
-            //
-            // WHEN the haul ends is not the bot's call any more. GameManager.CarrySeconds runs the
-            // carry and drops the victim itself, so the brain only decides which way to walk while it
-            // lasts — and the second ServerBotGrab that used to release is gone, because a second
-            // grab is now refused rather than treated as a drop.
-            if (IsDragging())
+        private void TickBelief(float dt)
+        {
+            Vector3 pos = transform.position;
+            _belief.RumourTrust = BotDifficulty.RumourTrust;
+            _belief.SpreadMul = BotDifficulty.SpreadMul;
+
+            // Negative information: we are here and see nobody, so they are probably not here. This is
+            // what stops the bot re-walking ground it just cleared.
+            if (_contact.Who == null) _belief.Cleared(pos, BotPerception.YetiSightRange * 0.9f);
+
+            // Snow prints are the Yeti's honest signal and nobody else can read them, so they feed the
+            // field directly rather than being a separate chase mode.
+            ClueMarker print = FreshestPrint(pos);
+            if (print != null)
             {
-                Vector3 away = pos - WorldBuilder.DuffelPosition();
-                away.y = 0f;
-                if (away.sqrMagnitude < 1f) away = transform.forward;
-                DbgState = "DRAG";
-                Vector3 dragGoal = pos + away.normalized * 40f;
-                Repath(dragGoal);
-                SteerAlongPath(pos, dragGoal, sprint: false); // dragging is a walk, not a sprint
-                return;
+                float age = Time.time - print.Born;
+                _belief.Rumour(print.transform.position, Mathf.Lerp(18f, 60f, Mathf.Clamp01(age / TrackMaxAge)),
+                               Mathf.Lerp(0.6f, 0.2f, Mathf.Clamp01(age / TrackMaxAge)));
             }
 
-            // DAZZLED — a searcher is holding a beam on us. Roar and grab are locked server-side, so
-            // standing here is pure loss: it hands them film of a stationary Yeti. Break line of sight
-            // instead. This is what makes the flashlight feel like a weapon rather than a status icon.
+            // Searchers must return to the duffel to score, so camp is permanently the likeliest place
+            // to find one. This is a prior, not knowledge — it is true of the MAP, not of any player,
+            // which is exactly the kind of inference a predator is entitled to make.
+            //
+            // Mode.Track opts out: that mode's contract is "sensed evidence only", and a standing hint
+            // about camp is an inference the mode is explicitly there to exclude. Without this gate
+            // Track would quietly drift toward camp forever and stop being the honest comparison it
+            // exists to provide.
+            if (AiMode == Mode.Hunt) _belief.Rumour(WorldBuilder.DuffelPosition(), 55f, 0.05f);
+
+            _belief.Tick(dt, (float)Sim.Player.SprintSpeed);
+        }
+
+        // --- deciding ---------------------------------------------------------------
+
+        private void Decide()
+        {
+            Vector3 pos = transform.position;
+            _chooser.Begin();
+
+            // Hard interrupts first — these are not decisions and must not be argued with by the
+            // commitment rules, so they bypass scoring entirely.
+            if (IsDragging()) { _chooser.Force("DRAG"); return; }
+
             if (_self.Dazzled.Value && Time.time >= _breakOffUntil - DazzleBreakSeconds)
             {
                 _breakOffUntil = Time.time + DazzleBreakSeconds;
-                Vector3 from = seen != null ? seen.transform.position : _lastKnown;
+                Vector3 from = _contact.Who != null ? _contact.At : _lastKnown;
                 Vector3 away = pos - from;
                 away.y = 0f;
                 _breakOffDir = away.sqrMagnitude > 1f ? away.normalized : -transform.forward;
             }
-            if (Time.time < _breakOffUntil)
+            if (Time.time < _breakOffUntil) { _chooser.Force("DAZZLED"); return; }
+
+            bool easing = Time.time < _backoffUntil;
+
+            // --- HUNT / STALK --------------------------------------------------------
+            if (_contact.Who != null)
             {
-                DbgState = "DAZZLED";
-                Vector3 goal = pos + _breakOffDir * 30f;
-                Repath(goal);
-                SteerAlongPath(pos, goal, sprint: true);
-                return;
+                // Close and committed, or far and creeping. Splitting these is most of what makes it
+                // read as a predator: charging from 40 m announces itself and the target simply walks
+                // away, while closing quietly to 25 m first turns the same approach into an ambush.
+                float near = Util.Closeness(_contactDist, 6f, StalkBeyond);
+                if (!easing) _chooser.Consider("HUNT", 0.75f + 0.25f * near);
+                _chooser.Consider("STALK", (_contactDist > StalkBeyond ? 0.7f : 0.2f) * (easing ? 0.5f : 1f));
             }
 
-            if (_quarry != null)
+            // --- GUARD ---------------------------------------------------------------
+            // A downed searcher is bait that the team has to come to. Standing off one is a trap the
+            // rescue walks into, and it costs nothing to set.
+            // GUARD and AMBUSH are the two behaviours that turn the Yeti from a chaser into a
+            // predator, and both are Hunt-only: Track's contract is to react to sensed evidence and
+            // nothing else, and lying in wait is a plan rather than a reaction.
+            bool scheming = AiMode == Mode.Hunt && !easing;
+
+            HPPlayer bait = NearestDowned(pos, out float baitDist);
+            if (bait != null && baitDist < 90f && scheming)
+                _chooser.Consider("GUARD", 0.65f * Util.Closeness(baitDist, 10f, 90f));
+
+            // --- AMBUSH --------------------------------------------------------------
+            // Strong belief, nothing seen: waiting beats walking. A moving predator is one the prey
+            // hears coming; a still one in the right place is the reason the trail was worth reading.
+            if (_contact.Who == null && _belief.Confidence > AmbushConfidence && scheming)
+                _chooser.Consider("AMBUSH", 0.55f * Mathf.Clamp01(_belief.Confidence * 12f));
+
+            // --- SEARCH / TRACK ------------------------------------------------------
+            if (_contact.Who == null && _quarry != null && Time.time < _awareUntil)
+                _chooser.Consider("SEARCH", 0.6f);
+
+            if (AiMode != Mode.Random && FreshestPrint(pos) != null)
+                _chooser.Consider("TRACK", 0.45f);
+
+            // --- PATROL --------------------------------------------------------------
+            // The floor. Not random roam: it walks the belief field's best unexplored ground, so even
+            // with nothing sensed the Yeti moves like something working a territory.
+            _chooser.Consider("PATROL", AiMode == Mode.Random ? 0.9f : 0.3f);
+
+            _chooser.Resolve();
+        }
+
+        // --- acting ------------------------------------------------------------------
+
+        private void Act(Vector3 pos)
+        {
+            switch (_chooser.Chosen)
             {
-                // HUNT — toward the quarry if currently perceived, else toward where we last sensed it.
-                TryAbilities();
-                Vector3 goal = seen != null ? seen.transform.position : _lastKnown;
-                Repath(goal);
-                float d = Mathf.Sqrt(Flat2(goal, pos));
-                DbgState = seen != null ? "HUNT" : "SEARCH";
-                SteerAlongPath(pos, goal, sprint: d > SprintBeyond);
+                case "DRAG":    DoDrag(pos); break;
+                case "DAZZLED": DoDazzled(pos); break;
+                case "HUNT":    DoHunt(pos); break;
+                case "STALK":   DoStalk(pos); break;
+                case "GUARD":   DoGuard(pos); break;
+                case "AMBUSH":  DoAmbush(pos); break;
+                case "SEARCH":  DoSearch(pos); break;
+                case "TRACK":   DoTrack(pos); break;
+                default:        DoPatrol(pos); break;
             }
-            // TRACK — handled inside FollowTrack (it steers and sets DbgState). Random mode skips it:
-            // "random" has to mean it isn't seeking at all, and reading prints is seeking.
-            else if (AiMode != Mode.Random && FollowTrack(pos))
+        }
+
+        private void DoDrag(Vector3 pos)
+        {
+            // Take them AWAY from the duffel: a body dropped at camp is a two-second rescue, one
+            // dropped in the dark costs the team a search. WHEN the haul ends is the server's call
+            // (GameManager.CarrySeconds), so the brain only picks a direction.
+            Vector3 away = pos - WorldBuilder.DuffelPosition();
+            away.y = 0f;
+            if (away.sqrMagnitude < 1f) away = transform.forward;
+            Vector3 goal = pos + away.normalized * 40f;
+            Repath(goal);
+            SteerAlongPath(pos, goal, sprint: false); // dragging is a walk
+        }
+
+        private void DoDazzled(Vector3 pos)
+        {
+            Vector3 goal = pos + _breakOffDir * 30f;
+            Repath(goal);
+            SteerAlongPath(pos, goal, sprint: true);
+        }
+
+        private void DoHunt(Vector3 pos)
+        {
+            TryAbilities();
+            Vector3 goal = _contact.Who != null ? _contact.At : _lastKnown;
+            Repath(goal);
+            float d = Mathf.Sqrt(BotPerception.Flat2(goal, pos));
+            SteerAlongPath(pos, goal, sprint: d > SprintBeyond);
+        }
+
+        /// <summary>
+        /// Close on a target that has not reacted yet — quietly, and off the direct line.
+        ///
+        /// Approaching along the exact bearing is what makes a chase readable: the searcher sees a
+        /// shape growing dead ahead and backs straight off. Coming in on a slight arc keeps the
+        /// distance closing while giving the silhouette somewhere to hide, and not sprinting keeps it
+        /// out of the hearing model that the searchers' own torch-lit sweep would otherwise catch.
+        /// </summary>
+        private void DoStalk(Vector3 pos)
+        {
+            TryAbilities();
+            Vector3 target = _contact.Who != null ? _contact.At : _lastKnown;
+            Vector3 toward = target - pos;
+            toward.y = 0f;
+            if (toward.sqrMagnitude < 1f) { DoHunt(pos); return; }
+
+            // Swing wide by a per-bot-stable amount, so two Yetis (or one across two matches) don't
+            // arc identically. Sign is fixed per bot rather than re-rolled, or the approach wobbles.
+            float side = _stalkSide == 0f ? (_stalkSide = _rng.Value < 0.5f ? -1f : 1f) : _stalkSide;
+            Vector3 perp = new Vector3(-toward.z, 0f, toward.x).normalized * side;
+            float arc = Mathf.Clamp(toward.magnitude * 0.35f, 4f, 18f);
+            Vector3 goal = target - toward.normalized * 6f + perp * arc;
+
+            Repath(goal);
+            SteerAlongPath(pos, goal, sprint: false); // walking is quiet; sprinting announces you
+        }
+
+        private float _stalkSide;
+
+        private void DoGuard(Vector3 pos)
+        {
+            HPPlayer bait = NearestDowned(pos, out _);
+            if (bait == null) { DoSearch(pos); return; }
+            TryAbilities();
+
+            // Hold a post off the body rather than standing on it — a rescuer who can see the Yeti
+            // from range simply doesn't come, and then the bait is wasted.
+            Vector3 body = bait.transform.position;
+            Vector3 off = pos - body;
+            off.y = 0f;
+            if (off.sqrMagnitude < 1f) off = transform.forward;
+            Vector3 post = body + off.normalized * GuardStandoff;
+
+            if (BotPerception.Flat2(post, pos) > 16f) { Repath(post); SteerAlongPath(pos, post, sprint: false); }
+            else
             {
+                _self.ServerBotFace(body.x - pos.x, body.z - pos.z);
+                _self.ServerBotDrive(new MoveInput { W = false, Dt = Mathf.Min(Time.deltaTime, 0.1f) });
+            }
+        }
+
+        private void DoAmbush(Vector3 pos)
+        {
+            if (Time.time >= _ambushUntil)
+            {
+                _ambushSpot = _belief.Best();
+                _ambushUntil = Time.time + AmbushSeconds;
+            }
+            TryAbilities();
+
+            // Walk to the likely ground, then STOP. Standing still is the whole behaviour: it makes no
+            // sound, so the hearing model the searchers do not have cannot save them, and it puts the
+            // Yeti where the odds say they will walk.
+            if (BotPerception.Flat2(_ambushSpot, pos) > 64f)
+            {
+                Repath(_ambushSpot);
+                SteerAlongPath(pos, _ambushSpot, sprint: false);
             }
             else
             {
-                // Not perceiving anyone right now — but a predator doesn't wait to be walked into. It
-                // PROWLS toward the nearest searcher's rough area (its instinct/scent), closing the gap
-                // until they fall inside real sight/hearing and the precise HUNT takes over. The target
-                // is coarse and refreshed slowly (ProwlRepick) with positional jitter, so it lags your
-                // actual movement — you can still shake it by breaking line of sight and repositioning,
-                // but you can't just stand at camp forever and never be found.
-                // Only Mode.Hunt does this. Track and Random both drop to the wander below, and the
-                // difference between them is whether FollowTrack above was allowed to run.
-                HPPlayer prey = AiMode == Mode.Hunt ? NearestSearcherRaw() : null;
-                if (prey != null)
-                {
-                    if (Time.time >= _prowlUntil)
-                    {
-                        Vector2 j = Random.insideUnitCircle * ProwlJitter;
-                        _prowlTarget = prey.transform.position + new Vector3(j.x, 0f, j.y);
-                        _prowlUntil = Time.time + ProwlRepick;
-                    }
-                    Repath(_prowlTarget);
-                    DbgState = "PROWL";
-                    bool far = Flat2(pos, prey.transform.position) > ProwlSprintBeyond * ProwlSprintBeyond;
-                    SteerAlongPath(pos, _prowlTarget, sprint: far);
-                }
-                else
-                {
-                    // No searchers at all (only happens if everyone's down/gone) — plain roam. The goal
-                    // is a real distant point even without a NavMesh, so the bot never stands still.
-                    if (Time.time >= _wanderUntil || Flat2(pos, _wanderGoal) < 9f)
-                    {
-                        _wanderGoal = RandomNavPoint(pos);
-                        _wanderUntil = Time.time + WanderGoalSeconds;
-                        Repath(_wanderGoal, force: true);
-                    }
-                    else Repath(_wanderGoal);
-                    DbgState = "WANDER";
-                    SteerAlongPath(pos, _wanderGoal, sprint: false);
-                }
+                _self.ServerBotFace(_ambushSpot.x - pos.x, _ambushSpot.z - pos.z);
+                _self.ServerBotDrive(new MoveInput { W = false, Dt = Mathf.Min(Time.deltaTime, 0.1f) });
             }
         }
 
-        /// <summary>
-        /// Current AI state, surfaced to the F3 overlay for debugging. One of
-        /// DRAG / DAZZLED / HUNT / SEARCH / TRACK / PROWL / WANDER — listed in the priority order the
-        /// Update loop resolves them, so the overlay reads as "why is it doing that".
-        /// </summary>
-        public string DbgState { get; private set; } = "—";
-
-        /// <summary>
-        /// Write state TRANSITIONS to the play-test log. The overlay shows what the bot is doing right
-        /// now; the log has to answer "what was it doing thirty seconds ago, when the tester says it
-        /// got stuck" — and only the transitions carry that. HPLog.Change drops the repeats, so this
-        /// costs one string compare a frame.
-        /// </summary>
-        private void LateUpdate()
+        private void DoSearch(Vector3 pos)
         {
-            if (_self == null) return;
-
-            // Compare the cheap parts FIRST. Formatting the line unconditionally and letting
-            // HPLog.Change discard the duplicate would allocate a string every frame, which on the
-            // integrated GPU this is tuned for is exactly the kind of steady GC churn [perf] warns about.
-            if (ReferenceEquals(DbgState, _loggedState) && AiMode == _loggedMode &&
-                Paused == _loggedPaused && Mathf.Approximately(SpeedMul, _loggedSpeed)) return;
-            _loggedState = DbgState;
-            _loggedMode = AiMode;
-            _loggedPaused = Paused;
-            _loggedSpeed = SpeedMul;
-
-            HPLog.Change("yeti.ai", "AI", $"{DbgState} (mode {AiMode}{(Paused ? ", PAUSED" : "")}" +
-                                          $"{(SpeedMul < 0.999f ? $", {SpeedMul:0.00}x" : "")})");
+            TryAbilities();
+            Vector3 goal = _quarry != null ? _lastKnown : _belief.Best();
+            Repath(goal);
+            SteerAlongPath(pos, goal, sprint: BotPerception.Flat2(goal, pos) > SprintBeyond * SprintBeyond);
         }
 
-        private string _loggedState;
-        private Mode _loggedMode = (Mode)(-1); // never a real mode, so the first frame always logs
-        private bool _loggedPaused;
-        private float _loggedSpeed = -1f;
-
-        /// <summary>How the bot decides where to go when it has nothing perceived and no track.</summary>
-        public enum Mode
+        private void DoTrack(Vector3 pos)
         {
-            /// <summary>Omniscient fallback: walk at a searcher's true position. This is the one that
-            /// reads as "it beelines straight at me" — it always knows roughly where you are.</summary>
-            Hunt = 0,
-            /// <summary>Honest perception only — sight, hearing and snow prints. Break line of sight
-            /// and stay on the packed trails and it genuinely loses you.</summary>
-            Track = 1,
-            /// <summary>Roam at random and never seek. Engages only if you walk into its senses.
-            /// Useful for testing everything that is not the chase.</summary>
-            Random = 2,
-        }
-
-        /// <summary>
-        /// DEV (F3): which brain the CPU Yeti is running. Static so it applies to every bot and
-        /// survives a reseed.
-        ///
-        /// Defaults to <see cref="Mode.Hunt"/> because with no fallback at all a team hiding
-        /// motionless in camp is never found and the night just runs out — but Hunt is also why the
-        /// bot can feel like it is homing on you through the forest, so <see cref="Mode.Track"/> is
-        /// the one to play-test against. Track is arguably the better game.
-        /// </summary>
-        public static Mode AiMode = Mode.Hunt;
-
-        /// <summary>DEV (F3): freeze the bot where it stands. It keeps sensing and its state machine
-        /// keeps resolving — only the movement and the abilities stop, so you can walk up to it and
-        /// read what it thinks it is doing.</summary>
-        public static bool Paused;
-
-        /// <summary>DEV (F3): scale the bot's movement speed. 0.5 makes a chase slow enough to watch
-        /// and to out-walk deliberately, which is how you tell "it tracked me" from "it caught me".</summary>
-        public static float SpeedMul = 1f;
-
-        /// <summary>Back-compat for anything still asking the old yes/no question.</summary>
-        public static bool AggressiveProwl => AiMode == Mode.Hunt;
-
-        // --- tracking --------------------------------------------------------------
-
-        /// <summary>
-        /// Follow the freshest usable snow print. Returns false if there is no track worth walking to,
-        /// which drops the caller through to the coarse prowl.
-        ///
-        /// This is the bot's honest answer to "where did they go" — the exact information the Yeti is
-        /// designed to have and nobody else can see. It commits to one print for TrackRepick seconds
-        /// rather than re-choosing every frame, because a predator that re-aims 60 times a second
-        /// between two searchers' trails reads as indecision, not menace.
-        /// </summary>
-        private bool FollowTrack(Vector3 pos)
-        {
-            // Re-choose on a timer, when the current track expires/despawns, or once we've reached it.
-            bool reached = _track != null && Flat2(_track.transform.position, pos) <= TrackReach * TrackReach;
-            if (_track == null || reached || Time.time >= _trackRepickAt || TrackAge(_track) > TrackMaxAge)
+            bool reached = _track != null && BotPerception.Flat2(_track.transform.position, pos) <= TrackReach * TrackReach;
+            if (_track == null || reached || Time.time >= _trackRepickAt || Time.time - _track.Born > TrackMaxAge)
             {
                 _track = FreshestPrint(pos);
                 _trackRepickAt = Time.time + TrackRepick;
             }
-            if (_track == null) return false;
+            if (_track == null) { DoPatrol(pos); return; }
 
             Vector3 goal = _track.transform.position;
-            float d = Mathf.Sqrt(Flat2(goal, pos));
+            float d = Mathf.Sqrt(BotPerception.Flat2(goal, pos));
 
-            // If the trail is cold AND a long walk away, take the crevasse network instead of jogging
-            // the width of the map. This is the Yeti's own fast-travel, through the same validated
-            // authority a human uses — cooldown and "must be standing in a mouth" still apply, so it
-            // can only do this when it has genuinely earned the reposition.
+            // Cold trail a long way off: take the crevasse network rather than jogging the map. Goes
+            // through the same validated authority a human uses — cooldown and "must be standing in a
+            // mouth" still apply, so it only happens when the reposition was genuinely earned.
             if (d > TravelWorthwhile && Time.time >= _travelThinkAt)
             {
                 _travelThinkAt = Time.time + TravelThinkInterval;
                 TryCrevasseTravel(pos, goal, d);
             }
 
-            DbgState = "TRACK";
             Repath(goal);
             SteerAlongPath(pos, goal, sprint: d > TrackSprintBeyond);
-            return true;
         }
 
-        /// <summary>Freshest snow print within TrackMaxAge, tie-broken toward the closer one.</summary>
-        private ClueMarker FreshestPrint(Vector3 pos)
+        private void DoPatrol(Vector3 pos)
         {
-            ClueMarker best = null;
-            float bestScore = float.MinValue;
-            foreach (var c in ClueMarker.All)
+            if (Time.time >= _patrolUntil || BotPerception.Flat2(pos, _patrolGoal) < 81f)
             {
-                if (c == null || c.CType.Value != ClueMarker.TypeSnowPrint) continue;
-                float age = TrackAge(c);
-                if (age > TrackMaxAge) continue;
-                // Freshness leads, distance is a real tie-breaker rather than a rounding error. The
-                // weights are in comparable units on purpose: 10 per second of age against 0.15 per
-                // metre means ~67 m of extra walk is worth one second of freshness. Weight distance
-                // much lower and the bot will cross the whole 800 m map for a print a second newer,
-                // abandoning a trail under its feet.
-                float score = -age * 10f - Mathf.Sqrt(Flat2(c.transform.position, pos)) * 0.15f;
-                if (score > bestScore) { bestScore = score; best = c; }
+                // Mode.Random means "do not seek at all" — it exists to test everything that is not
+                // the chase, so it must not consult belief. Everything else patrols the odds.
+                _patrolGoal = AiMode == Mode.Random
+                    ? RandomNavPoint(pos)
+                    : _belief.BestSearchTarget(pos, null, _self.ObjectId);
+                _patrolGoal += new Vector3(_rng.Signed * 8f, 0f, _rng.Signed * 8f);
+                _patrolUntil = Time.time + PatrolGoalSeconds;
+                Repath(_patrolGoal, force: true);
             }
-            return best;
+            else Repath(_patrolGoal);
+            SteerAlongPath(pos, _patrolGoal, sprint: false);
         }
 
-        private static float TrackAge(ClueMarker c) => Time.time - c.Born;
+        // --- abilities ---------------------------------------------------------------
 
-        /// <summary>
-        /// Hop to whichever crevasse leaves us closest to the trail, if that actually beats walking.
-        /// Requires standing in a mouth (the server enforces it), so in practice this fires when the
-        /// bot happens to pass one while the trail is far — which is exactly when a human would use it.
-        /// </summary>
+        /// <summary>Grab a frozen searcher in reach; else roar if the shot is worth the cooldown.
+        /// Both re-validate server-side, so this only decides WHEN to try.</summary>
+        private void TryAbilities()
+        {
+            var all = HPPlayer.All;
+            for (int i = 0; i < all.Count; i++)
+            {
+                HPPlayer p = all[i];
+                if (p == null || p.IsYeti || p.Status.Value != HPPlayer.StatusFrozen) continue;
+                if (BotPerception.Flat2(p.transform.position, transform.position) <=
+                    (float)(GameManager.GrabRadius * GameManager.GrabRadius))
+                {
+                    _self.ServerBotGrab();
+                    // A landed grab is a success, and successes are what the pacing governor counts.
+                    _backoffUntil = Time.time + PressureBackoffSeconds;
+                    return;
+                }
+            }
+
+            if (_self.RoarReadyIn.Value > 0f) return;
+
+            // The roar is a long cooldown and an AoE whose follow-up grab can only take one person, so
+            // spending it the instant somebody clips the radius is usually waste. Hold unless the shot
+            // is actually worth taking: two or more caught, or one close enough that the grab lands.
+            int caught = 0;
+            float nearest2 = float.MaxValue;
+            for (int i = 0; i < all.Count; i++)
+            {
+                HPPlayer p = all[i];
+                if (p == null || p.IsYeti || p.Status.Value != HPPlayer.StatusActive) continue;
+                float d2 = BotPerception.Flat2(p.transform.position, transform.position);
+                if (d2 > (float)(GameManager.RoarRadius * GameManager.RoarRadius)) continue;
+                caught++;
+                if (d2 < nearest2) nearest2 = d2;
+            }
+            if (caught == 0) return;
+            if (caught >= 2 || nearest2 <= RoarCommitRange * RoarCommitRange) _self.ServerBotRoar();
+        }
+
         private void TryCrevasseTravel(Vector3 pos, Vector3 goal, float walkDist)
         {
             if (_self.CaveReadyIn > 0f) return;
@@ -467,161 +553,106 @@ namespace Metoh.Game
             if (best >= 0) _self.ServerBotCaveTravel(best);
         }
 
-        // --- reactions -------------------------------------------------------------
+        // --- lookups ------------------------------------------------------------------
 
-        /// <summary>Are we currently hauling someone? (The victim carries our object id.)</summary>
         private bool IsDragging()
         {
-            foreach (var p in HPPlayer.All)
+            var all = HPPlayer.All;
+            for (int i = 0; i < all.Count; i++)
             {
+                HPPlayer p = all[i];
                 if (p == null || p.IsYeti) continue;
                 if (p.GrabberObjectId.Value == _self.ObjectId) return true;
             }
             return false;
         }
 
-        // --- perception ------------------------------------------------------------
-
-        /// <summary>Track each searcher's speed so hearing can scale with how loudly they move.</summary>
-        private void UpdateHeardSpeeds(float dt)
-        {
-            foreach (var p in HPPlayer.All)
-            {
-                if (p == null || p.IsYeti) continue;
-                Vector3 now = p.transform.position;
-                if (_lastPos.TryGetValue(p, out Vector3 prev) && dt > 0f)
-                {
-                    float inst = Mathf.Sqrt(Flat2(now, prev)) / dt;
-                    // Smooth a little so a single stutter frame doesn't read as silence.
-                    _speed[p] = Mathf.Lerp(_speed.TryGetValue(p, out float s) ? s : inst, inst, 0.4f);
-                }
-                _lastPos[p] = now;
-            }
-        }
-
-        /// <summary>
-        /// The strongest searcher the bot currently perceives, or null. Sight needs line of sight and
-        /// is far longer when the target's torch is lit; hearing ignores line of sight but scales with
-        /// movement and is silent for a crouching or still searcher.
-        /// </summary>
-        private HPPlayer Perceive(Vector3 pos)
-        {
-            HPPlayer best = null;
-            float bestScore = 0f;
-            foreach (var p in HPPlayer.All)
-            {
-                if (p == null || p.IsYeti || p.Status.Value == HPPlayer.StatusIncap) continue;
-                float dist = Mathf.Sqrt(Flat2(p.transform.position, pos));
-
-                bool sensed = false;
-
-                // Sight — line of sight required either way; a lit torch stretches the range.
-                float sight = p.FlashOn.Value ? TorchSightRange : SightRange;
-                if (dist <= sight && !Blocked(pos, p.transform.position)) sensed = true;
-
-                // Hearing — no line-of-sight requirement, but crouch/standing still is silent.
-                if (!sensed && !p.Crouched.Value)
-                {
-                    float spd = _speed.TryGetValue(p, out float s) ? s : 0f;
-                    if (spd > StillSpeed)
-                    {
-                        // Interpolate the audible range between a walk and a sprint by speed.
-                        float t = Mathf.InverseLerp((float)Sim.Player.WalkSpeed, (float)Sim.Player.SprintSpeed, spd);
-                        float hear = Mathf.Lerp(HearWalk, HearSprint, Mathf.Clamp01(t));
-                        if (dist <= hear) sensed = true;
-                    }
-                }
-
-                if (!sensed) continue;
-
-                // Closest is the baseline, then two predator instincts on top.
-                float score = 1000f - dist;
-
-                // Go for the one holding proof. Carried evidence is worth nothing until it reaches the
-                // duffel and it SPILLS on a grab, so taking the carrier is worth more than taking a
-                // searcher with empty hands — this is the difference between the bot fighting the team
-                // and the bot fighting their win condition.
-                if (p.CarriedTotal > 0) score += CarrierBias;
-
-                // Prefer prey that is already wading. Deep snow doesn't touch the Yeti, so a searcher
-                // caught in a drift basin is the cheapest kill on the field, and cutting them off there
-                // is the exact behaviour the mechanic exists to create.
-                var world = WorldBuilder.World;
-                if (world != null && Movement.DeepSnowDepth(world, p.transform.position.x, p.transform.position.z) > 0.35)
-                    score += BoggedBias;
-
-                if (score > bestScore) { bestScore = score; best = p; }
-            }
-            return best;
-        }
-
-        private bool Blocked(Vector3 a, Vector3 b)
-        {
-            var world = WorldBuilder.World;
-            if (world == null) return false;
-            return Metoh.Sim.Collision.LineBlocked(world.Colliders, new Vec2(a.x, a.z), new Vec2(b.x, b.z));
-        }
-
-        private bool FarLost(Vector3 pos) => _quarry != null && Flat2(_quarry.transform.position, pos) > LoseRange * LoseRange;
-
-        /// <summary>
-        /// Nearest living searcher, ignoring line of sight and range — the predator's coarse instinct
-        /// for where prey is. Used ONLY to aim the prowl (a slow, jittered heading), never to attack:
-        /// abilities still require the precise, LOS-gated <see cref="Perceive"/>. So this makes the bot
-        /// close on you; it does not let it hit you through walls.
-        /// </summary>
-        private HPPlayer NearestSearcherRaw()
+        private HPPlayer NearestDowned(Vector3 pos, out float dist)
         {
             HPPlayer best = null;
             float bestD2 = float.MaxValue;
-            Vector3 pos = transform.position;
-            foreach (var p in HPPlayer.All)
+            var all = HPPlayer.All;
+            for (int i = 0; i < all.Count; i++)
             {
-                if (p == null || p.IsYeti || p.Status.Value == HPPlayer.StatusIncap) continue;
-                float d2 = Flat2(p.transform.position, pos);
+                HPPlayer p = all[i];
+                if (p == null || p.IsYeti || p.Status.Value != HPPlayer.StatusIncap) continue;
+                float d2 = BotPerception.Flat2(p.transform.position, pos);
                 if (d2 < bestD2) { bestD2 = d2; best = p; }
+            }
+            dist = best != null ? Mathf.Sqrt(bestD2) : float.MaxValue;
+            return best;
+        }
+
+        private ClueMarker FreshestPrint(Vector3 pos)
+        {
+            ClueMarker best = null;
+            float bestScore = float.MinValue;
+            var all = ClueMarker.All;
+            for (int i = 0; i < all.Count; i++)
+            {
+                ClueMarker c = all[i];
+                if (c == null || c.CType.Value != ClueMarker.TypeSnowPrint) continue;
+                float age = Time.time - c.Born;
+                if (age > TrackMaxAge) continue;
+                // Freshness leads, distance is a real tie-breaker. Unlike the searchers' old clue
+                // scoring, this one is FINE as-is: snow prints are the Yeti's designed signal and it is
+                // meant to read the whole field of them. The searcher bug was that it applied the same
+                // weighting to a signal it should only have been able to see from a few metres away.
+                float score = -age * 10f - Mathf.Sqrt(BotPerception.Flat2(c.transform.position, pos)) * 0.15f;
+                if (score > bestScore) { bestScore = score; best = c; }
             }
             return best;
         }
 
-        // --- abilities -------------------------------------------------------------
+        private bool FarLost(Vector3 pos) =>
+            _quarry != null && BotPerception.Flat2(_quarry.transform.position, pos) > LoseRange * LoseRange;
 
-        /// <summary>Grab a frozen searcher in reach; otherwise roar if one is in the freeze radius and
-        /// the roar is off cooldown. Both re-validate server-side, so this only decides WHEN to try.</summary>
-        private void TryAbilities()
+        // --- dev knobs -----------------------------------------------------------------
+
+        public string DbgState => _chooser != null ? _chooser.Chosen : "—";
+        public string DbgScores => _chooser != null ? _chooser.DebugTop(3) : "";
+        public float DbgConfidence => _belief != null ? _belief.Confidence : 0f;
+        public BeliefMap Belief => _belief;
+        /// <summary>Where this bot's night actually went — dumped to the play log at match end.</summary>
+        public string DbgHistogram => _chooser != null ? _chooser.Histogram() : "";
+
+        private void Force(string s) => _chooser?.Force(s);
+
+        /// <summary>How the bot behaves when it has nothing perceived.</summary>
+        public enum Mode
         {
-            foreach (var p in HPPlayer.All)
-            {
-                if (p == null || p.IsYeti || p.Status.Value != HPPlayer.StatusFrozen) continue;
-                if (Flat2(p.transform.position, transform.position) <= GameManager.GrabRadius * GameManager.GrabRadius)
-                {
-                    _self.ServerBotGrab();
-                    return;
-                }
-            }
-
-            if (_self.RoarReadyIn.Value > 0f) return;
-
-            // Roar is on a long cooldown, so spending it the instant one searcher clips the radius is
-            // usually a waste — the freeze is an AoE and the follow-up grab can only take one person
-            // at a time. Hold it unless the shot is actually worth taking: either it catches two or
-            // more, or the single target is close enough that the grab is a near-certainty.
-            int caught = 0;
-            float nearest2 = float.MaxValue;
-            foreach (var p in HPPlayer.All)
-            {
-                if (p == null || p.IsYeti || p.Status.Value != HPPlayer.StatusActive) continue;
-                float d2 = Flat2(p.transform.position, transform.position);
-                if (d2 > GameManager.RoarRadius * GameManager.RoarRadius) continue;
-                caught++;
-                if (d2 < nearest2) nearest2 = d2;
-            }
-            if (caught == 0) return;
-            bool worthIt = caught >= 2 || nearest2 <= RoarCommitRange * RoarCommitRange;
-            if (worthIt) _self.ServerBotRoar();
+            /// <summary>Full predator: belief-driven patrol, ambush, stalking and guarding.</summary>
+            Hunt = 0,
+            /// <summary>Perception and snow prints only — no camp prior, no ambush. Break line of sight
+            /// and stay on the packed trails and it genuinely has nothing.</summary>
+            Track = 1,
+            /// <summary>Roam and never seek. Engages only if you walk into its senses.</summary>
+            Random = 2,
         }
 
-        // --- navigation ------------------------------------------------------------
+        /// <summary>
+        /// DEV (F3): which brain the CPU Yeti runs. Static so it applies to every bot and survives a
+        /// reseed.
+        ///
+        /// Hunt is now safe as the default, which it was not before: it used to mean "walk at the
+        /// nearest searcher's true position" and now means "work the belief field". The old warning
+        /// that Hunt reads as homing no longer applies, because nothing in this brain reads a
+        /// searcher's transform without having sensed them first.
+        /// </summary>
+        public static Mode AiMode = Mode.Hunt;
+
+        /// <summary>DEV (F3): freeze where it stands. It keeps sensing and scoring — only movement and
+        /// abilities stop, so you can walk up and read what it thinks it is doing.</summary>
+        public static bool Paused;
+
+        /// <summary>DEV (F3): scale movement speed. 0.5 makes a chase slow enough to watch and to
+        /// out-walk deliberately, which is how you tell "it tracked me" from "it caught me".</summary>
+        public static float SpeedMul = 1f;
+
+        /// <summary>Back-compat for anything still asking the old yes/no question.</summary>
+        public static bool AggressiveProwl => AiMode == Mode.Hunt;
+
+        // --- navigation ----------------------------------------------------------------
 
         private void Repath(Vector3 goal, bool force = false)
         {
@@ -642,7 +673,8 @@ namespace Metoh.Game
             if (_corners.Length > 0 && _corner < _corners.Length)
             {
                 target = _corners[_corner];
-                if (Flat2(target, pos) <= CornerReach * CornerReach && _corner < _corners.Length - 1) _corner++;
+                if (BotPerception.Flat2(target, pos) <= CornerReach * CornerReach && _corner < _corners.Length - 1)
+                    _corner++;
             }
             else target = fallbackGoal;
 
@@ -651,35 +683,51 @@ namespace Metoh.Game
         }
 
         /// <summary>
-        /// A wander goal a good distance off, in a random direction. The NavMesh only REFINES it (snap
-        /// to the nearest walkable spot); it is never REQUIRED — the raw terrain point is returned if
-        /// the mesh isn't there, so a failed bake degrades the bot to "walks the forest with the sim
-        /// dodging trees" instead of "stands still". Never returns `around`, which was the standing bug.
+        /// A wander goal a good distance off. The NavMesh only REFINES it (snap to the nearest walkable
+        /// spot); it is never REQUIRED — the raw terrain point is returned if the mesh isn't there, so a
+        /// failed bake degrades to "walks the forest with the sim dodging trees" rather than to
+        /// "stands still". Never returns `around`, which was the standing bug.
         /// </summary>
         private Vector3 RandomNavPoint(Vector3 around)
         {
             var world = WorldBuilder.World;
             float half = (float)Sim.World.Size / 2f - 12f;
-
             for (int i = 0; i < 6; i++)
             {
-                float ang = Random.value * Mathf.PI * 2f;
-                float dist = Mathf.Lerp(35f, WanderRadius, Random.value); // always meaningfully far
+                float ang = _rng.Value * Mathf.PI * 2f;
+                float dist = Mathf.Lerp(35f, 120f, _rng.Value);
                 float x = Mathf.Clamp(around.x + Mathf.Cos(ang) * dist, -half, half);
                 float z = Mathf.Clamp(around.z + Mathf.Sin(ang) * dist, -half, half);
                 float y = world != null ? (float)world.GetHeight(x, z) : around.y;
                 Vector3 probe = new Vector3(x, y, z);
                 if (NavMesh.SamplePosition(probe, out NavMeshHit hit, 14f, NavMesh.AllAreas)) return hit.position;
-                if (i == 5) return probe; // no navmesh — use the raw terrain point rather than give up
+                if (i == 5) return probe; // no navmesh — raw terrain point rather than give up
             }
             return around; // unreachable (the i==5 branch returns first), kept for the compiler
         }
 
-        /// <summary>Squared XZ distance — height never matters for chase/range decisions.</summary>
-        private static float Flat2(Vector3 a, Vector3 b)
+        // --- play-test log ---------------------------------------------------------------
+
+        private void LateUpdate()
         {
-            float dx = a.x - b.x, dz = a.z - b.z;
-            return dx * dx + dz * dz;
+            if (_self == null || _chooser == null) return;
+            // Cheap comparisons FIRST. Formatting unconditionally and letting HPLog.Change drop the
+            // duplicate would allocate a string every frame, which on the integrated GPU this is tuned
+            // for is exactly the steady GC churn [perf] warns about.
+            if (ReferenceEquals(_chooser.Chosen, _loggedState) && AiMode == _loggedMode &&
+                Paused == _loggedPaused && Mathf.Approximately(SpeedMul, _loggedSpeed)) return;
+            _loggedState = _chooser.Chosen;
+            _loggedMode = AiMode;
+            _loggedPaused = Paused;
+            _loggedSpeed = SpeedMul;
+
+            HPLog.Change("yeti.ai", "AI", $"{_chooser.Chosen} (mode {AiMode}{(Paused ? ", PAUSED" : "")}" +
+                                          $"{(SpeedMul < 0.999f ? $", {SpeedMul:0.00}x" : "")}) [{_chooser.DebugTop(3)}]");
         }
+
+        private string _loggedState;
+        private Mode _loggedMode = (Mode)(-1); // never a real mode, so the first frame always logs
+        private bool _loggedPaused;
+        private float _loggedSpeed = -1f;
     }
 }
