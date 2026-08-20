@@ -20,27 +20,37 @@ namespace Metoh.Game
             All.Remove(this);
         }
 
+        // Shared once, not per beacon — see TrailMark for the reasoning. Pings churn: one per hunter,
+        // re-pinging moves it (despawn + respawn) and they expire on a 35 s lifetime, so an active
+        // team cycles through a lot of them over three nights and every one used to leak two meshes
+        // and a material.
+        private static Mesh _beamMesh, _ringMesh;
+        private static Material _glowMat;
+
         public override void OnStartClient()
         {
             All.Add(this);
 
+            if (_beamMesh == null) _beamMesh = MeshUtil.TaperedCylinder(0.12f, 0.12f, 14f, 8);
+            if (_ringMesh == null) _ringMesh = MeshUtil.EllipseDisc(0.9f, 0.9f, 18);
+            if (_glowMat == null) _glowMat = MeshUtil.Emissive(Color.black, PingColor, 2.4f);
+
             var root = new GameObject("PingVisual").transform;
             root.SetParent(transform, false);
-            var glow = MeshUtil.Emissive(Color.black, PingColor, 2.4f);
 
             // Beam: a thin 14 m column so it clears the canopy from a distance.
             var beam = new GameObject("Beam");
             beam.transform.SetParent(root, false);
             beam.transform.localPosition = Vector3.zero;
-            beam.AddComponent<MeshFilter>().sharedMesh = MeshUtil.TaperedCylinder(0.12f, 0.12f, 14f, 8);
-            beam.AddComponent<MeshRenderer>().sharedMaterial = glow;
+            beam.AddComponent<MeshFilter>().sharedMesh = _beamMesh;
+            beam.AddComponent<MeshRenderer>().sharedMaterial = _glowMat;
 
             // Ground ring: a flat disc at the base marking the exact spot.
             var ring = new GameObject("Ring");
             ring.transform.SetParent(root, false);
             ring.transform.localPosition = new Vector3(0f, 0.12f, 0f);
-            ring.AddComponent<MeshFilter>().sharedMesh = MeshUtil.EllipseDisc(0.9f, 0.9f, 18);
-            ring.AddComponent<MeshRenderer>().sharedMaterial = glow;
+            ring.AddComponent<MeshFilter>().sharedMesh = _ringMesh;
+            ring.AddComponent<MeshRenderer>().sharedMaterial = _glowMat;
         }
     }
 }

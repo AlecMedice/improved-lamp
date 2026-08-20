@@ -21,6 +21,12 @@ Read `docs/` for the full picture — every file there is current, nothing is a 
   **read before touching the Unity build**. Its sections are cited by **bracketed id**
   (`[rng-lockstep]`, `[materials]`, `[bodies]`), never by number — cite the id, never the position.
   (Other docs keep their own `§`-numbering; `GAME_DESIGN.md` §7.7 is unaffected.)
+- `Aug_15_Bug.md` — the 2026-08-15 full-codebase audit of the Unity build. The **critical/high**
+  findings were fixed that day (listed at the bottom of the file for reference); everything above
+  that line is **still open**, ranked, with file references. Read it before starting a Unity pass —
+  it is the current bug backlog. It also records why *"the first load after a rebuild looks broken"*
+  (neon-blue trees, black tiles) was **async shader compilation**, not an art or asset bug — the
+  editor now waits for variants instead of drawing placeholders.
 - `Aug_14.md` — the 2026-08-14 day log: the CPU-brain rewrite (belief + utility, replacing two
   priority ladders) and two graphics passes (camp/trails, then lookout/tree-sway/ice-caverns).
   Read it for **what is untested and what is still open** — none of that day's work has run a frame,

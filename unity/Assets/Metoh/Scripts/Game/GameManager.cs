@@ -1661,7 +1661,12 @@ namespace Metoh.Game
                 if (dx * dx + dz * dz < SnowPrintStride * SnowPrintStride) continue;
                 _lastPrint[h] = new Vec2(pos.x, pos.z);
                 if (!Movement.LeavesSnowPrints(_world, pos.x, pos.z)) continue;
-                SpawnSnowPrint(pos.x, pos.z, h.transform.eulerAngles.y * Mathf.Deg2Rad);
+                // SimYawFromTransform, not the raw Unity yaw. ClueMarker renders a clue at
+                // `YawRad * Rad2Deg + 180`, which undoes the sim convention — so feeding it the body
+                // yaw directly laid every boot print down facing 180 degrees out, i.e. pointing back
+                // the way the searcher came. Direction of travel is the entire reason the Yeti reads
+                // these, so the tracking cue was inverted. DropClues below always had this right.
+                SpawnSnowPrint(pos.x, pos.z, h.SimYawFromTransform());
             }
         }
 

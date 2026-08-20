@@ -59,6 +59,10 @@ namespace Metoh.Game
             urp.shadowDistance = HighDetail ? ShadowDistanceHigh : ShadowDistanceLow;
 
             ApplyShadowQuality();
+            // The AA mode is tier-dependent too (SMAA high / FXAA cheap), so moving the slider has to
+            // re-assert it. Same reasoning as ApplyShadowQuality: a look that is only set at bootstrap
+            // is a look the settings menu can silently strip.
+            PostFX.ApplyCameraSettings();
 
             if (!_appliedOnce)
             {
@@ -79,7 +83,8 @@ namespace Metoh.Game
                 // diagnose from a play-test report. One line makes it impossible.
                 urp.supportsHDR = true;
 
-                Debug.Log($"[HPQuality] renderScale {urp.renderScale:0.00}, MSAA off, HDR on, " +
+                Debug.Log($"[HPQuality] renderScale {urp.renderScale:0.00}, MSAA off, " +
+                          $"AA {(HighDetail ? "SMAA" : "FXAA")}, HDR on, " +
                           $"detail {(HighDetail ? "HIGH" : "LOW")}, shadow distance {urp.shadowDistance} m " +
                           $"(screen {Screen.width}x{Screen.height}).");
             }

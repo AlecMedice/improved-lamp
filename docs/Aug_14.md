@@ -176,7 +176,7 @@ after the first play-test is wasted work.
   is weaker now that cues feed a *decaying belief*. A play-test question, not a code one.
 - **The web build has an unmodelled obstacle** — it renders no wreck but shares the collider. Same
   trade the RV/hut split already makes, but worth knowing.
-- **`CLAUDE.md`'s `docs/` list** doesn't mention this file yet.
+- ~~**`CLAUDE.md`'s `docs/` list** doesn't mention this file yet.~~ Done — it does.
 
 ### Tuning knobs most likely to be wrong, in order
 
@@ -200,6 +200,10 @@ vitest · **PARITY OK** · repo↔live 0 files out of sync.
 
 **Uncommitted:** 12 modified files, 6 new paths. Per the owner's standing preference, committing is
 always their call.
+
+> **Superseded 2026-08-15.** All of the above was committed as `9cd85dc`, and the live project has
+> since been synced and rebuilt headlessly, so `Metoh_port` now contains this work. It still has not
+> been *played*. The graphics easy-wins pass that followed is in `UNITY_NOTES.md` **[pipeline-gaps]**.
 
 **Live-project reminder:** editing this repo does not change what the owner plays. Three `robocopy`
 trees into `C:\Users\amedi\Metoh_port`, and use `/E`, **never** `/MIR` — the latter deletes the live

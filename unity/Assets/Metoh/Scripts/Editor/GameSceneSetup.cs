@@ -40,8 +40,13 @@ namespace Metoh.EditorTools
                 return;
             }
 
-SetInputHandlingToBoth();
+            SetInputHandlingToBoth();
             EnableRunInBackground();
+            // Scene setup reimports the shaders, so the very next Play is the one that would render
+            // neon-blue trees and stale black tiles while variants compile. Assert it here as well as
+            // in Configure — this is the command that CAUSES the reimport, and it is the one that
+            // actually gets run. See RenderPipelineSetup.DisableAsyncShaderCompilation.
+            RenderPipelineSetup.DisableAsyncShaderCompilationIfNeeded();
             PlayerSettings.productName = "Metoh"; // window title + Build/Windows/Metoh.exe
 
             var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);

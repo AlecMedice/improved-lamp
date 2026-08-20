@@ -300,6 +300,7 @@ namespace Metoh.Game
             // component owns must live outside this transform (HPAudio keeps a scene-root of its own).
             ReleaseWorldMaterials(); // BEFORE the children go — it reads their renderers to find them
             for (int i = transform.childCount - 1; i >= 0; i--) Destroy(transform.GetChild(i).gameObject);
+            BootReport.Reset(); // the rebuild re-tests every shader lookup; don't carry stale news
             Build();
             // The world moved, so any baked surface is stale. Marked, not re-baked: a reseed lands on
             // every client, including the four that will never run a bot, and the next bot to wake up
@@ -361,10 +362,33 @@ namespace Metoh.Game
         public int PropLightCount => _propLights.Count;
         public int UndergrowthMeshCount => _undergrowthRenderers.Count;
 
+        // Shared assets for the repeated props, rebuilt per world.
+        //
+        // BuildMarkerMast and AddBox used to mint a fresh Material AND a fresh Mesh for every single
+        // instance. Masts alone are ~13 per trail plus one per crevasse, each carrying a pole and six
+        // flags — call it 450 materials and 450 meshes, on top of the 192 the per-chunk forest tinting
+        // already spends. That is several times the "~200 per rebuild" ReleaseWorldMaterials was
+        // written against, and the meshes are not swept at all. Every one of them is identical bar the
+        // colour, so they cache: keyed per build, cleared in Build(), which keeps a reseed honest and
+        // leaves the materials on renderers where the sweep can still find them.
+        private readonly Dictionary<(Color, Color?, float), Material> _boxMats =
+            new Dictionary<(Color, Color?, float), Material>();
+        private readonly Dictionary<Vector3, Mesh> _boxMeshes = new Dictionary<Vector3, Mesh>();
+        private readonly Dictionary<float, Mesh> _mastMeshes = new Dictionary<float, Mesh>();
+        private Material _mastMat;
+        private Mesh _mastFlagMesh;
+        private Material[] _mastFlagMats;
+
         private void Build()
         {
             _undergrowthRenderers.Clear();
             _propLights.Clear();
+            _boxMats.Clear();
+            _boxMeshes.Clear();
+            _mastMeshes.Clear();
+            _mastMat = null;
+            _mastFlagMesh = null;
+            _mastFlagMats = null;
             BuildTerrain();
             BuildForest();
             BuildUndergrowth();
@@ -459,8 +483,8 @@ namespace Metoh.Game
             if (shader == null)
             {
                 // Same rule as the sky: never fail silently into something that looks like a choice.
-                Debug.LogWarning("[WorldBuilder] Metoh/Snowpack shader not found — falling back to flat " +
-                                 "snow (no rock, no basin tint). Is Shaders/Snowpack.shader synced?");
+                BootReport.MissingShader("Metoh/Snowpack",
+                    "the ground is flat snow with no rock blend, no deep-snow basin tint and no wind scour");
                 return MeshUtil.Surface(
                     GroundCol, smoothness: 0.42f,
                     normal: ProcTex.SnowNormal, normalScale: 0.75f,
@@ -1767,8 +1791,26 @@ namespace Metoh.Game
         /// </summary>
         private void BuildMarkerMast(Transform parent, Vector3 localPos, float height, int ident)
         {
-            var mast = NewMeshGo("MarkerMast", MeshUtil.TaperedCylinder(0.075f, 0.05f, height, 5),
-                MeshUtil.Surface(MeshUtil.Rgb(0x6b5b47), 0.14f, ProcTex.BarkNormal, 0.8f, 1.2f));
+            // Shared per build — see the cache fields above Build().
+            if (_mastMat == null)
+                _mastMat = MeshUtil.Surface(MeshUtil.Rgb(0x6b5b47), 0.14f, ProcTex.BarkNormal, 0.8f, 1.2f);
+            if (!_mastMeshes.TryGetValue(height, out Mesh mastMesh))
+            {
+                mastMesh = MeshUtil.TaperedCylinder(0.075f, 0.05f, height, 5);
+                _mastMeshes[height] = mastMesh;
+            }
+            if (_mastFlagMesh == null) _mastFlagMesh = MeshUtil.UnitCube();
+            if (_mastFlagMats == null)
+            {
+                _mastFlagMats = new Material[FlagCols.Length];
+                for (int i = 0; i < FlagCols.Length; i++)
+                {
+                    var c = MeshUtil.Rgb(FlagCols[i]);
+                    _mastFlagMats[i] = MeshUtil.Emissive(c, c, 0.35f);
+                }
+            }
+
+            var mast = NewMeshGo("MarkerMast", mastMesh, _mastMat);
             mast.transform.SetParent(parent, false);
             mast.transform.localPosition = localPos;
 
@@ -1776,8 +1818,7 @@ namespace Metoh.Game
             // colour at the top is the one that names it.
             for (int f = 0; f < 6; f++)
             {
-                var col = MeshUtil.Rgb(FlagCols[(ident + f) % FlagCols.Length]);
-                var flag = NewMeshGo("MastFlag", MeshUtil.UnitCube(), MeshUtil.Emissive(col, col, 0.35f));
+                var flag = NewMeshGo("MastFlag", _mastFlagMesh, _mastFlagMats[(ident + f) % FlagCols.Length]);
                 flag.transform.SetParent(parent, false);
                 flag.transform.localPosition = localPos + Vector3.up * (height * (0.94f - f * 0.10f));
                 flag.transform.localRotation = Quaternion.Euler(0f, f * 26f, 0f);
@@ -2586,13 +2627,19 @@ namespace Metoh.Game
         /// </summary>
         private void BuildSky()
         {
+            // The old sky material has to go by HAND. ReleaseWorldMaterials deliberately EXCLUDES
+            // _skyMat (it must outlive the sweep, which runs before the rebuild), and it could not
+            // find it anyway — the skybox hangs off RenderSettings, not off a Renderer. So every
+            // reseed simply orphaned one: a leak inside the very code written to stop leaks.
+            if (_skyMat != null) { Destroy(_skyMat); _skyMat = null; }
+
             var shader = Shader.Find("Metoh/NightSky");
             if (shader == null)
             {
                 // Don't fail silently into a black void — this is exactly the "menu button that does
                 // nothing" failure mode from [feedback]. Keep the old flat fill and say why.
-                Debug.LogWarning("[WorldBuilder] Metoh/NightSky shader not found — " +
-                                 "falling back to a flat sky. Is Shaders/NightSky.shader imported?");
+                BootReport.MissingShader("Metoh/NightSky",
+                    "the sky is a flat colour with no moon, no stars and no horizon ridgeline");
                 _skyMat = null;
                 return;
             }
@@ -2878,20 +2925,33 @@ namespace Metoh.Game
             // the UV-stretching bug that fixes. It was visible on every structure in the game: the
             // hut's plank grain ran about 3x wider on the long walls than on the ends, from one
             // material, because a primitive cube gives every face 0..1 UVs regardless of its size.
-            var go = NewMeshGo(name, MeshUtil.MetricBox(size), null);
+            // Both cached per build: the four tower rails are one mesh and one material between them,
+            // not eight objects. See the cache fields above Build().
+            if (!_boxMeshes.TryGetValue(size, out Mesh mesh))
+            {
+                mesh = MeshUtil.MetricBox(size);
+                _boxMeshes[size] = mesh;
+            }
+            var key = (color, emissive, glow);
+            if (!_boxMats.TryGetValue(key, out Material mat))
+            {
+                // Everything AddBox builds is a made object — hut planks, crates, the tower platform
+                // and rails — so they all get sawn-timber grain. A lit window is the exception:
+                // emission is the whole point of it and surface detail would only fight the glow.
+                //
+                // Tiling is REPEATS PER METRE, since MetricBox's UVs are in metres: 0.42 gives a plank
+                // roughly 2.4 m long, the same on every face of every box whatever its proportions.
+                mat = emissive.HasValue
+                    ? MeshUtil.Emissive(color, emissive.Value, glow)
+                    : MeshUtil.Surface(color, 0.13f, ProcTex.BarkNormal, 0.85f, 0.42f);
+                _boxMats[key] = mat;
+            }
+
+            var go = NewMeshGo(name, mesh, mat);
             go.transform.parent = parent.transform;
             go.transform.localPosition = localPos;
             go.transform.localRotation = Quaternion.identity;
             go.transform.localScale = Vector3.one; // the size lives in the mesh now, not the transform
-            // Everything AddBox builds is a made object — hut planks, crates, the tower platform and
-            // rails — so they all get sawn-timber grain. A lit window is the exception: emission is
-            // the whole point of it and surface detail would only fight the glow.
-            //
-            // Tiling is now REPEATS PER METRE, since MetricBox's UVs are in metres: 0.42 gives a plank
-            // roughly 2.4 m long, the same on every face of every box whatever its proportions.
-            go.GetComponent<MeshRenderer>().sharedMaterial = emissive.HasValue
-                ? MeshUtil.Emissive(color, emissive.Value, glow)
-                : MeshUtil.Surface(color, 0.13f, ProcTex.BarkNormal, 0.85f, 0.42f);
         }
     }
 }

@@ -27,6 +27,22 @@ namespace Metoh.Game
         private Transform _follow;
 
         /// <summary>
+        /// Scene-root parent for every system this class owns.
+        ///
+        /// THIS IS NOT COSMETIC. Weather lives as a COMPONENT on the WorldBuilder object, and
+        /// WorldBuilder.Rebuild() destroys all of that object's CHILDREN — so parenting the emitters
+        /// to our own transform meant a reseed deleted them outright while the component itself
+        /// survived (Awake never runs again, so nothing rebuilt them). The host rolls a fresh seed
+        /// the moment anyone hosts, so that fired on the first match of every session: snow and
+        /// spindrift stopped, silently, for the rest of the run. ReleaseWorldMaterials also swept
+        /// <see cref="_particleMat"/> on the way past, taking breath and torch motes with it.
+        ///
+        /// Exactly the trap HPAudio hit first (see its _sfxRoot). Same fix, plus the same
+        /// self-healing EnsureSystems so a future variation on it cannot go silent either.
+        /// </summary>
+        private Transform _root;
+
+        /// <summary>
         /// The volume snow is simulated in, as a half-extent around the camera.
         ///
         /// Small on purpose. Snow is only ever seen against the fog, and the fog closes at ~150 m, so
@@ -45,26 +61,47 @@ namespace Metoh.Game
         private void Awake()
         {
             Instance = this;
-
-            // One material shared by every system here — snow, drift, breath and motes are all a white
-            // soft dot, and sharing lets the SRP batcher put them in one draw.
-            var shader = Shader.Find("Universal Render Pipeline/Particles/Unlit")
-                      ?? Shader.Find("Universal Render Pipeline/Unlit")
-                      ?? Shader.Find("Sprites/Default");
-            _particleMat = new Material(shader);
-            _particleMat.SetTexture("_BaseMap", ProcTex.SoftDot);
-            _particleMat.mainTexture = ProcTex.SoftDot;
-            // Alpha-blended, not additive. Snow OCCLUDES what is behind it — that is precisely how it
-            // adds depth to the fog. Additive snow glows and stops reading as matter.
-            SetTransparent(_particleMat);
-
-            _snow = BuildSnow();
-            _drift = BuildDrift();
+            EnsureSystems();
         }
 
         private void OnDestroy()
         {
+            // The root is scene-level, so it does not go away with us — take it down by hand.
+            if (_root != null) Destroy(_root.gameObject);
             if (_particleMat != null) Destroy(_particleMat);
+        }
+
+        /// <summary>
+        /// (Re)create the root, the shared material and the two world systems if anything is missing.
+        /// Called from Awake and from LateUpdate, so a world rebuild that outruns us self-heals
+        /// instead of leaving a still valley for the rest of the session — see <see cref="_root"/>.
+        /// </summary>
+        private void EnsureSystems()
+        {
+            if (_root == null)
+            {
+                _root = new GameObject("Weather Systems").transform;
+                _snow = _drift = null; // whatever they were, they were parented to the dead root
+            }
+
+            if (_particleMat == null)
+            {
+                // One material shared by every system here — snow, drift, breath and motes are all a
+                // white soft dot, and sharing lets the SRP batcher put them in one draw.
+                var shader = Shader.Find("Universal Render Pipeline/Particles/Unlit")
+                          ?? Shader.Find("Universal Render Pipeline/Unlit")
+                          ?? Shader.Find("Sprites/Default");
+                _particleMat = new Material(shader);
+                _particleMat.SetTexture("_BaseMap", ProcTex.SoftDot);
+                _particleMat.mainTexture = ProcTex.SoftDot;
+                // Alpha-blended, not additive. Snow OCCLUDES what is behind it — that is precisely how
+                // it adds depth to the fog. Additive snow glows and stops reading as matter.
+                SetTransparent(_particleMat);
+                SetSoftParticles(_particleMat);
+            }
+
+            if (_snow == null) _snow = BuildSnow();
+            if (_drift == null) _drift = BuildDrift();
         }
 
         /// <summary>
@@ -75,6 +112,8 @@ namespace Metoh.Game
         /// </summary>
         private void LateUpdate()
         {
+            EnsureSystems(); // cheap null checks; rebuilds after a reseed took the root with it
+
             if (_follow == null || !_follow.gameObject.activeInHierarchy)
             {
                 var cam = Camera.main;
@@ -191,9 +230,10 @@ namespace Metoh.Game
         public static ParticleSystem AttachBreath(Transform head, bool yeti)
         {
             if (Instance == null || head == null) return null;
+            Instance.EnsureSystems(); // the shared material has to exist before a system takes it
             var ps = Instance.NewSystem("Breath");
             ps.transform.SetParent(head, false);
-            ps.transform.localPosition = new Vector3(0f, yeti ? 0.02f : 0.02f, yeti ? 0.24f : 0.13f);
+            ps.transform.localPosition = new Vector3(0f, 0.02f, yeti ? 0.24f : 0.13f);
 
             var main = ps.main;
             main.simulationSpace = ParticleSystemSimulationSpace.World; // a puff hangs where it was made
@@ -236,6 +276,7 @@ namespace Metoh.Game
         public static ParticleSystem AttachMotes(Transform beam, float length, float radius)
         {
             if (Instance == null || beam == null) return null;
+            Instance.EnsureSystems();
             var ps = Instance.NewSystem("Motes");
             ps.transform.SetParent(beam, false);
 
@@ -272,7 +313,9 @@ namespace Metoh.Game
         private ParticleSystem NewSystem(string name)
         {
             var go = new GameObject(name);
-            go.transform.SetParent(transform, false);
+            // _root, NEVER `transform` — see the field's note. `transform` is WorldBuilder's, and a
+            // reseed destroys its children.
+            go.transform.SetParent(_root, false);
             var ps = go.AddComponent<ParticleSystem>();
             ps.Stop();
 
@@ -321,6 +364,55 @@ namespace Metoh.Game
             m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
             m.DisableKeyword("_ALPHATEST_ON");
             m.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        }
+
+        /// <summary>
+        /// Soft particles + near-camera fade.
+        ///
+        /// WHAT THIS FIXES. A billboard is a flat quad, so where a flake passes through the snowpack,
+        /// a trunk or the hut wall it gets sliced by the depth test and terminates in a hard straight
+        /// line across its own face. At the flake sizes here that line is very nearly the whole
+        /// particle, so every flake landing anywhere near a surface reads as a little white polygon
+        /// rather than as snow — which is loudest exactly where snow matters most, in the metre of
+        /// ground in front of you that the torch is lighting. Soft particles fade the quad out as it
+        /// approaches the depth behind it, and the slice disappears.
+        ///
+        /// The camera fade is the same problem at the other end. The snow volume is re-centred on the
+        /// camera every frame, so flakes are constantly being born close to the lens; without a near
+        /// fade one occasionally spawns a few centimetres away and covers a large part of the screen
+        /// in a single frame. That reads as a flash, not as weather.
+        ///
+        /// WHY BOTH THE FLOATS AND THE PACKED VECTORS ARE WRITTEN. URP's particle shaders read
+        /// `_SoftParticleFadeParams` / `_CameraFadeParams` — the individual distances are inspector
+        /// properties that the material's custom GUI packs into those vectors. **No material GUI runs
+        /// at runtime**, so setting only the friendly floats configures nothing and setting only the
+        /// vectors leaves a material that lies about itself in the inspector. Same family of trap as
+        /// SetTransparent above: URP does not derive this state from any one property.
+        ///
+        /// Requires `_CameraDepthTexture`, i.e. Depth Texture on the URP asset. That is a checkbox on
+        /// an untracked asset, so `Metoh → Configure Render Pipeline` asserts it rather than assuming.
+        /// If it is off, soft particles do not error — they simply stop being soft.
+        /// </summary>
+        private static void SetSoftParticles(Material m)
+        {
+            // Fade over the last 0.75 m of approach to whatever is behind. Short on purpose: a long
+            // fade dims flakes that are merely near a wall, which thins the snow out indoors and in
+            // the crevasse throats — precisely where the near field is doing the most work.
+            const float softNear = 0f, softFar = 0.75f;
+            m.SetFloat("_SoftParticlesEnabled", 1f);
+            m.SetFloat("_SoftParticlesNearFadeDistance", softNear);
+            m.SetFloat("_SoftParticlesFarFadeDistance", softFar);
+            m.SetVector("_SoftParticleFadeParams", new Vector4(softNear, 1f / Mathf.Max(0.0001f, softFar - softNear), 0f, 0f));
+            m.EnableKeyword("_SOFTPARTICLES_ON");
+
+            // Fully gone at 0.3 m, full strength by 0.9 m — inside arm's reach, so nothing a player is
+            // actually looking at is ever touched by this.
+            const float camNear = 0.3f, camFar = 0.9f;
+            m.SetFloat("_CameraFadingEnabled", 1f);
+            m.SetFloat("_CameraNearFadeDistance", camNear);
+            m.SetFloat("_CameraFarFadeDistance", camFar);
+            m.SetVector("_CameraFadeParams", new Vector4(camNear, 1f / Mathf.Max(0.0001f, camFar - camNear), 0f, 0f));
+            m.EnableKeyword("_FADING_ON");
         }
     }
 }

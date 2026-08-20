@@ -782,7 +782,11 @@ namespace Metoh.Game
                                     float tiling, float strength)
         {
             var shader = Shader.Find("Metoh/TreeSway");
-            if (shader == null) return Surface(color, smoothness, normal, normalScale, tiling);
+            if (shader == null)
+            {
+                BootReport.MissingShader("Metoh/TreeSway", "the forest is rigid — no wind sway at all");
+                return Surface(color, smoothness, normal, normalScale, tiling);
+            }
 
             var m = new Material(shader);
             m.SetColor("_BaseColor", color);

@@ -250,6 +250,20 @@ UI pass should move to UI Toolkit/uGUI with real anchors.
 Also: overlays that reserve screen space must account for each other. The map frame centres in the
 space left *after* the HUD's top bar, or its title runs straight through the clock.
 
+**Draw through `MenuUI`, never `GUI.skin`.** IMGUI is not what makes a screen look a decade old — the
+built-in skin is: `GUI.skin.button` is the grey bevelled 2005 button and every control that inherits
+it drags that decade along whatever the layout does. `MenuUI` (`Scripts/Game/MenuUI.cs`) is the house
+kit the title screen was rebuilt on: generated antialiased textures (disc, 9-sliced rounded rect,
+alpha ramps) tinted per call, an OS font borrowed via `Font.CreateDynamicFontFromOSFont`, letter
+tracking that IMGUI has no notion of, and hand-drawn sliders/switches/chips/fields that keep only
+Unity's *behaviour* (drag bookkeeping, text editing) under backgroundless styles. Everything is built
+once and cached — a `new GUIStyle` or `new Texture2D` in a draw path is 60–120 allocations a second,
+because OnGUI runs at least twice a frame. That double-pass is also why **anything animated is
+stepped in `Update` and only read in OnGUI**, and why keyboard activation is consumed on the repaint
+pass only: a timer stepped in OnGUI runs at double speed and an action fired there fires twice (the
+same shape as the `[H]` card that toggled itself back off). `HPHud` still draws through the stock
+skin and is the next thing to move over when its turn comes.
+
 **Worst case seen:** the title screen's settings page grew to ten rebindable actions and pushed its
 own BACK button off the bottom of a 1133×528 window — **no way out of the menu at all**. Two lessons:
 a page that grows with content must **scroll**, and any escape control (BACK, CLOSE, CONFIRM) belongs
@@ -903,6 +917,116 @@ moving thing at the mouth.
 > now takes `xScale`/`yScale`/`zScale` and bakes proportions into the mesh. Same class of problem as
 > the `AddBox` UV stretch in [camp-gfx].
 
+## [pipeline-gaps] Anti-aliasing, soft particles, the torch cookie — 2026-08-15
+
+A pass looking for cheap graphics wins across the whole build rather than in one area. What it found
+has a theme worth naming up front: **three of the four were settings that were never turned on, not
+art that was drawn badly.** That is now the third pass in a row where the largest available gain was
+an unclaimed switch ([legibility]'s render scale and detail threshold, [snow-glitter]'s HDR, and
+these) — so when the next report says the game looks cheap, audit the switches *before* the art.
+
+### The game had no anti-aliasing at all
+
+MSAA is switched off in `HPQuality` (correct — it is a real cost on integrated graphics) and **nothing
+was ever put in its place.** No post-process AA was configured anywhere in the project, so since
+[legibility] moved render scale to native 1.0, every edge in the frame has been a raw hard step.
+
+It hurts this scene more than it would hurt most, for two compounding reasons:
+
+- **This build is nearly all thin geometry** — and [tower-trees-caves] made it *more* so. Ladder
+  stiles, tower cross-bracing, icicles, the conifer crowns' jagged outline, the skybox ridgeline.
+  A one-pixel feature either lands on a pixel centre or it does not, so it crawls and shimmers under
+  any camera motion. The cross-bracing was added precisely because a lattice is the cheapest
+  silhouette win, and an aliased lattice sparkles.
+- **[legibility] established that at night, fogged, the silhouette is very nearly all the information
+  reaching the player.** So the aliased edge is not a blemish somewhere in the image — it sits
+  directly on top of the one cue the entire art direction is being read through.
+
+`PostFX.ApplyCameraSettings()` now sets **SMAA (high) on the expensive tier, FXAA on the cheap one**.
+SMAA rather than FXAA at the top because FXAA is a luma-contrast blur and it softens exactly the fine
+normal-map grain [materials] is built on — the same detail render scale 0.7 was already found to be
+dissolving. SMAA reconstructs edges from a shape pattern and leaves interior texture alone. The cheap
+tier is already upscaling, so its edges are soft anyway and FXAA is close enough to free to keep.
+
+It is **re-applied from `HPQuality.ApplyRenderScale`**, not set once in `Awake`, for the same reason
+`ApplyShadowQuality` is: the pause-menu slider can move the tier at runtime, and a look that is only
+established at bootstrap is a look the settings menu silently strips. `[HPQuality]`'s startup line now
+reports the AA mode alongside HDR, so a play-test log says which one was live.
+
+### Soft particles — snow was being sliced into white polygons
+
+A billboard is a flat quad, so wherever a flake passed through the snowpack, a trunk or the hut wall,
+the depth test cut it off in a **hard straight line across its own face**. At the flake sizes in
+`Weather` that line is very nearly the whole particle, so every flake near a surface read as a small
+white polygon rather than as snow — loudest exactly where snow matters most, in the metre of lit
+ground in front of you. `Weather.SetSoftParticles` fades the quad out as it approaches the depth
+behind it. A near-camera fade came with it: the snow volume re-centres on the camera every frame, so
+flakes are constantly born close to the lens, and one spawning a few centimetres away covers much of
+the screen for a frame — which reads as a flash, not as weather.
+
+> **The trap, and it is the same shape as `SetTransparent` right above it.** URP's particle shaders
+> read the packed vectors `_SoftParticleFadeParams` / `_CameraFadeParams`; the friendly per-distance
+> floats are *inspector* properties that the material's custom GUI packs into those vectors. **No
+> material GUI runs at runtime.** Setting only the floats configures nothing at all and fails
+> silently. Both are written — the vectors so it works, the floats so the material does not lie about
+> itself to anyone who opens it in the inspector.
+
+Depends on `_CameraDepthTexture`, which is a checkbox on an untracked asset, so
+`Metoh → Configure Render Pipeline` now asserts `m_RequireDepthTexture` rather than assuming it —
+otherwise the failure mode is the usual one: no error, the snow just quietly stops being soft.
+
+### A cookie on the torch
+
+The searcher's headtorch is the most-looked-at light in the game and it projected a **perfect
+mathematical disc**. Real torches never do: reflectors have facets, and a lens picks up frost and
+grease within minutes at this altitude. `ProcTex.TorchCookie` builds one in the existing procedural
+idiom — soft irregular edge, reflector facets as a slow angular ripple, two octaves of lens grime,
+and a dim outer halo so the beam is not a cut-out. It also does real work for [legibility]: the torch
+pool is what a searcher reads the terrain's value range *through*, and a flat disc carries no
+information about the surface it lands on.
+
+Two constraints shaped the shape, both worth keeping if it is ever retuned:
+
+- **A cookie multiplies the light's own angular falloff**, which here is already a real one
+  (`innerSpotAngle` 38 inside `spotAngle` 62). An aggressive cookie edge darkens the rim twice and
+  shrinks the usable pool — a **stealth nerf to the searchers' main tool, dressed as an art change**.
+  The core therefore stays at full brightness and all of the character lives in the outer third.
+- **Clamp wrapping is not optional.** URP packs cookies into an atlas; a Repeat cookie bleeds its
+  opposite edge into neighbouring tiles.
+
+### `Metoh → Configure Render Pipeline` had never been run — and only covered half the project
+
+Checked against the live assets: both `PC_RPAsset` and `Mobile_RPAsset` still read
+`m_ColorGradingMode: 0` (**LDR**, the exact problem [materials] describes — ACES grading after the
+image has already been crushed to 0..1, so every specular hit on snow and every lamp in camp clipped
+flat white), `m_ShadowDistance: 50`, and the SSAO on `PC_Renderer` was the **URP template's own**
+(`Intensity 0.4`, `Falloff 100`, `AfterOpaque 0`, `Downsample 0`) rather than the values `TuneSsao`
+writes. `Mobile_Renderer` had no SSAO at all.
+
+Writing the script in [legibility] turned a documentation problem into a one-click problem. It did
+not turn it into a solved one, and nobody clicked for two weeks. **It has now been run** (headlessly,
+via `-executeMethod Metoh.EditorTools.RenderPipelineSetup.Configure` — it needs no editor session):
+7 changes across 2 assets.
+
+The script also had a real gap. It configured only `GraphicsSettings.currentRenderPipeline`, but the
+template ships **one pipeline asset per quality level** and `currentRenderPipeline` is merely whichever
+one the editor is sitting on. So the configuration survived exactly until someone moved the quality
+dropdown, with no error and no obvious cause. It now walks every asset reachable from
+`QualitySettings` plus the graphics default — the same argument the file already made one level down
+about renderers ("configuring only index 0 is a coin flip"), applied one level up.
+
+> **Not a problem, checked while in there:** `PC_Renderer` is `m_RenderingMode: 2` = **Forward+**, so
+> the `m_AdditionalLightsPerObjectLimit: 4` sitting on the asset does not apply — camp can have the
+> fire, porch lamp, duffel lamp, brazier and five torches without objects dropping lights. On the
+> Mobile renderer (plain Forward, mode 0) that limit *is* live, which is one more reason the two
+> assets must not be assumed to behave alike.
+
+**Unverified in Play mode**, all of it — same standing caveat as every pass before it. Compile and
+shader import are proven (headless `SetUpScene`: 0 `error CS`, 0 shader errors); nothing here has been
+looked at in motion. The two most likely to need a nudge are the cookie's grime contrast (0.90–1.00,
+deliberately timid) and the soft-particle fade distance (0.75 m — long fades thin the snow out inside
+the crevasse throats, which is where the near field earns the most).
+
 ## [import] Importing character models — the seam, and how to use it
 
 Bodies are generated at runtime so that cloning the repo and pressing play works with no asset files in
@@ -1264,11 +1388,15 @@ Buffered, flushed once a second and forced at night rollover and match end.
   error is usually several steps upstream of the reported one.
 - **Re-run "Metoh → Set Up Game Scene (Mountain)"** whenever the scene gains a component or a
   spawnable prefab. The scene has no hand-made content; rebuilding it costs nothing.
-- **Run "Metoh → Configure Render Pipeline" once per clone** (and after any URP upgrade). It adds the
-  SSAO renderer feature and sets HDR colour grading, a 32³ LUT and 4 shadow cascades. These live on
-  `.asset` files the repo does not track, so a fresh live project does not have them — and every one
-  of them is the kind of setting whose absence looks like an art problem rather than a missing step.
-  Idempotent, and it logs what it changed.
+- **Run "Metoh → Configure Render Pipeline" once per clone** (and after any URP upgrade). It adds and
+  tunes the SSAO renderer feature and sets HDR colour grading, a 32³ LUT, 4 shadow cascades and the
+  depth texture, on **every** pipeline asset the quality levels can reach — not just the active one.
+  These live on `.asset` files the repo does not track, so a fresh live project does not have them —
+  and every one of them is the kind of setting whose absence looks like an art problem rather than a
+  missing step. Idempotent, and it logs what it changed. It needs no editor session:
+  `-executeMethod Metoh.EditorTools.RenderPipelineSetup.Configure`, same batchmode invocation as the
+  scene rebuild above. **Run on `Metoh_port` 2026-08-15 for the first time** — see [pipeline-gaps]
+  for what two weeks of not clicking it had cost.
 - `Metoh.Sim` collides with UnityEngine on `Collider`/`Collision` — qualify them.
 - FishNet 4.7.2 does not compile on Unity 6000.5 unpatched; see [`../unity/fishnet-patches/`](../unity/fishnet-patches/README.md).
 

@@ -143,14 +143,27 @@ namespace Metoh.Game
             string top = _scores[0].Name;
             if (top == Chosen) return Chosen;
 
-            // Still inside the dwell floor: refuse to switch at all.
-            if (Time.time - _chosenAt < BotBrainTuning.MinDwell) return Chosen;
-
-            // Outside the floor: the challenger must beat the incumbent by the commitment margin.
+            // Is the incumbent even on offer any more?
+            //
+            // This has to be asked BEFORE the commitment rules, because Consider() drops anything
+            // scoring at or below zero — an action that has become INAPPLICABLE is not a low score,
+            // it is absent. Looking it up and defaulting to 0f (which is what this did) meant a
+            // challenger had to clear 0 + CommitBonus to unseat something that was no longer being
+            // offered at all, so any candidate below 0.12 lost to a dead action and the bot sat in it.
+            // Commitment is for arguing between things it COULD do; it must never defend a rung that
+            // has fallen away.
             float incumbent = 0f;
+            bool stillOffered = false;
             for (int i = 0; i < _scores.Count; i++)
-                if (_scores[i].Name == Chosen) { incumbent = _scores[i].Score; break; }
-            if (_scores[0].Score < incumbent + BotBrainTuning.CommitBonus) return Chosen;
+                if (_scores[i].Name == Chosen) { incumbent = _scores[i].Score; stillOffered = true; break; }
+
+            if (stillOffered)
+            {
+                // Still inside the dwell floor: refuse to switch at all.
+                if (Time.time - _chosenAt < BotBrainTuning.MinDwell) return Chosen;
+                // Outside the floor: the challenger must beat the incumbent by the commitment margin.
+                if (_scores[0].Score < incumbent + BotBrainTuning.CommitBonus) return Chosen;
+            }
 
             Bank();              // credit the outgoing action before it stops being current
             Chosen = top;

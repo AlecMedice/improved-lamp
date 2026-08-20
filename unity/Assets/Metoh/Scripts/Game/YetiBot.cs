@@ -149,20 +149,28 @@ namespace Metoh.Game
             // Console row per second, times five bots. Literals only — LateUpdate compares by reference.
             if (!InstanceFinder.IsServerStarted) { Force("off: not server"); return; }
             if (_self == null) return;
+
+            float dt = Mathf.Min(Time.deltaTime, 0.1f);
+
+            // BEFORE EVERY REMAINING EARLY-OUT, and that ordering is load-bearing: this measures
+            // distance/dt, so skipping it while the sim is halted freezes the sample but not dt, and
+            // the first frame after resuming divides a whole halt of travel by one frame. Every
+            // searcher then reads as sprinting and the bot "hears" the entire map the instant it
+            // resumes.
+            //
+            // It used to sit BELOW the phase/intermission/status guards, which is the same bug with a
+            // longer fuse: the between-nights recap is a 30-second halt, so the bot opened every night
+            // after the first with a free sprint-range hearing sweep over the whole team. (The clamp
+            // in PerceiveSearcher caps the damage at the 30 m sprint band rather than the map, which
+            // is why it never announced itself.) See BotPerception.SampleSpeeds.
+            _senses.SampleSpeeds(dt);
+
             if (!_self.IsBot) { Force("off: not a bot"); return; }
             var gm = GameManager.Instance;
             if (gm == null) { Force("off: no manager"); return; }
             if (gm.MatchPhase.Value != GameManager.PhasePlaying) { Force("off: not playing"); return; }
             if (gm.IntermissionActive) { Force("off: intermission"); return; }
             if (_self.Status.Value != HPPlayer.StatusActive) { Force("off: not active"); return; }
-
-            float dt = Mathf.Min(Time.deltaTime, 0.1f);
-
-            // BEFORE the pause check, and that ordering is load-bearing: this measures distance/dt, so
-            // skipping it while paused freezes the sample but not dt, and the first frame after
-            // unpausing divides a whole pause of travel by one frame. Every searcher then reads as
-            // sprinting and the bot "hears" the entire map the instant you let it go.
-            _senses.SampleSpeeds(dt);
 
             // DEV freeze (F3). After the guards, before any steering: perception and scoring never run,
             // so the bot holds position AND holds its last state, which is what makes it inspectable.

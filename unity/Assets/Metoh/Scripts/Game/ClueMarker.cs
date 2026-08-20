@@ -82,6 +82,56 @@ namespace Metoh.Game
         {
             Castables.Remove(this);
             Hairs.Remove(this);
+            ReleaseMaterials();
+        }
+
+        /// <summary>
+        /// Destroy this clue's own materials. `new Material(...)` is a native object Unity's GC never
+        /// collects and destroying the GameObject does not take it with you — so every print, branch
+        /// and tuft leaked one to three of them, for the whole match.
+        ///
+        /// THE VOLUME IS WHAT MAKES THIS MATTER. Clues are not props; they are spawned and despawned
+        /// continuously by design. Five searchers printing at a 2.4 m stride against a 120-print cap,
+        /// plus the Yeti's own trail against an 80-clue cap, is on the order of ten thousand of these
+        /// over three nights. The meshes are handled separately (see SharedMesh — every footprint is
+        /// geometrically identical, so they are cached rather than rebuilt); the materials cannot be,
+        /// because Update fades each one independently as its trail goes cold.
+        ///
+        /// OnDestroy as well as OnStopClient: a clue can die without a clean despawn, and running this
+        /// twice is free — Unity's null check catches the already-destroyed pass.
+        /// </summary>
+        private void ReleaseMaterials()
+        {
+            for (int i = 0; i < _mats.Count; i++)
+                if (_mats[i] != null) Destroy(_mats[i]);
+            _mats.Clear();
+            _baseCols.Clear();
+            _emisCols.Clear();
+        }
+
+        private void OnDestroy()
+        {
+            ReleaseMaterials();
+        }
+
+        // --- shared geometry -------------------------------------------------------------
+        //
+        // Every clue of a given kind is the SAME SHAPE. The pad/slab/strand variants are hashed from
+        // hard-coded local offsets, not from world position, so a footprint's sole mesh is byte for
+        // byte the sole mesh of every other footprint in the match. Building it fresh each time was
+        // ~20,000 Mesh allocations a match, none of them released. One cache, keyed by the parameters
+        // that actually vary, and the whole class costs a dozen meshes for the session.
+        //
+        // Static, and lazily re-created: entering play mode destroys them, and the `== null` check is
+        // what makes the next session rebuild rather than hand out a dead reference.
+        private static readonly Dictionary<string, Mesh> SharedMeshes = new Dictionary<string, Mesh>();
+
+        private static Mesh SharedMesh(string key, System.Func<Mesh> build)
+        {
+            if (SharedMeshes.TryGetValue(key, out Mesh m) && m != null) return m;
+            m = build();
+            SharedMeshes[key] = m;
+            return m;
         }
 
         public override void OnStartClient()
@@ -116,7 +166,8 @@ namespace Metoh.Game
                     var rim = new GameObject("Rim");
                     rim.transform.SetParent(root, false);
                     rim.transform.localPosition = new Vector3(0f, 0.012f, 0.16f);
-                    rim.AddComponent<MeshFilter>().sharedMesh = MeshUtil.EllipseDisc(0.46f, 0.62f, 16);
+                    rim.AddComponent<MeshFilter>().sharedMesh =
+                        SharedMesh("rim", () => MeshUtil.EllipseDisc(0.46f, 0.62f, 16));
                     rim.AddComponent<MeshRenderer>().sharedMaterial = MeshUtil.Lit(MeshUtil.Rgb(0xe4eef5));
 
                     var glint = GameObject.CreatePrimitive(PrimitiveType.Sphere);
@@ -168,7 +219,8 @@ namespace Metoh.Game
                     strand.transform.SetParent(root, false);
                     strand.transform.localPosition = new Vector3(-0.03f + i * 0.025f, 0.74f + i * 0.015f, 0.02f);
                     strand.transform.localRotation = Quaternion.Euler(64f + i * 9f, 30f * i, 0f);
-                    strand.AddComponent<MeshFilter>().sharedMesh = MeshUtil.TaperedCylinder(0.022f, 0.004f, 0.26f, 4);
+                    strand.AddComponent<MeshFilter>().sharedMesh =
+                        SharedMesh("strand", () => MeshUtil.TaperedCylinder(0.022f, 0.004f, 0.26f, 4));
                     strand.AddComponent<MeshRenderer>().sharedMaterial = fur;
                 }
 
@@ -286,8 +338,9 @@ namespace Metoh.Game
             // Variant hashed from the placement, so the two pads of one print differ from each other
             // and from the next print along the trail, with no RNG stream involved.
             int variant = Mathf.RoundToInt((pos.x * 977f + pos.z * 331f) * 100f);
-            go.AddComponent<MeshFilter>().sharedMesh =
-                MeshUtil.Blob(size.x * 0.5f, size.y * 0.5f, size.z * 0.5f, 5, 9, variant, 0.16f);
+            go.AddComponent<MeshFilter>().sharedMesh = SharedMesh(
+                $"pad:{size.x}:{size.y}:{size.z}:{variant}",
+                () => MeshUtil.Blob(size.x * 0.5f, size.y * 0.5f, size.z * 0.5f, 5, 9, variant, 0.16f));
             go.AddComponent<MeshRenderer>().sharedMaterial = mat;
         }
 
@@ -304,7 +357,8 @@ namespace Metoh.Game
             go.transform.localPosition = pos;
             go.transform.localRotation = rot;
             int variant = Mathf.RoundToInt((pos.x * 613f + pos.z * 149f) * 100f);
-            go.AddComponent<MeshFilter>().sharedMesh = MeshUtil.Rock(1f, 5, 8, variant);
+            go.AddComponent<MeshFilter>().sharedMesh =
+                SharedMesh($"slab:{variant}", () => MeshUtil.Rock(1f, 5, 8, variant));
             go.transform.localScale = size;
             go.AddComponent<MeshRenderer>().sharedMaterial = mat;
         }
@@ -315,7 +369,8 @@ namespace Metoh.Game
             go.transform.SetParent(parent, false);
             go.transform.localPosition = pos;
             go.transform.localRotation = rot;
-            go.AddComponent<MeshFilter>().sharedMesh = MeshUtil.TaperedCylinder(0.035f, 0.028f, len, 5);
+            go.AddComponent<MeshFilter>().sharedMesh =
+                SharedMesh($"stick:{len}", () => MeshUtil.TaperedCylinder(0.035f, 0.028f, len, 5));
             go.AddComponent<MeshRenderer>().sharedMaterial = mat;
         }
     }

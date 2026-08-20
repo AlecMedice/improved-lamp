@@ -12,6 +12,15 @@
 // A menu command fixes that class of problem properly. It is idempotent, it reports what it changed,
 // and it can be re-run after any Unity upgrade or project re-clone.
 //
+// **AND IT HAS NEVER BEEN RUN.** Checked against the live project on 2026-08-15: both `PC_RPAsset`
+// and `Mobile_RPAsset` still read `m_ColorGradingMode: 0` (LDR) and `m_ShadowDistance: 50`, and the
+// SSAO on `PC_Renderer` is the URP template's own — `Intensity 0.4`, `Falloff 100`, `AfterOpaque 0`,
+// `Downsample 0` — not the values TuneSsao writes. So the LDR-grading problem this file's header
+// describes is still live, and the AO is both untuned for snow and running on the expensive path.
+// Writing the script turned a documentation problem into a one-click problem; it did not turn it
+// into a solved one. **Run Metoh → Configure Render Pipeline.** If a future reader finds this
+// paragraph still accurate, the answer is still the same one click.
+//
 // AMBIENT OCCLUSION IS THE POINT. AO is the effect that visually GROUNDS things: contact shadow in
 // the crease where a trunk meets snow, under a ledge, inside a crevasse mouth. Without it every prop
 // and every figure reads as hovering slightly above the ground rather than sitting in it, and that
@@ -31,8 +40,8 @@ namespace Metoh.EditorTools
         [MenuItem("Metoh/Configure Render Pipeline")]
         public static void Configure()
         {
-            var urp = GraphicsSettings.currentRenderPipeline as UniversalRenderPipelineAsset;
-            if (urp == null)
+            var assets = PipelineAssets();
+            if (assets.Length == 0)
             {
                 Debug.LogError("[RenderPipelineSetup] No UniversalRenderPipelineAsset is active. " +
                                "Project Settings → Graphics → Scriptable Render Pipeline Settings.");
@@ -40,14 +49,87 @@ namespace Metoh.EditorTools
             }
 
             int changes = 0;
-            changes += ConfigurePipelineAsset(urp);
-            changes += ConfigureRenderers(urp);
+            changes += DisableAsyncShaderCompilation();
+            foreach (var urp in assets)
+            {
+                changes += ConfigurePipelineAsset(urp);
+                changes += ConfigureRenderers(urp);
+            }
 
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
             Debug.Log(changes == 0
-                ? "[RenderPipelineSetup] Already configured — nothing to change."
-                : $"[RenderPipelineSetup] Applied {changes} change(s). Enter Play mode to see them.");
+                ? $"[RenderPipelineSetup] Already configured — nothing to change ({assets.Length} asset(s) checked)."
+                : $"[RenderPipelineSetup] Applied {changes} change(s) across {assets.Length} asset(s). " +
+                  "Enter Play mode to see them.");
+        }
+
+        /// <summary>
+        /// Every URP asset this project can end up rendering through, not just the active one.
+        ///
+        /// The template ships a pipeline asset PER QUALITY LEVEL — here `PC_RPAsset` and
+        /// `Mobile_RPAsset` — and `currentRenderPipeline` is only whichever one the editor happens to
+        /// be sitting on. Configuring that alone means the settings survive exactly until someone
+        /// moves the quality dropdown, at which point the whole look silently reverts with no error
+        /// and no obvious cause. This is the same argument <see cref="ConfigureRenderers"/> already
+        /// makes one level down about renderers, applied one level up.
+        /// </summary>
+        private static UniversalRenderPipelineAsset[] PipelineAssets()
+        {
+            var found = new System.Collections.Generic.List<UniversalRenderPipelineAsset>();
+            void Add(RenderPipelineAsset a)
+            {
+                if (a is UniversalRenderPipelineAsset u && !found.Contains(u)) found.Add(u);
+            }
+
+            Add(GraphicsSettings.defaultRenderPipeline);
+            Add(GraphicsSettings.currentRenderPipeline);
+            for (int i = 0; i < QualitySettings.count; i++) Add(QualitySettings.GetRenderPipelineAssetAt(i));
+            return found.ToArray();
+        }
+
+        // ------------------------------------------------------------------ editor-only
+
+        /// <summary>
+        /// Turn OFF the editor's asynchronous shader compilation.
+        ///
+        /// THIS IS THE "BROKEN FIRST LOAD" (owner report, 2026-08-15: *"every time it rebuilds the
+        /// scene the first loading screen is always broken"*, and *"all the trees were neon blue until
+        /// I alt-tabbed away"*). Both are one thing.
+        ///
+        /// With async compilation on, the editor does NOT wait for a shader variant to be ready before
+        /// drawing with it. It renders the object in a flat placeholder colour — the neon blue — or,
+        /// for something like the skybox, skips the draw entirely, which leaves whatever was already
+        /// in the framebuffer. That is the rectangular black-and-stale tiles across the title screen:
+        /// not corruption, just regions nothing wrote this frame. Compilation finishes in the
+        /// background, so it always "fixes itself" after a few seconds or an alt-tab, which is exactly
+        /// what makes it read as a flaky renderer rather than as a build step.
+        ///
+        /// It fires on the FIRST load after any shader reimport — i.e. every scene rebuild, and every
+        /// time one of the four Metoh shaders is edited — which is precisely the moment somebody is
+        /// looking at the title screen to judge whether an art change landed.
+        ///
+        /// So the trade is deliberate: with this off, the editor STALLS while variants compile instead
+        /// of showing garbage. Same wait, but the screen stays honest, and a stall is unambiguous where
+        /// a neon tree is indistinguishable from a real shader bug. This whole codebase is written
+        /// against the rule that a silent degradation is worse than a loud stop ([legibility]) — this
+        /// is that rule applied to the editor itself.
+        ///
+        /// Editor-only: it has no effect on a built player, which always compiles ahead. If the stalls
+        /// become intolerable while iterating on shaders, flip it back in
+        /// Edit → Preferences → Asset Pipeline; nothing depends on it being off.
+        /// </summary>
+        /// <summary>Public entry point, so GameSceneSetup can assert it too.</summary>
+        internal static void DisableAsyncShaderCompilationIfNeeded() => DisableAsyncShaderCompilation();
+
+        private static int DisableAsyncShaderCompilation()
+        {
+            if (!EditorSettings.asyncShaderCompilation) return 0;
+            EditorSettings.asyncShaderCompilation = false;
+            Debug.Log("[RenderPipelineSetup] async shader compilation = OFF — the editor now waits for " +
+                      "variants instead of drawing neon-blue placeholders and stale framebuffer tiles " +
+                      "on the first load after a shader reimport.");
+            return 1;
         }
 
         // ------------------------------------------------------------------ pipeline asset
@@ -83,6 +165,13 @@ namespace Metoh.EditorTools
             // where the player is looking.
             changed += SetInt(so, "m_ShadowCascadeCount", 4, "shadow cascades = 4");
             changed += SetFloat(so, "m_ShadowDistance", 55f, "shadow distance = 55 m");
+
+            // Depth texture. `Weather`'s soft particles sample `_CameraDepthTexture` to fade a flake
+            // out as it approaches whatever is behind it, instead of being sliced by the depth test
+            // into a hard-edged white polygon. URP only generates that texture if something declares
+            // it needs it, and "something" here is a checkbox on an untracked asset — so the failure
+            // mode is the usual one for this file: no error, the snow just quietly stops being soft.
+            changed += SetBool(so, "m_RequireDepthTexture", true, "depth texture = on");
 
             if (changed > 0) so.ApplyModifiedPropertiesWithoutUndo();
             return changed;
@@ -206,6 +295,15 @@ namespace Metoh.EditorTools
         private static int SetEnum(SerializedObject so, string path, int value, string label)
         {
             return SetInt(so, path, value, label);
+        }
+
+        private static int SetBool(SerializedObject so, string path, bool value, string label)
+        {
+            var p = so.FindProperty(path);
+            if (p == null || p.boolValue == value) return 0;
+            p.boolValue = value;
+            Debug.Log($"[RenderPipelineSetup] {label}");
+            return 1;
         }
 
         private static int SetFloat(SerializedObject so, string path, float value, string label)

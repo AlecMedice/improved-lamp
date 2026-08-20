@@ -159,6 +159,29 @@ namespace Metoh.Game
             _roarAt = Time.time;
         }
 
+        /// <summary>
+        /// Key polling lives HERE, never in OnGUI.
+        ///
+        /// OnGUI runs at least twice a frame (Layout and Repaint, plus one pass per input event), and
+        /// `wasPressedThisFrame` is frame-scoped — it reports true on every one of those passes. So
+        /// `_showHelp = !_showHelp` inside OnGUI toggled an even number of times per frame and netted
+        /// out to nothing: the [H] controls card could not be opened at all. It read as a missing
+        /// feature rather than as a bug, which is why it survived. Update runs exactly once a frame.
+        /// (HPDebug's F3 and MapView's map key were already on this side of the line.)
+        /// </summary>
+        private void Update()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var kb = UnityEngine.InputSystem.Keyboard.current;
+            if (kb == null) return;
+            var gm = GameManager.Instance;
+            // Same gate DrawHelpToggle draws under: in a match, and not in the lobby.
+            if (gm == null || !InstanceFinder.IsClientStarted) return;
+            if (gm.MatchPhase.Value == GameManager.PhaseLobby || HPPlayer.Local == null) return;
+            if (kb.hKey.wasPressedThisFrame) _showHelp = !_showHelp;
+#endif
+        }
+
         private void OnGUI()
         {
             var gm = GameManager.Instance;
@@ -1233,10 +1256,7 @@ namespace Metoh.Game
 
         private void DrawHelpToggle(HPPlayer me)
         {
-#if ENABLE_INPUT_SYSTEM
-            var kb = UnityEngine.InputSystem.Keyboard.current;
-            if (kb != null && kb.hKey.wasPressedThisFrame) _showHelp = !_showHelp;
-#endif
+            // The [H] toggle itself is polled in Update — see the note there.
             GUI.Label(new Rect(Screen.width - 150f, Screen.height - 24f, 145f, 22f), "[H] controls");
             if (!_showHelp) return;
 

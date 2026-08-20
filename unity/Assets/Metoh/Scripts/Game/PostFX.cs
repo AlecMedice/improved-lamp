@@ -91,11 +91,56 @@ namespace Metoh.Game
             vol.priority = 10f;
             vol.profile = profile;
 
+            ApplyCameraSettings();
+        }
+
+        /// <summary>
+        /// Camera-side render settings: post-processing on, and ANTI-ALIASING.
+        ///
+        /// **The game shipped with no anti-aliasing of any kind.** MSAA is switched off in `HPQuality`
+        /// for cost (it is a real cost on integrated graphics and that call is right), and no
+        /// post-process AA was ever put in its place — so since the legibility pass took render scale
+        /// to native 1.0, every edge in the frame has been a raw hard step.
+        ///
+        /// That hurts this scene more than most, for two reasons. This build is nearly all *thin*
+        /// geometry — ladder rungs, tower cross-bracing, icicles, the conifer crowns' jagged silhouette,
+        /// the skybox ridgeline — and thin geometry is exactly what aliases worst: a one-pixel-wide
+        /// feature either hits a pixel centre or it does not, so it crawls and shimmers as you turn.
+        /// And [legibility] established that at night, fogged, the SILHOUETTE is very nearly all the
+        /// information reaching the player, which means the aliased edge is not a blemish on the image,
+        /// it is sitting directly on top of the one cue the art is being read through.
+        ///
+        /// SMAA rather than FXAA on the tier that can afford it: FXAA is a luma-contrast blur and it
+        /// softens the fine normal-map grain [materials] is built on, which is the same detail render
+        /// scale 0.7 was already found to be dissolving. SMAA reconstructs edges from a shape pattern
+        /// instead and leaves interior texture alone. It costs well under a millisecond, which is a
+        /// fraction of what the bloom pass above already spends.
+        ///
+        /// Re-applied rather than set once, because the quality tier can move at runtime (the pause
+        /// menu slider) and because `Camera.main` is grabbed here at bootstrap — see `HPQuality`.
+        /// </summary>
+        public static void ApplyCameraSettings()
+        {
             var cam = Camera.main;
-            if (cam != null)
+            if (cam == null) return;
+            // HDR is AND-ed, not inherited: URP computes `isHdrEnabled` as the pipeline asset's
+            // supportsHDR AND this camera's allowHDR. HPQuality asserts the asset half and explains at
+            // length why — but a camera with allowHDR off defeats that assertion completely and in
+            // exactly the same silent way, guts bloom, ACES roll-off, split toning and the snowpack
+            // glitter, and errors nowhere. Asserting both halves is what actually closes it.
+            cam.allowHDR = true;
+            var data = cam.GetUniversalAdditionalCameraData();
+            data.renderPostProcessing = true;
+            if (HPQuality.HighDetail)
             {
-                var data = cam.GetUniversalAdditionalCameraData();
-                data.renderPostProcessing = true;
+                data.antialiasing = AntialiasingMode.SubpixelMorphologicalAntiAliasing;
+                data.antialiasingQuality = AntialiasingQuality.High;
+            }
+            else
+            {
+                // The cheap tier is already upscaling from a lower render scale, so its edges are soft
+                // to begin with and SMAA has less to find. FXAA is close enough to free to keep on.
+                data.antialiasing = AntialiasingMode.FastApproximateAntialiasing;
             }
         }
 

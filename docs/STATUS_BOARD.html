@@ -1,0 +1,1431 @@
+<title>Metoh Field Report</title>
+
+<style>
+/* ───────────────────────── tokens ─────────────────────────
+   Light is the primary world: cold survey paper, blue-black ink,
+   sodium-torch amber as the only warm thing on the page (chrome only,
+   never data). Status hues are a separate, validated set.          */
+:root{
+  --paper:#E7ECF0;
+  --surface:#F7F9FB;
+  --surface-2:#EFF3F6;
+  --ink:#0E161D;
+  --ink-2:#52626F;
+  --ink-3:#7C8A96;
+  --rule:#C6D0D9;
+  --rule-soft:#DCE3E9;
+  --accent:#B2650F;
+  --accent-soft:#F0E0CB;
+
+  --ok:#0F7A52;
+  --active:#2A5FC0;
+  --open:#BE3A24;
+  --ok-wash:#E2F1EA;
+  --active-wash:#E4EBF8;
+  --open-wash:#F8E5E1;
+
+  --shell:1220px;
+  --f-display:Bahnschrift,"DIN Condensed","DIN Alternate","Arial Narrow",
+              "Liberation Sans Narrow",sans-serif;
+  --f-body:Charter,"Bitstream Charter",Cambria,"Iowan Old Style",Georgia,serif;
+  --f-data:"Cascadia Mono","SF Mono",Consolas,ui-monospace,"Liberation Mono",monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --paper:#0A1015;
+    --surface:#141C24;
+    --surface-2:#19232C;
+    --ink:#E2EAF1;
+    --ink-2:#93A3B1;
+    --ink-3:#6A7A88;
+    --rule:#25313C;
+    --rule-soft:#1D2831;
+    --accent:#E9A24E;
+    --accent-soft:#3A2C17;
+
+    --ok:#22A177;
+    --active:#4E88DE;
+    --open:#DC6250;
+    --ok-wash:#12281F;
+    --active-wash:#141F30;
+    --open-wash:#2B1712;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0A1015;
+  --surface:#141C24;
+  --surface-2:#19232C;
+  --ink:#E2EAF1;
+  --ink-2:#93A3B1;
+  --ink-3:#6A7A88;
+  --rule:#25313C;
+  --rule-soft:#1D2831;
+  --accent:#E9A24E;
+  --accent-soft:#3A2C17;
+
+  --ok:#22A177;
+  --active:#4E88DE;
+  --open:#DC6250;
+  --ok-wash:#12281F;
+  --active-wash:#141F30;
+  --open-wash:#2B1712;
+}
+
+/* ───────────────────────── base ───────────────────────── */
+*{box-sizing:border-box;}
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:var(--f-body);
+  font-size:16px;
+  line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+.shell{max-width:var(--shell);margin:0 auto;padding:0 28px;}
+p{margin:0;}
+a{color:inherit;}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+
+.eyebrow{
+  font-family:var(--f-display);
+  font-size:11px;
+  font-weight:600;
+  letter-spacing:.19em;
+  text-transform:uppercase;
+  color:var(--ink-3);
+  margin:0;
+}
+.num{font-family:var(--f-data);font-variant-numeric:tabular-nums;}
+
+/* ───────────────────────── header ───────────────────────── */
+header.band{
+  position:relative;
+  background:var(--surface);
+  border-bottom:1px solid var(--rule);
+  overflow:hidden;
+}
+#contours{
+  position:absolute;inset:0;width:100%;height:100%;
+  display:block;pointer-events:none;
+}
+.band .shell{position:relative;padding-top:44px;padding-bottom:38px;}
+.band-grid{
+  display:flex;flex-wrap:wrap;gap:32px;
+  align-items:flex-end;justify-content:space-between;
+}
+h1{
+  font-family:var(--f-display);
+  font-size:clamp(58px,10vw,104px);
+  font-weight:700;
+  line-height:.86;
+  letter-spacing:.005em;
+  margin:14px 0 0;
+  text-wrap:balance;
+}
+h1 .tick{color:var(--accent);}
+.tagline{
+  max-width:34ch;margin-top:16px;
+  color:var(--ink-2);font-size:17px;
+}
+
+.stamp{
+  border:1px solid var(--rule);
+  border-top:3px solid var(--accent);
+  background:var(--surface);
+  padding:16px 20px 15px;
+  min-width:268px;
+}
+.stamp dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:6px 18px;}
+.stamp dt{
+  font-family:var(--f-display);font-size:10.5px;font-weight:600;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);
+  align-self:center;
+}
+.stamp dd{
+  margin:0;text-align:right;font-family:var(--f-data);
+  font-size:12.5px;font-variant-numeric:tabular-nums;
+}
+.stamp dd.go{color:var(--ok);font-weight:700;}
+.stamp dd.no{color:var(--open);font-weight:700;}
+
+/* ───────────────────────── kpi strip ───────────────────────── */
+.kpis{
+  background:var(--surface);
+  border-bottom:1px solid var(--rule);
+}
+.kpi-row{
+  display:grid;
+  grid-template-columns:repeat(5,1fr);
+  border-left:1px solid var(--rule-soft);
+}
+.kpi{
+  padding:22px 22px 24px;
+  border-right:1px solid var(--rule-soft);
+}
+.kpi-val{
+  font-family:var(--f-display);
+  font-size:46px;font-weight:700;line-height:1;
+  font-variant-numeric:tabular-nums;
+  display:flex;align-items:baseline;gap:5px;
+}
+.kpi-val small{font-size:19px;font-weight:600;color:var(--ink-3);}
+.kpi-label{margin-top:9px;font-size:13.5px;color:var(--ink-2);line-height:1.4;}
+.kpi.flag .kpi-val{color:var(--open);}
+
+/* ───────────────────────── layout ───────────────────────── */
+main{padding:44px 0 0;}
+.two-col{
+  display:grid;
+  grid-template-columns:minmax(0,1.62fr) minmax(0,1fr);
+  gap:52px;
+  align-items:start;
+}
+section{margin-bottom:52px;}
+h2{
+  font-family:var(--f-display);
+  font-size:23px;font-weight:700;letter-spacing:.03em;
+  text-transform:uppercase;
+  margin:0 0 4px;
+  text-wrap:balance;
+}
+h2 + .sub{color:var(--ink-3);font-size:14px;margin-bottom:20px;}
+.hr{height:1px;background:var(--rule);margin:0 0 20px;}
+.hr.thick{height:2px;background:var(--ink);}
+
+/* ───────────────────────── bottom line ───────────────────────── */
+.verdict{
+  background:var(--surface);
+  border:1px solid var(--rule);
+  border-left:4px solid var(--accent);
+  padding:26px 30px 28px;
+}
+.verdict p + p{margin-top:14px;}
+.verdict strong{font-weight:700;}
+.pullout{
+  margin-top:22px;padding-top:20px;border-top:1px solid var(--rule-soft);
+  display:flex;gap:22px;align-items:baseline;flex-wrap:wrap;
+}
+.pullout .big{
+  font-family:var(--f-display);font-size:52px;font-weight:700;
+  line-height:.9;color:var(--open);font-variant-numeric:tabular-nums;
+}
+.pullout .cap{max-width:44ch;color:var(--ink-2);font-size:15px;}
+
+/* ───────────────────────── chips ───────────────────────── */
+.chip{
+  display:inline-flex;align-items:center;gap:6px;
+  font-family:var(--f-display);font-size:10.5px;font-weight:600;
+  letter-spacing:.13em;text-transform:uppercase;
+  padding:3px 9px 2px;border:1px solid currentColor;
+  white-space:nowrap;
+}
+.chip::before{
+  content:"";width:7px;height:7px;background:currentColor;flex:none;
+}
+.chip.ok{color:var(--ok);background:var(--ok-wash);}
+.chip.active{color:var(--active);background:var(--active-wash);}
+.chip.open{color:var(--open);background:var(--open-wash);}
+.chip.idle{color:var(--ink-3);background:var(--surface-2);}
+/* low severity: outline only, hollow marker — weight is the second encoding */
+.chip.low{color:var(--ink-2);background:transparent;}
+.chip.low::before{background:transparent;box-shadow:inset 0 0 0 1.5px currentColor;}
+
+/* ───────────────────────── changes ───────────────────────── */
+.change{
+  border:1px solid var(--rule);
+  background:var(--surface);
+  padding:20px 24px 22px;
+}
+.change + .change{margin-top:14px;}
+.change-head{
+  display:flex;gap:14px;align-items:flex-start;
+  justify-content:space-between;flex-wrap:wrap;
+  margin-bottom:10px;
+}
+.change h3{
+  font-family:var(--f-display);
+  font-size:19px;font-weight:700;letter-spacing:.02em;
+  margin:0;text-wrap:balance;flex:1 1 260px;
+}
+.change .when{
+  font-family:var(--f-data);font-size:11.5px;color:var(--ink-3);
+  letter-spacing:.02em;white-space:nowrap;
+}
+.change p{color:var(--ink-2);font-size:15.2px;}
+.change p + p{margin-top:10px;}
+.change .lands{
+  margin-top:14px;padding-top:12px;border-top:1px dashed var(--rule);
+  color:var(--ink);font-size:14.5px;
+}
+.change .lands b{
+  font-family:var(--f-display);font-size:10.5px;font-weight:600;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--accent);
+  display:block;margin-bottom:3px;
+}
+code{
+  font-family:var(--f-data);font-size:.86em;
+  background:var(--surface-2);padding:1px 5px;
+  border:1px solid var(--rule-soft);
+  overflow-wrap:break-word;
+}
+/* inside display type and dense rows, code keeps the face but drops the box */
+.gates code,.sub code,.change h3 code,.ask h3 code,.bar-top code,table.grid td.who code{
+  background:transparent;border:0;padding:0;font-size:.92em;
+}
+
+/* ───────────────────────── timeline ───────────────────────── */
+.tl{list-style:none;margin:0;padding:0 0 0 22px;border-left:2px solid var(--rule);}
+.tl li{position:relative;padding:0 0 26px 22px;}
+.tl li:last-child{padding-bottom:0;}
+.tl li::before{
+  content:"";position:absolute;left:-29px;top:9px;
+  width:11px;height:11px;background:var(--paper);
+  border:2px solid var(--ink-3);
+}
+.tl li.key::before{background:var(--accent);border-color:var(--accent);}
+.tl li.bad::before{background:var(--open);border-color:var(--open);}
+.tl .date{
+  font-family:var(--f-data);font-size:11.5px;color:var(--ink-3);
+  letter-spacing:.04em;display:block;
+}
+.tl .head{
+  font-family:var(--f-display);font-size:17px;font-weight:600;
+  letter-spacing:.02em;margin:1px 0 4px;
+}
+.tl p{font-size:14.8px;color:var(--ink-2);}
+
+/* ───────────────────────── panels (right rail) ───────────────────────── */
+.panel{
+  border:1px solid var(--rule);
+  background:var(--surface);
+  margin-bottom:26px;
+}
+.panel > h3{
+  font-family:var(--f-display);
+  font-size:12px;font-weight:600;letter-spacing:.17em;text-transform:uppercase;
+  margin:0;padding:13px 18px 11px;
+  border-bottom:1px solid var(--rule);
+  color:var(--ink-2);
+  display:flex;justify-content:space-between;gap:12px;align-items:baseline;
+}
+.panel > h3 span{font-family:var(--f-data);font-size:11px;letter-spacing:0;color:var(--ink-3);}
+.panel-body{padding:16px 18px 18px;}
+.panel-note{
+  padding:12px 18px 14px;border-top:1px solid var(--rule-soft);
+  font-size:13.4px;color:var(--ink-3);line-height:1.5;
+}
+
+.gates{list-style:none;margin:0;padding:0;}
+.gates li{
+  display:flex;align-items:center;gap:11px;
+  padding:9px 0;border-bottom:1px solid var(--rule-soft);
+  font-size:14.4px;
+}
+.gates li:last-child{border-bottom:0;}
+.gates .mark{
+  flex:none;width:18px;height:18px;display:grid;place-items:center;
+  font-family:var(--f-display);font-size:12px;font-weight:700;
+  border:1.5px solid currentColor;
+}
+.gates .pass{color:var(--ok);}
+.gates .fail{color:var(--open);}
+.gates .name{flex:1;color:var(--ink);}
+.gates .val{font-family:var(--f-data);font-size:11.5px;color:var(--ink-3);}
+
+/* single-hue magnitude bars — one series, direct-labelled, no legend */
+.bars{display:flex;flex-direction:column;gap:13px;}
+.bar-row .bar-top{
+  display:flex;justify-content:space-between;gap:12px;align-items:baseline;
+  font-size:14px;margin-bottom:5px;
+}
+.bar-row .bar-top .v{
+  font-family:var(--f-data);font-size:12.5px;font-variant-numeric:tabular-nums;
+  color:var(--ink-2);
+}
+.track{height:9px;background:var(--surface-2);border:1px solid var(--rule-soft);}
+.fill{height:100%;background:var(--active);border-radius:0 4px 4px 0;}
+.fill.ok{background:var(--ok);}
+.fill.idle{background:var(--ink-3);}
+
+.ledger{width:100%;border-collapse:collapse;font-size:14px;}
+.ledger th{
+  font-family:var(--f-display);font-size:10.5px;font-weight:600;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);
+  text-align:right;padding:0 0 8px;border-bottom:1px solid var(--rule);
+}
+.ledger th:first-child{text-align:left;}
+.ledger td{
+  padding:8px 0;border-bottom:1px solid var(--rule-soft);
+  text-align:right;font-family:var(--f-data);font-size:13px;
+  font-variant-numeric:tabular-nums;
+}
+.ledger td:first-child{text-align:left;font-family:var(--f-body);font-size:14.4px;}
+.ledger tr:last-child td{border-bottom:0;}
+.ledger tfoot td{
+  border-top:2px solid var(--ink);border-bottom:0;font-weight:700;color:var(--ink);
+  padding-top:9px;
+}
+
+/* ───────────────────────── phase + risk tables ───────────────────────── */
+.tablewrap{overflow-x:auto;border:1px solid var(--rule);background:var(--surface);}
+table.grid{width:100%;border-collapse:collapse;font-size:15px;min-width:640px;}
+table.grid th{
+  font-family:var(--f-display);font-size:10.5px;font-weight:600;
+  letter-spacing:.15em;text-transform:uppercase;color:var(--ink-3);
+  text-align:left;padding:13px 18px 11px;
+  border-bottom:1px solid var(--rule);background:var(--surface-2);
+  white-space:nowrap;
+}
+table.grid td{
+  padding:14px 18px;border-bottom:1px solid var(--rule-soft);
+  vertical-align:top;color:var(--ink-2);
+}
+table.grid tr:last-child td{border-bottom:0;}
+table.grid td.who{
+  color:var(--ink);font-family:var(--f-display);font-size:16px;
+  font-weight:600;letter-spacing:.02em;white-space:nowrap;
+}
+table.grid td.meter{width:150px;}
+table.grid td.when{
+  font-family:var(--f-display);font-size:15.5px;font-weight:600;
+  letter-spacing:.03em;color:var(--ink);white-space:nowrap;
+}
+table.grid td.sha{
+  font-family:var(--f-data);font-size:11.5px;color:var(--ink-3);
+  white-space:nowrap;line-height:1.5;
+}
+table.grid td.sha em{font-style:normal;color:var(--open);display:block;}
+table.grid td.what{font-size:14.6px;}
+table.grid td.what strong{color:var(--ink);font-weight:700;}
+table.grid td .track{margin-top:6px;}
+table.grid td .frac{
+  font-family:var(--f-data);font-size:11.5px;color:var(--ink-3);
+  font-variant-numeric:tabular-nums;
+}
+.sev{
+  display:block;width:4px;min-height:100%;
+}
+table.grid td.sevcell{padding:0;width:4px;}
+table.grid td.sevcell div{width:4px;height:100%;min-height:52px;}
+
+/* ───────────────────────── asks ───────────────────────── */
+.asks{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:0;
+  border:1px solid var(--rule);background:var(--surface);
+}
+.ask{padding:24px 24px 26px;border-right:1px solid var(--rule-soft);}
+.ask:last-child{border-right:0;}
+.ask .n{
+  font-family:var(--f-display);font-size:12px;font-weight:700;
+  letter-spacing:.16em;color:var(--accent);text-transform:uppercase;
+}
+.ask h3{
+  font-family:var(--f-display);font-size:19px;font-weight:700;
+  letter-spacing:.02em;margin:8px 0 8px;text-wrap:balance;
+}
+.ask p{font-size:14.6px;color:var(--ink-2);}
+
+/* ───────────────────────── footer ───────────────────────── */
+footer{
+  margin-top:12px;border-top:1px solid var(--rule);
+  background:var(--surface);
+}
+footer .shell{padding:26px 28px 40px;}
+footer p{font-size:13.4px;color:var(--ink-3);max-width:78ch;}
+footer p + p{margin-top:9px;}
+
+/* ───────────────────────── responsive ───────────────────────── */
+@media (max-width:1040px){
+  .two-col{grid-template-columns:1fr;gap:0;}
+  .kpi-row{grid-template-columns:repeat(3,1fr);}
+  .kpi-row .kpi:nth-child(n+4){border-top:1px solid var(--rule-soft);}
+  .asks{grid-template-columns:1fr;}
+  .ask{border-right:0;border-bottom:1px solid var(--rule-soft);}
+  .ask:last-child{border-bottom:0;}
+}
+@media (max-width:680px){
+  .shell{padding:0 18px;}
+  .kpi-row{grid-template-columns:repeat(2,1fr);}
+  .kpi-row .kpi:nth-child(n+3){border-top:1px solid var(--rule-soft);}
+  .band .shell{padding-top:32px;padding-bottom:28px;}
+  .stamp{min-width:0;width:100%;}
+  .pullout .big{font-size:42px;}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none !important;transition:none !important;}
+}
+</style>
+
+<header class="band">
+  <canvas id="contours" aria-hidden="true"></canvas>
+  <div class="shell">
+    <div class="band-grid">
+      <div>
+        <p class="eyebrow">Board briefing &middot; Development status</p>
+        <h1>Metoh<span class="tick">.</span></h1>
+        <p class="tagline">
+          An asymmetric 1&#8209;vs&#8209;5 survival horror game. Five searchers hunt a
+          Himalayan valley for proof of the Yeti. The sixth player <em>is</em> the Yeti.
+        </p>
+      </div>
+      <div class="stamp">
+        <dl>
+          <dt>Report date</dt><dd>15 Aug 2026</dd>
+          <dt>Working branch</dt><dd>yeti_port</dd>
+          <dt>Latest commit</dt><dd>9cd85dc</dd>
+          <dt>Builds clean</dt><dd class="go">YES</dd>
+          <dt>Play-verified</dt><dd class="no">NO</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="kpis">
+  <div class="shell">
+    <div class="kpi-row">
+      <div class="kpi">
+        <div class="kpi-val">58<small>days</small></div>
+        <div class="kpi-label">In development since 19 June 2026</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-val">112</div>
+        <div class="kpi-label">Commits &mdash; 12 in June, 74 in July, 26 in August</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-val">27.1<small>k</small></div>
+        <div class="kpi-label">Lines of game code across two engines</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-val">5<small>of 9</small></div>
+        <div class="kpi-label">Roadmap phases fully closed out</div>
+      </div>
+      <div class="kpi flag">
+        <div class="kpi-val">30</div>
+        <div class="kpi-label">Known defects open &mdash; 10 medium, 20 low, none critical or high</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<main class="shell">
+
+  <!-- ─── change log ──────────────────────────────────────── -->
+  <section>
+    <h2>Change log</h2>
+    <p class="sub">Every change on <code>yeti_port</code> in the reporting period &mdash; 26 commits plus the working tree</p>
+    <div class="hr thick"></div>
+    <div class="tablewrap">
+      <table class="grid">
+        <thead>
+          <tr><th>Date</th><th>Commits</th><th>What landed</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="when">1 Aug</td>
+            <td class="sha">25978cd &hellip; 48d0ad2<br>15 commits</td>
+            <td class="what">
+              <strong>Re-theme.</strong> <code>Bigfoot</code>&rarr;<code>Yeti</code> rename;
+              Metoh rebrand across namespaces, directories, the Colyseus room, the Unity scene
+              and packaging; world rebuilt as a Himalayan snowfield; <code>HPAudio</code>
+              re-synthesised to ice and wind. <strong>Deep snow</strong> (drift slow that
+              spares the Yeti) and <strong>snow prints</strong> (<code>snowprint</code> clues
+              render-filtered to the Yeti). Docs rewritten; <code>parity</code> CI job added.
+              CPU searcher shell + <code>PLAY AS YETI</code>; CPU Yeti tracking and roar
+              restraint; materials realism pass ([materials]). Fixed <code>HPAudio</code> pool
+              destruction on world rebuild and the <code>BigfootBot</code> ctor crash.
+            </td>
+          </tr>
+          <tr>
+            <td class="when">5 Aug</td>
+            <td class="sha">0ef25a8, e08b214<br>+ PR #8</td>
+            <td class="what">
+              <strong>[legibility] pass</strong> &mdash; render scale to native 1.0, detail
+              threshold, and the finding that none of [materials] had ever actually rendered.
+              Grab made answerable. UI overhaul off the play-test.
+            </td>
+          </tr>
+          <tr>
+            <td class="when">6&ndash;7 Aug</td>
+            <td class="sha">0ba47c4, 1dac970<br>e160a30, 7f9240f</td>
+            <td class="what">
+              Procedural bodies for searchers and the Yeti; boot work moved off the first
+              frame ([startup]). <strong>Terrain shader fixed &mdash; it had never once
+              parsed.</strong> Merged <code>main</code>, keeping <code>Avatar.cs</code> and
+              taking the fixes that outlived <code>CharacterRig</code>.
+            </td>
+          </tr>
+          <tr>
+            <td class="when">8 Aug</td>
+            <td class="sha">6e9a953, 867e325</td>
+            <td class="what">
+              <code>ICharacterBody</code> + <code>CharacterFactory</code> import seam
+              ([import]); saturation clobber fixed; snowpack ice glitter; HDR asserted
+              ([snow-glitter]). <code>Metoh_migration.md</code> folded into
+              <code>UNITY_NOTES.md</code> and the file renamed.
+            </td>
+          </tr>
+          <tr>
+            <td class="when">11 Aug</td>
+            <td class="sha">399e74d</td>
+            <td class="what">
+              <code>yeti.md</code> graphics handoff folded into <code>UNITY_NOTES.md</code>
+              and deleted. Three build logs now retired into the notes; all three remain in
+              git history.
+            </td>
+          </tr>
+          <tr>
+            <td class="when">14 Aug</td>
+            <td class="sha">9cd85dc<br>6 new paths</td>
+            <td class="what">
+              <strong>AI rewrite</strong> &mdash; <code>BeliefMap</code>,
+              <code>BotPerception</code>, <code>TeamBlackboard</code>,
+              <code>UtilityAction</code>, <code>BotProfile</code>, <code>BotRandom</code>;
+              <code>SearcherBot</code> and <code>YetiBot</code> rebuilt on them; new
+              <code>RECOVER</code>/<code>OVERWATCH</code>/<code>GUARD</code>/<code>AMBUSH</code>/<code>STALK</code>
+              plus the pressure governor; <code>BotDifficulty</code> as belief quality;
+              <code>LogBotSummary</code> histograms. <strong>[camp-gfx]</strong> &mdash;
+              campfire, hut, snowcat wreck, trodden trail channels with
+              <code>PackedSnowNormal</code>. <strong>[tower-trees-caves]</strong> &mdash;
+              round ladder stiles, cross-bracing, brazier, <code>TowerViewer</code>,
+              <code>Metoh/TreeSway</code> + <code>Sway.hlsl</code>, and
+              <code>MeshUtil.Throat</code> giving cave mouths reversed windings.
+              <code>MeshUtil.MetricBox</code> fixed per-face UV stretch across every structure.
+            </td>
+          </tr>
+          <tr>
+            <td class="when">15 Aug</td>
+            <td class="sha"><em>uncommitted</em>23 modified<br>2 untracked</td>
+            <td class="what">
+              <strong>[pipeline-gaps]</strong> &mdash; SMAA (high) / FXAA per tier, re-applied
+              from <code>HPQuality.ApplyRenderScale</code>; soft particles in
+              <code>Weather</code> via the packed <code>_SoftParticleFadeParams</code>;
+              <code>ProcTex.TorchCookie</code>; <code>RenderPipelineSetup</code> now walks
+              every RP asset reachable from <code>QualitySettings</code> and was
+              <em>run for the first time</em> (7 changes across 2 assets).
+              <strong>Full audit</strong> &mdash; 15 critical/high fixed, 30 ranked open,
+              written up in <code>Aug_15_Bug.md</code>. <code>BootReport</code> added to make
+              silent <code>Shader.Find</code> fallbacks visible. <strong>Bad first load
+              diagnosed</strong> as async shader compilation and fixed via
+              <code>RenderPipelineSetup.DisableAsyncShaderCompilation</code>, asserted from
+              <code>GameSceneSetup.SetUpScene</code> too. New <code>MenuUI.cs</code> &mdash; a
+              cached IMGUI drawing kit that never touches <code>GUI.skin</code>, because the
+              built-in skin is what dates a menu, not IMGUI itself. <code>CLAUDE.md</code>
+              updated; live project synced and rebuilt headlessly.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ─── bottom line ─────────────────────────────────────── -->
+  <section>
+    <h2>The bottom line</h2>
+    <div class="hr thick"></div>
+    <div class="verdict">
+      <p>
+        <strong>The vertical slice is feature-complete and the Unity/FishNet port is
+        substantially done.</strong> Every rule in <code>GAME_DESIGN.md</code> is implemented,
+        and every automated gate is green: <code>csharp/Parity</code> reports PARITY OK,
+        39/39 vitest, client and server <code>tsc --noEmit</code> clean, and a headless
+        <code>SetUpScene</code> compiles with 0 <code>error CS</code> and 0 shader errors.
+        Two weeks of August work replaced both CPU brains with a belief-and-utility
+        architecture and put graphics passes over camp, the trail network, the lookout and
+        the ice caverns.
+      </p>
+      <p>
+        <strong>None of it has run a frame in Play mode.</strong> The AI rewrite, six graphics
+        systems, and the deep-snow mechanic the whole re-theme was built around have been
+        proven to compile and nothing further. Every tuning constant in the build is a first
+        guess; <code>Aug_14.md</code> ranks the six most likely to be wrong, starting with
+        <code>SearcherBot</code>&rsquo;s <code>SWEEP</code> floor and
+        <code>UnlitSightFactor</code>.
+      </p>
+      <div class="pullout">
+        <div class="big">0</div>
+        <div class="cap">
+          frames of the August work have run in Play mode. This is the gate on the schedule
+          &mdash; not the defect count, and not the remaining feature list.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="two-col">
+    <!-- ─── LEFT: narrative ──────────────────────────────── -->
+    <div>
+
+      <section>
+        <h2>New this cycle</h2>
+        <p class="sub">1 &ndash; 15 August 2026 &middot; 26 commits on <code>yeti_port</code>, all Unity-side</p>
+        <div class="hr"></div>
+
+        <article class="change">
+          <div class="change-head">
+            <h3>Re&#8209;theme: Hollow Pines &rarr; Metoh</h3>
+            <span class="when">1 Aug &middot; <span class="chip ok">Shipped</span></span>
+          </div>
+          <p>
+            The project shipped as <em>Hollow Pines</em>, a Pacific&#8209;NW Bigfoot hunt,
+            which overlapped the Steam title <em>BIGFOOT</em>. Rebranded on branch
+            <code>yeti_port</code>: namespaces, directories, the Colyseus room, the Unity
+            scene, packaging, and the audio synthesis retuned from wood/water to ice/wind.
+          </p>
+          <p>
+            The <strong>web build keeps its forest visuals on purpose</strong> &mdash; only
+            identifiers were renamed there. Web visuals are abandoned; the Unity build carries
+            the snow re-theme.
+          </p>
+          <div class="lands">
+            <b>Parity impact</b>
+            Sim key names changed, so <code>golden.json</code> was regenerated and the
+            <code>parity</code> CI job added the same week to catch TS&#8596;C# drift on every
+            push.
+          </div>
+        </article>
+
+        <article class="change">
+          <div class="change-head">
+            <h3>Deep snow &amp; trails &mdash; two seed-derived zones</h3>
+            <span class="when">1 Aug &middot; <span class="chip active">Needs balancing</span></span>
+          </div>
+          <p>
+            Two <em>separate</em> derived zones, spec in <code>GAME_DESIGN.md</code> &sect;7.7.
+            <strong>Slow:</strong> only low ground below <code>PLAYER.driftHeight</code> holds
+            drift; searchers fall toward <code>deepSnowFactor</code>, the Yeti is unaffected
+            &mdash; ~&#8531; of the map, so it is a routing choice rather than a flat nerf.
+            <strong>Prints:</strong> anywhere off-trail (the wider rule), a moving searcher
+            drops a <code>snowprint</code> clue replicated to all but render-filtered to the
+            Yeti only.
+          </p>
+          <p>
+            Both live in <code>stepPlayer</code>, so the slow is applied by whoever simulates
+            the player on both builds; <code>applyMove</code> validates, it does not
+            re-simulate. Zones derive from the seed and are never replicated
+            (<code>deepSnowDepth</code>/<code>leavesSnowPrints</code> in
+            <code>shared/sim/movement.ts</code> plus the C# mirror).
+          </p>
+          <div class="lands">
+            <b>Open</b>
+            <code>deepSnowFactor</code>, <code>driftHeight</code>, <code>driftDepth</code> and
+            print stride/lifetime are all first-guess values. Unplayed since it landed.
+          </div>
+        </article>
+
+        <article class="change">
+          <div class="change-head">
+            <h3>Both CPU brains replaced with belief + utility</h3>
+            <span class="when">14 Aug &middot; <span class="chip ok">Shipped</span></span>
+          </div>
+          <p>
+            Play-test report: <em>&ldquo;searchers beeline for the yeti &hellip; it&rsquo;s
+            like an AI game from the 80s, basic if-else.&rdquo;</em> Accurate, and the cause
+            was not the number of states &mdash; <strong>a pursuit function over perfect
+            information always produces a straight line</strong>, and both brains had one.
+            Three omniscience leaks, all closed: clue scoring weighted freshness ~66&times;
+            over distance (so it homed on a live position); <code>FreshestTrailClue</code> had
+            <em>no distance gate at all</em>, so a searcher 700&nbsp;m away &ldquo;saw&rdquo;
+            a footprint; and <code>YetiBot</code>&rsquo;s <code>Mode.Hunt</code> fallback
+            walked at <code>NearestSearcherRaw()</code> through walls.
+          </p>
+          <p>
+            New <code>Scripts/Game/AI/</code>: <code>BeliefMap</code> (32&times;32 occupancy
+            filter &mdash; sightings collapse it, rumours blur it, <strong>negative
+            information</strong> stops re-checking cleared ground, and <strong>diffusion</strong>
+            turns a stale sighting into a growing search area), <code>BotPerception</code>,
+            <code>TeamBlackboard</code> (belief is private, intent is shared &mdash; pooling
+            belief would give four bodies one pair of eyes), <code>UtilityAction</code> with
+            commitment + dwell replacing both fixed ladders, and <code>BotProfile</code>
+            weights <em>derived from the <code>Specialties</code> table</em> so retuning
+            <code>FilmRangeMul</code> moves Eli&rsquo;s behaviour automatically.
+          </p>
+          <p>
+            New behaviours: <code>RECOVER</code> (<code>ServerBotRecoverPile</code> was wired
+            and never called), <code>OVERWATCH</code>, and <code>GUARD</code>/<code>AMBUSH</code>/<code>STALK</code>
+            plus a pressure governor that eases off ~18&nbsp;s after a grab. Difficulty tiers
+            landed as <strong>belief quality</strong> (<code>BotDifficulty</code>), so the same
+            behaviours run at every tier and you cannot read difficulty off how a bot moves.
+          </p>
+          <div class="lands">
+            <b>Why four searchers looked like one</b>
+            <code>CampSpot()</code> returns an 8&times;4&nbsp;m box and every bot was placed by
+            it &mdash; four bots stacked, then running identical deterministic decisions, never
+            separated. Now fanned on a ring at golden-angle bearings. Torch state also gates
+            evidence sight at <code>UnlitSightFactor</code>, which is what finally makes the
+            torch a sensor rather than a status icon.
+          </div>
+        </article>
+
+        <article class="change">
+          <div class="change-head">
+            <h3>Three graphics passes &mdash; camp/trails, tower/trees/caves, pipeline gaps</h3>
+            <span class="when">14&ndash;15 Aug &middot; <span class="chip ok">Shipped</span></span>
+          </div>
+          <p>
+            <strong>[camp-gfx]</strong> &mdash; campfire was one static emissive cone plus a
+            constant light; now logs, ember bed, flame/spark/smoke particles and flicker from
+            <em>summed sines rather than <code>Random</code></em> (random flicker is
+            frame-rate dependent and reads as a failing bulb). Trails read as decals for three
+            reasons, all fixed: a flat ribbon floating 4&nbsp;cm up, sharing
+            <code>SnowNormal</code> with virgin powder, and perfect uniformity along their
+            length &mdash; now a trodden channel with berms, two submeshes and a new
+            <code>PackedSnowNormal</code>.
+          </p>
+          <p>
+            <strong>[tower-trees-caves]</strong> &mdash; ladder stiles were
+            <code>TaperedCylinder(&hellip;, 4)</code>, i.e. square; the tower had no
+            cross-bracing (the cheapest silhouette win at distance); the tower lamp had no
+            mesh at all. Tree sway shipped as <code>Metoh/TreeSway</code> +
+            <code>Sway.hlsl</code> &mdash; it <em>had</em> to be a vertex shader because trees
+            are merged per chunk via <code>CombineInstance</code>, leaving no per-tree
+            transform. Cave mouths were convex twice over, so <code>MeshUtil.Throat</code> now
+            builds inward-facing faces with reversed windings.
+          </p>
+          <p>
+            <strong>[pipeline-gaps]</strong> &mdash; the build had <em>no anti-aliasing at
+            all</em>: MSAA off in <code>HPQuality</code> and nothing put in its place, so since
+            render scale went to native 1.0 every edge has been a raw step. Now SMAA (high) on
+            the expensive tier, FXAA on the cheap one, re-applied from
+            <code>HPQuality.ApplyRenderScale</code> so the pause-menu slider cannot strip it.
+            Plus soft particles in <code>Weather</code> (billboards were being sliced into
+            white polygons at every intersection) and a procedural
+            <code>ProcTex.TorchCookie</code> replacing a perfect mathematical disc.
+          </p>
+          <div class="lands">
+            <b>The pattern worth naming</b>
+            Three of the four wins in [pipeline-gaps] were <em>settings never switched on</em>.
+            <code>Metoh &rarr; Configure Render Pipeline</code> had existed for two weeks and
+            never been run &mdash; both RP assets still read <code>m_ColorGradingMode: 0</code>
+            (LDR), and the SSAO on <code>PC_Renderer</code> was the URP template&rsquo;s own.
+            Third pass running where the biggest gain was an unclaimed switch, after
+            [legibility]&rsquo;s render scale and [snow-glitter]&rsquo;s HDR. Audit the
+            switches before the art.
+          </div>
+        </article>
+
+        <article class="change">
+          <div class="change-head">
+            <h3>Line-by-line audit of the Unity build</h3>
+            <span class="when">15 Aug &middot; <span class="chip open">15 fixed, 30 open</span></span>
+          </div>
+          <p>
+            <code>unity/Assets/Metoh/</code>, the four shaders and <code>csharp/Metoh.Sim</code>
+            read against the docs, then a headless rebuild to prove the fixes. Fourteen
+            critical/high fixed same-day, including: <code>Weather</code> parented its emitters
+            to the WorldBuilder transform, which <code>Rebuild()</code> destroys &mdash; the
+            host&rsquo;s seed roll killed snow on the first match of <em>every</em> session;
+            <code>TreeSway.shader</code> declared <code>_BumpMap</code> and never sampled it,
+            and was missing <code>_FORWARD_PLUS</code>, so no light reached a trunk;
+            <code>DropSnowPrints</code> passed raw Unity yaw where <code>ClueMarker</code>
+            expects sim yaw, laying every print 180&deg; out; and
+            <code>TargetTeleport</code> rebuilt the local sim with a full battery while
+            <code>ServerVitals</code> refuses a rise, desyncing torch state from night 2.
+          </p>
+          <p>
+            Thirty items remain, ranked with file references in
+            <code>Aug_15_Bug.md</code>. Highest-value open ones:
+            <code>Metoh.Sim.Collision</code> walks all ~2,400 colliders with no broad phase;
+            ~200 short-lived collections/sec in the 20&nbsp;Hz authoritative loop; and 38
+            <code>new GUIStyle</code> per <code>OnGUI</code>, several inside per-item loops.
+          </p>
+          <div class="lands">
+            <b>The last open report closed &mdash; and one toolchain trap left</b>
+            &ldquo;The first loading screen is always broken&rdquo; was
+            <strong>async shader compilation</strong>, not an art or asset fault: with the
+            editor default on, it renders placeholders rather than waiting for variants, which
+            is why it self-heals on a delay and fires after every scene rebuild. Fixed by
+            <code>RenderPipelineSetup.DisableAsyncShaderCompilation</code>, asserted from both
+            <code>Configure</code> and <code>SetUpScene</code> &mdash; the latter being the
+            command that <em>causes</em> the reimport. Still open: a headless
+            <code>SetUpScene</code> was observed once to compile clean and <em>exit without
+            invoking the method</em>, so verification must require the
+            <code>Mountain scene wired</code> line, not just a zero error count.
+          </div>
+        </article>
+      </section>
+
+      <section>
+        <h2>How we got here</h2>
+        <p class="sub">Eight weeks, one pivot of premise and one pivot of technology</p>
+        <div class="hr"></div>
+        <ol class="tl">
+          <li class="key">
+            <span class="date">19 June 2026</span>
+            <div class="head">Three.js + Colyseus scaffold, runnable standalone</div>
+            <p>
+              Vite/TypeScript client, low-poly terrain with instanced conifers, first-person
+              controller, <code>MountainRoom</code> + <code>GameState</code> schema.
+              <code>GAME_DESIGN.md</code> written the same week and the source of truth since.
+            </p>
+          </li>
+          <li>
+            <span class="date">Late June &ndash; early July</span>
+            <div class="head">Phases 1&ndash;5: the full match loop, then polish</div>
+            <p>
+              Clue trail with lifetime decay, roar/grab/incapacitate, filming as the win
+              condition, three-night structure with per-night <code>ESCALATION</code>, then
+              searcher counterplay (revive, dazzle, vault) and the polish phase &mdash;
+              <code>EffectComposer</code> post, settings, key rebinding, dusk briefing.
+            </p>
+          </li>
+          <li>
+            <span class="date">11 July</span>
+            <div class="head">Server authority + the specialties layer</div>
+            <p>
+              Movement moved server-authoritative with client reconciliation
+              (<code>applyMove</code>: bounds clamp, speed-gate token bucket, collision
+              pushout) and <code>antiCheat.ts</code> recomputes filming LOS server-side. Five
+              scalar specialties shipped over a persona-assignment layer.
+            </p>
+          </li>
+          <li class="key">
+            <span class="date">12 &ndash; 19 July</span>
+            <div class="head">Engine pivot &mdash; Unity + FishNet, sequenced netcode-first</div>
+            <p>
+              Target changed from a hosted web deploy to a downloadable Steam build with
+              Steam Datagram Relay. <strong>R1</strong> relay slice scaffolded;
+              <strong>R3</strong> ported <code>shared/sim</code> to <code>csharp/Metoh.Sim</code>
+              with the <code>csharp/Parity</code> harness verifying it against the TS sim.
+              Unity migration alpha 1.0 on 19 July.
+            </p>
+          </li>
+          <li class="bad">
+            <span class="date">1 &ndash; 6 August</span>
+            <div class="head">Five days committed without Unity compiling them once</div>
+            <p>
+              <code>unity/Assets/Metoh/</code> in this repo is source only &mdash; not an
+              openable project. The editor opens <code>C:\Users\amedi\Metoh_port</code>, and
+              code moves between them only by explicit <code>robocopy</code>. Two passes were
+              pushed against the wrong tree. Play-test reports in that window were accurate;
+              the wrong assumption was ours. Symptom: the terrain shader <em>had never once
+              parsed</em>.
+            </p>
+          </li>
+          <li class="key">
+            <span class="date">14 &ndash; 15 August</span>
+            <div class="head">AI rewrite, three graphics passes, full audit</div>
+            <p>
+              Committed as <code>9cd85dc</code> and synced to <code>Metoh_port</code>. All
+              gates green; <code>UNITY_NOTES.md</code> gained [camp-gfx], [tower-trees-caves]
+              and [pipeline-gaps]. Zero frames run.
+            </p>
+          </li>
+        </ol>
+      </section>
+
+      <section>
+        <h2>Roadmap position</h2>
+        <p class="sub">Progress counted as items closed against each phase&rsquo;s own checklist</p>
+        <div class="hr"></div>
+        <div class="tablewrap">
+          <table class="grid">
+            <thead>
+              <tr>
+                <th>Phase</th><th>State</th><th>Items closed</th><th>Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="who">Foundations</td>
+                <td><span class="chip ok">Complete</span></td>
+                <td class="meter">
+                  <span class="frac">8 / 8</span>
+                  <div class="track"><div class="fill ok" style="width:100%"></div></div>
+                </td>
+                <td>Vite/Three.js client, Colyseus room, first-person controller, offline fallback.</td>
+              </tr>
+              <tr>
+                <td class="who">Feel &amp; environment</td>
+                <td><span class="chip ok">Complete</span></td>
+                <td class="meter">
+                  <span class="frac">5 / 5</span>
+                  <div class="track"><div class="fill ok" style="width:100%"></div></div>
+                </td>
+                <td>Head-bob, terrain sampling + trunk colliders, landmarks, <code>timeOfDay</code> cycle.</td>
+              </tr>
+              <tr>
+                <td class="who">Multiplayer</td>
+                <td><span class="chip ok">Complete</span></td>
+                <td class="meter">
+                  <span class="frac">7 / 7</span>
+                  <div class="track"><div class="fill ok" style="width:100%"></div></div>
+                </td>
+                <td>Server-authoritative <code>applyMove</code> + <code>correctTo</code>; full input-replay prediction (2.3) deferred.</td>
+              </tr>
+              <tr>
+                <td class="who">Asymmetry</td>
+                <td><span class="chip ok">Complete</span></td>
+                <td class="meter">
+                  <span class="frac">9 / 10</span>
+                  <div class="track"><div class="fill ok" style="width:90%"></div></div>
+                </td>
+                <td>Leap/charge/surface-climb/senses overlay + revive/dazzle/vault. Rigged models pending.</td>
+              </tr>
+              <tr>
+                <td class="who">Game loop</td>
+                <td><span class="chip active">Balance owed</span></td>
+                <td class="meter">
+                  <span class="frac">6 / 6</span>
+                  <div class="track"><div class="fill" style="width:100%"></div></div>
+                </td>
+                <td>All items closed, phase still held partial &mdash; deep snow &sect;7.7 constants unvalidated.</td>
+              </tr>
+              <tr>
+                <td class="who">Audio, UI &amp; polish</td>
+                <td><span class="chip ok">Complete</span></td>
+                <td class="meter">
+                  <span class="frac">5 / 5</span>
+                  <div class="track"><div class="fill ok" style="width:100%"></div></div>
+                </td>
+                <td>Positional audio, <code>EffectComposer</code>, <code>Settings</code>/<code>Keybinds</code>, dusk briefing.</td>
+              </tr>
+              <tr>
+                <td class="who">Art &amp; performance</td>
+                <td><span class="chip active">In progress</span></td>
+                <td class="meter">
+                  <span class="frac">2 / 3</span>
+                  <div class="track"><div class="fill" style="width:67%"></div></div>
+                </td>
+                <td>Procedural <code>Avatar.cs</code> bodies + LOD/instancing shipped; skinned FBX meshes are the gap.</td>
+              </tr>
+              <tr>
+                <td class="who">Unity &amp; Steam</td>
+                <td><span class="chip active">In progress</span></td>
+                <td class="meter">
+                  <span class="frac">2 / 6</span>
+                  <div class="track"><div class="fill" style="width:33%"></div></div>
+                </td>
+                <td>R1 + R3 logged; the step count understates it &mdash; the Unity build is playable, SDR integration is not done.</td>
+              </tr>
+              <tr>
+                <td class="who">Launch</td>
+                <td><span class="chip idle">Not started</span></td>
+                <td class="meter">
+                  <span class="frac">0 / 2</span>
+                  <div class="track"><div class="fill idle" style="width:2%"></div></div>
+                </td>
+                <td>Accessibility audit + playtest balancing. Web/Colyseus deploy superseded by the Steam plan.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- ─── RIGHT: instruments ───────────────────────────── -->
+    <div>
+
+      <div class="panel">
+        <h3>Verification gates <span>as of 15 Aug</span></h3>
+        <div class="panel-body">
+          <ul class="gates">
+            <li>
+              <span class="mark pass" aria-hidden="true">&#10003;</span>
+              <span class="name"><code>client</code> tsc + vite build</span>
+              <span class="val">PASS</span>
+            </li>
+            <li>
+              <span class="mark pass" aria-hidden="true">&#10003;</span>
+              <span class="name"><code>server</code> tsc --noEmit</span>
+              <span class="val">PASS</span>
+            </li>
+            <li>
+              <span class="mark pass" aria-hidden="true">&#10003;</span>
+              <span class="name">vitest (sim + anti-cheat)</span>
+              <span class="val">39 / 39</span>
+            </li>
+            <li>
+              <span class="mark pass" aria-hidden="true">&#10003;</span>
+              <span class="name">TS&#8596;C# sim parity, CI-gated</span>
+              <span class="val">PARITY OK</span>
+            </li>
+            <li>
+              <span class="mark pass" aria-hidden="true">&#10003;</span>
+              <span class="name">Headless <code>SetUpScene</code></span>
+              <span class="val">0 error CS</span>
+            </li>
+            <li>
+              <span class="mark fail" aria-hidden="true">&#10007;</span>
+              <span class="name">Unity Play mode</span>
+              <span class="val">NOT RUN</span>
+            </li>
+          </ul>
+        </div>
+        <p class="panel-note">
+          Five of six are automated and enforced on every change. The sixth is a human in Play
+          mode &mdash; the only gate that reports on behaviour rather than on whether the code
+          parses. Note the headless gate is itself suspect: see the toolchain finding.
+        </p>
+      </div>
+
+      <div class="panel">
+        <h3>Open defect ledger <span>30 items</span></h3>
+        <div class="panel-body">
+          <table class="ledger">
+            <thead>
+              <tr><th>Area</th><th>Medium</th><th>Low</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Correctness</td><td>6</td><td>9</td></tr>
+              <tr><td>Performance</td><td>3</td><td>5</td></tr>
+              <tr><td>Interface &amp; polish</td><td>0</td><td>6</td></tr>
+              <tr><td>Build tooling</td><td>1</td><td>&mdash;</td></tr>
+            </tbody>
+            <tfoot>
+              <tr><td>Ranked</td><td>10</td><td>20</td></tr>
+            </tfoot>
+          </table>
+        </div>
+        <p class="panel-note">
+          No critical or high-severity defects are open &mdash; all fifteen found in the audit
+          were fixed the day they were found, the last being the async-shader-compilation
+          startup fault. Nothing on this list blocks a play-test.
+        </p>
+      </div>
+
+      <div class="panel">
+        <h3>Where the code lives <span>27,136 lines</span></h3>
+        <div class="panel-body">
+          <div class="bars">
+            <div class="bar-row">
+              <div class="bar-top"><span><code>unity/Assets/Metoh</code></span><span class="v">18,721</span></div>
+              <div class="track"><div class="fill" style="width:100%"></div></div>
+            </div>
+            <div class="bar-row">
+              <div class="bar-top"><span><code>client/src</code></span><span class="v">4,301</span></div>
+              <div class="track"><div class="fill" style="width:23%"></div></div>
+            </div>
+            <div class="bar-row">
+              <div class="bar-top"><span><code>csharp/</code> (sim + parity)</span><span class="v">1,902</span></div>
+              <div class="track"><div class="fill" style="width:10.2%"></div></div>
+            </div>
+            <div class="bar-row">
+              <div class="bar-top"><span><code>server/src</code></span><span class="v">1,143</span></div>
+              <div class="track"><div class="fill" style="width:6.1%"></div></div>
+            </div>
+            <div class="bar-row">
+              <div class="bar-top"><span><code>shared/sim</code></span><span class="v">1,069</span></div>
+              <div class="track"><div class="fill" style="width:5.7%"></div></div>
+            </div>
+          </div>
+        </div>
+        <p class="panel-note">
+          <code>shared/sim</code> and <code>Metoh.Sim</code> are deliberate duplication &mdash;
+          one per engine, held byte-identical by <code>csharp/Parity</code> against a
+          regenerated <code>golden.json</code>. The sim is <strong>parity-locked</strong>: it
+          is fixed <em>around</em>, never <em>through</em>.
+        </p>
+      </div>
+
+      <div class="panel">
+        <h3>The match, in brief</h3>
+        <div class="panel-body">
+          <ul class="gates">
+            <li><span class="name">Players</span><span class="val">5 v 1</span></li>
+            <li><span class="name">Structure</span><span class="val">3 NIGHTS</span></li>
+            <li><span class="name">Session length</span><span class="val">20&ndash;30 MIN</span></li>
+            <li><span class="name">Searchers win by</span><span class="val">3 VIDEOS</span></li>
+            <li><span class="name">Yeti wins by</span><span class="val">SURVIVING</span></li>
+            <li><span class="name">Topology</span><span class="val">HOST-AUTH + SDR</span></li>
+          </ul>
+        </div>
+        <p class="panel-note">
+          No permanent elimination. In the Unity build a grab hauls for <code>CarrySeconds</code>
+          (6&nbsp;s, server-dropped, replicated as <code>CarryEndsIn</code>) and spills that
+          searcher&rsquo;s <em>carried</em> proof as a recoverable <code>ProofPile</code> &mdash;
+          it never touches the banked team total. The web build keeps the older
+          toggle-and-erase rule.
+        </p>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ─── risk register ───────────────────────────────────── -->
+  <section>
+    <h2>Risk register</h2>
+    <p class="sub">Ordered by what would cost us the most schedule</p>
+    <div class="hr"></div>
+    <div class="tablewrap">
+      <table class="grid">
+        <thead>
+          <tr>
+            <th></th><th>Risk</th><th>Exposure</th><th>Where we are on it</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="sevcell"><div style="background:var(--open)"></div></td>
+            <td class="who">Zero Play-mode verification</td>
+            <td><span class="chip open">Critical</span></td>
+            <td>
+              Two weeks of AI and graphics work exist only as code that compiles.
+              <code>Aug_14.md</code> ranks the six knobs most likely to be wrong
+              (<code>SWEEP</code> floor 0.22, <code>UnlitSightFactor</code> 0.35,
+              <code>CommitBonus</code>/<code>MinDwell</code>,
+              <code>PressureBackoffSeconds</code> 18, <code>AmbushConfidence</code> 0.05, tree
+              <code>_WindStrength</code>). <strong>One session converts this from an unknown
+              into a task list.</strong>
+            </td>
+          </tr>
+          <tr>
+            <td class="sevcell"><div style="background:var(--open)"></div></td>
+            <td class="who">Asymmetric balance, 1&nbsp;v&nbsp;5</td>
+            <td><span class="chip open">High</span></td>
+            <td>
+              The genre&rsquo;s hardest tuning problem, and the signature mechanic
+              (<code>GAME_DESIGN.md</code> &sect;7.7) has never been felt. Mitigated
+              structurally: every lever is a named constant in
+              <code>shared/sim/constants.ts</code>, the <code>ESCALATION</code> table or
+              <code>BotProfile</code> &mdash; tuning is a number change, not a rewrite.
+            </td>
+          </tr>
+          <tr>
+            <td class="sevcell"><div style="background:var(--active)"></div></td>
+            <td class="who">The verification gate can false-green</td>
+            <td><span class="chip active">Medium</span></td>
+            <td>
+              Headless <code>SetUpScene</code> observed once to compile, enter
+              <code>Begin MonoManager ReloadAssembly</code>, and exit without invoking the
+              method &mdash; while <code>grep -c "error CS"</code> returned 0. Mitigation:
+              require the <code>Mountain scene wired</code> line. Trigger not pinned; a real
+              fix is detecting the post-compile domain reload and re-scheduling.
+            </td>
+          </tr>
+          <tr>
+            <td class="sevcell"><div style="background:var(--active)"></div></td>
+            <td class="who">Host CPU under load</td>
+            <td><span class="chip active">Medium</span></td>
+            <td>
+              <code>Metoh.Sim.Collision</code> walks all ~2,400 colliders per call with no
+              broad phase &mdash; <code>ResolveCollision</code> per player per frame,
+              <code>LineBlocked</code> from five brains at 10&nbsp;Hz plus twice per hunter per
+              20&nbsp;Hz tick. Order of a million circle tests/sec. Fixable <em>around</em>
+              [parity-lock] with a Unity-side uniform grid pre-filtering the same list.
+            </td>
+          </tr>
+          <tr>
+            <td class="sevcell"><div style="background:var(--active)"></div></td>
+            <td class="who">Skinned character meshes</td>
+            <td><span class="chip active">Medium</span></td>
+            <td>
+              Bodies are procedural (<code>Avatar.cs</code> over
+              <code>MeshUtil.Lathe/Limb/Blob</code>), chosen so cloning the repo and pressing
+              play needs no assets. The import seam is built and documented: gameplay holds
+              <code>ICharacterBody</code>, builds via <code>CharacterFactory</code>, and a
+              humanoid FBX + Animator dropped in <code>Resources/Metoh/Characters/</code> takes
+              over with no code change. Needs an artist, not engineering.
+            </td>
+          </tr>
+          <tr>
+            <td class="sevcell"><div style="background:var(--ok)"></div></td>
+            <td class="who">TS&#8596;C# sim drift</td>
+            <td><span class="chip ok">Contained</span></td>
+            <td>
+              <code>csharp/Parity</code> regenerates <code>golden.json</code> and diffs it in
+              CI before running the harness. Caveat recorded in the roadmap: a byte-identical
+              regen after a behaviour change means the fixture doesn&rsquo;t cover it &mdash;
+              add probes, don&rsquo;t assume safety.
+            </td>
+          </tr>
+          <tr>
+            <td class="sevcell"><div style="background:var(--ok)"></div></td>
+            <td class="who">Repo &#8596; live-project gap</td>
+            <td><span class="chip ok">Contained</span></td>
+            <td>
+              Cost five days, 1&ndash;6 Aug. Now three explicit <code>robocopy</code> trees
+              into <code>Metoh_port</code> using <code>/E</code>, never <code>/MIR</code>
+              (which deletes live <code>.meta</code> files and churns every GUID), plus the
+              rule that a play-test report is evidence about a specific binary &mdash;
+              establish which one first.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ─── asks ────────────────────────────────────────────── -->
+  <section>
+    <h2>What this asks for</h2>
+    <p class="sub">The three decisions that move the schedule</p>
+    <div class="hr"></div>
+    <div class="asks">
+      <div class="ask">
+        <div class="n">First</div>
+        <h3>A Play-mode session on <code>Metoh_port</code></h3>
+        <p>
+          Nothing else here can be ranked first. It unblocks the balance pass, confirms the
+          async-shader fix actually cleared the bad first load (watch the <code>[boot]</code>
+          line and any <code>STARTUP PROBLEMS</code> block from <code>BootReport</code>), and
+          reads the <code>LogBotSummary</code> histogram to say whether the utility weights are
+          close. The AI soak harness is deliberately deferred until after this.
+        </p>
+      </div>
+      <div class="ask">
+        <div class="n">Second</div>
+        <h3>A call on rigged character assets</h3>
+        <p>
+          The only Phase&nbsp;6 gap engineering cannot close alone. <code>ICharacterBody</code>
+          /<code>CharacterFactory</code> is finished, so this is purely a sourcing decision:
+          buy, contract, or ship procedural <code>Avatar.cs</code> bodies for a first release.
+          Procedural stays the default and the fallback either way.
+        </p>
+      </div>
+      <div class="ask">
+        <div class="n">Third</div>
+        <h3>Target release shape</h3>
+        <p>
+          Steam/SDR integration is the last unstarted block (Phase&nbsp;8, R2/R4&ndash;R6) and
+          its size depends on the target: closed playtest, early access, or full launch. Each
+          implies a different amount of Phase&nbsp;7 &mdash; the accessibility audit and the
+          balancing pass.
+        </p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="shell">
+    <p>
+      <strong>Metoh &mdash; development status, 15 August 2026.</strong> Compiled from
+      <code>git log</code>, <code>docs/ROADMAP.md</code>, <code>docs/GAME_DESIGN.md</code>,
+      <code>docs/Aug_14.md</code>, <code>docs/Aug_15_Bug.md</code> and
+      <code>docs/UNITY_NOTES.md</code>. Bracketed ids ([camp-gfx], [pipeline-gaps],
+      [parity-lock], [import]) cite sections of <code>UNITY_NOTES.md</code> by id, never by
+      position.
+    </p>
+    <p>
+      Line counts measured from the working tree at <span class="num">9cd85dc</span> plus 23
+      modified and 2 untracked files. Engineering status only &mdash; the repository holds no
+      budget, headcount, schedule or market data, and none has been inferred here.
+    </p>
+  </div>
+</footer>
+
+<script>
+/* Topographic contour field behind the masthead.
+   A fixed scalar field (no randomness, so it is identical every load) traced
+   with marching squares, plotted level by level like a survey being drawn.  */
+(function () {
+  var cv = document.getElementById('contours');
+  if (!cv || !cv.getContext) return;
+  var ctx = cv.getContext('2d');
+
+  // Fixed peaks and basins: [x, y, amplitude, radius]
+  var PEAKS = [
+    [0.14, 0.68,  0.95, 0.30],
+    [0.37, 0.24, -0.62, 0.22],
+    [0.58, 0.78,  0.72, 0.26],
+    [0.76, 0.38,  0.88, 0.24],
+    [0.94, 0.72, -0.45, 0.20],
+    [0.47, 0.52,  0.30, 0.14]
+  ];
+
+  function field(x, y) {
+    var v = 0.10 * Math.sin(x * 6.4) * Math.cos(y * 4.9);
+    for (var i = 0; i < PEAKS.length; i++) {
+      var p = PEAKS[i];
+      var dx = (x - p[0]) / p[3], dy = (y - p[1]) / p[3];
+      v += p[2] * Math.exp(-(dx * dx + dy * dy));
+    }
+    return v;
+  }
+
+  // Marching-squares edge pairs, indexed by corner mask.
+  var TABLE = [
+    [], [[3,0]], [[0,1]], [[3,1]], [[1,2]], [[3,0],[1,2]], [[0,2]], [[3,2]],
+    [[2,3]], [[0,2]], [[0,1],[2,3]], [[1,2]], [[3,1]], [[0,1]], [[3,0]], []
+  ];
+
+  var COLS = 132, ROWS = 46, LEVELS = 26;
+  var grid = null, cw = 0, ch = 0, raf = 0;
+
+  function buildGrid() {
+    grid = new Float32Array((COLS + 1) * (ROWS + 1));
+    for (var j = 0; j <= ROWS; j++) {
+      for (var i = 0; i <= COLS; i++) {
+        grid[j * (COLS + 1) + i] = field(i / COLS, j / ROWS);
+      }
+    }
+  }
+
+  function at(i, j) { return grid[j * (COLS + 1) + i]; }
+
+  function point(edge, i, j, a, b, c, d, lv) {
+    var t;
+    if (edge === 0) { t = (lv - a) / (b - a); return [i + t, j]; }
+    if (edge === 1) { t = (lv - b) / (c - b); return [i + 1, j + t]; }
+    if (edge === 2) { t = (lv - d) / (c - d); return [i + t, j + 1]; }
+    t = (lv - a) / (d - a); return [i, j + t];
+  }
+
+  function drawLevel(n) {
+    var lv = -0.42 + (n / (LEVELS - 1)) * 1.32;
+    var sx = cw / COLS, sy = ch / ROWS;
+    var warm = n / (LEVELS - 1);
+
+    ctx.beginPath();
+    for (var j = 0; j < ROWS; j++) {
+      for (var i = 0; i < COLS; i++) {
+        var a = at(i, j), b = at(i + 1, j), c = at(i + 1, j + 1), d = at(i, j + 1);
+        var idx = (a > lv ? 1 : 0) | (b > lv ? 2 : 0) | (c > lv ? 4 : 0) | (d > lv ? 8 : 0);
+        var segs = TABLE[idx];
+        for (var s = 0; s < segs.length; s++) {
+          var p0 = point(segs[s][0], i, j, a, b, c, d, lv);
+          var p1 = point(segs[s][1], i, j, a, b, c, d, lv);
+          ctx.moveTo(p0[0] * sx, p0[1] * sy);
+          ctx.lineTo(p1[0] * sx, p1[1] * sy);
+        }
+      }
+    }
+    var css = getComputedStyle(document.documentElement);
+    var line = css.getPropertyValue('--rule').trim();
+    var hot = css.getPropertyValue('--accent').trim();
+    ctx.strokeStyle = warm > 0.72 ? hot : line;
+    ctx.globalAlpha = warm > 0.72 ? 0.20 : 0.42;
+    ctx.lineWidth = (n % 5 === 0) ? 1.25 : 0.75;
+    ctx.stroke();
+  }
+
+  function render(animated) {
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cw = cv.clientWidth; ch = cv.clientHeight;
+    if (!cw || !ch) return;
+    cv.width = Math.round(cw * dpr);
+    cv.height = Math.round(ch * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cw, ch);
+    if (!grid) buildGrid();
+
+    if (!animated) {
+      for (var n = 0; n < LEVELS; n++) drawLevel(n);
+      return;
+    }
+    var k = 0;
+    cancelAnimationFrame(raf);
+    (function step() {
+      drawLevel(k++);
+      if (k < LEVELS) raf = requestAnimationFrame(step);
+    })();
+  }
+
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  render(!reduced);
+
+  var t = 0;
+  window.addEventListener('resize', function () {
+    clearTimeout(t);
+    t = setTimeout(function () { render(false); }, 140);
+  });
+
+  // Re-plot when the viewer flips theme, so the ink matches the ground.
+  var dark = window.matchMedia('(prefers-color-scheme: dark)');
+  if (dark.addEventListener) dark.addEventListener('change', function () { render(false); });
+})();
+</script>

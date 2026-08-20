@@ -146,14 +146,17 @@ namespace Metoh.Game
         {
             if (!InstanceFinder.IsServerStarted) return;
             if (_self == null || !_self.IsBot || _self.IsYeti) return;
-            var gm = GameManager.Instance;
-            if (gm == null || gm.MatchPhase.Value != GameManager.PhasePlaying || gm.IntermissionActive) return;
 
             float dt = Mathf.Min(Time.deltaTime, 0.1f);
 
             // BEFORE any early-out — see BotPerception.SampleSpeeds for why this ordering is
-            // load-bearing rather than stylistic.
+            // load-bearing rather than stylistic. It sat below the phase/intermission guard, which is
+            // the bug that note describes; harmless HERE only because searchers have no hearing model
+            // and never read SpeedOf, but the ordering is the contract, not the current caller.
             _senses.SampleSpeeds(dt);
+
+            var gm = GameManager.Instance;
+            if (gm == null || gm.MatchPhase.Value != GameManager.PhasePlaying || gm.IntermissionActive) return;
 
             // Frozen or downed: the sim refuses to move us anyway. Stop issuing intent so nothing
             // dangles in a channel the server would reject.
@@ -357,24 +360,26 @@ namespace Metoh.Game
                 float dangerAtBody = _belief.ProbabilityAt(downed.transform.position.x, downed.transform.position.z);
                 float guarded = Mathf.Clamp01(dangerAtBody * 60f);
 
-                if (arrivable && TeamBlackboard.ClaimRevive(downed.ObjectId, _self.ObjectId))
+                // NO CLAIM IS TAKEN HERE. Claims are asserted in Act(), when the bot is actually
+                // doing the job — see DoRevive. Claiming during SCORING meant merely *considering* a
+                // rescue reserved it for 3 s, so a bot that thought about REVIVE and then chose FLEE
+                // still locked everyone else out of the body it had just run away from. "One job, one
+                // owner" is only worth anything if the owner is the one doing it.
+                _reviveTarget = downed;
+                if (arrivable)
                 {
-                    _reviveTarget = downed;
                     float score = 0.85f * _profile.Revive
                                 * Util.Closeness(downedDist, 5f, 140f)
                                 * (1f - 0.55f * guarded);
                     if (downed.BeingRevived.Value) score *= 0.5f; // hands are already on them
                     _chooser.Consider("REVIVE", score);
                 }
-                else if (guarded > 0.25f && downedDist < 60f &&
-                         TeamBlackboard.ClaimOverwatch(downed.ObjectId, _self.ObjectId))
-                {
-                    // Someone else has the rescue. The useful second body is not another pair of hands
-                    // on the same torso — it is a torch pointed at the Yeti. A rescue with one reviver
-                    // and one dazzler is a play; four bodies in a heap is a free double grab.
-                    _reviveTarget = downed;
+                // Overwatch is offered alongside, not instead: the useful second body is not another
+                // pair of hands on the same torso — it is a torch pointed at the Yeti. A rescue with
+                // one reviver and one dazzler is a play; four bodies in a heap is a free double grab.
+                // Whoever loses the revive claim in Act() falls through to it.
+                if (guarded > 0.25f && downedDist < 60f)
                     _chooser.Consider("OVERWATCH", 0.6f * guarded * Util.Closeness(downedDist, 8f, 70f));
-                }
             }
 
             // --- BANK ---------------------------------------------------------------
@@ -389,11 +394,11 @@ namespace Metoh.Game
             // New behaviour. A grab spills the victim's bag into a ProofPile and, until now, nothing
             // ever went back for it — ServerBotRecoverPile was wired and never called, so every grab
             // was a permanent loss the team never even tried to answer.
-            _pileTarget = null;
             ProofPile pile = FindPile(pos, out float pileDist);
-            if (pile != null && TeamBlackboard.ClaimPile(pile.ObjectId, _self.ObjectId))
+            _pileTarget = pile;
+            if (pile != null)
             {
-                _pileTarget = pile;
+                // Claimed in DoRecover, not here — same reason as the revive claim above.
                 float worth = Mathf.Clamp01(pile.Total / 3f);
                 _chooser.Consider("RECOVER", (0.45f + 0.3f * worth) * _profile.Recover
                                              * Util.Closeness(pileDist, 10f, PileSeekRange));
@@ -426,8 +431,30 @@ namespace Metoh.Game
 
         // --- acting ------------------------------------------------------------------
 
+        /// <summary>The action Act() last dispatched — drives the transition reset below.</summary>
+        private string _actedAs;
+
         private void Act(Vector3 pos)
         {
+            // EVERY ACTUATION IS STICKY, so leaving an action has to undo what entering it set.
+            //
+            // DoFilm holds `Crouched` while it lines up a shot and `Recording` for the whole take, and
+            // nothing but DoFlee and ClearChannels ever put them back. So a bot that filmed and then
+            // switched to SWEEP stayed crouched for the rest of the night — at half speed, and, because
+            // crouching suppresses Movement.LeavesSnowPrints, no longer laying the tracks the Yeti's
+            // entire hunt is built on. It also kept Recording, which blinks its REC bead at the Yeti
+            // forever and re-films the instant the monster crosses the cone. The collect and revive
+            // targets had the same shape, cleared only inside their own action's far branch.
+            //
+            // Resetting on the TRANSITION rather than per frame is what keeps this cheap and keeps the
+            // do-methods free to assert what they need on the way in.
+            if (!ReferenceEquals(_chooser.Chosen, _actedAs))
+            {
+                _actedAs = _chooser.Chosen;
+                ClearChannels();
+                _self.ServerBotSetCrouched(false);
+            }
+
             switch (_chooser.Chosen)
             {
                 case "FLEE":        DoFlee(pos); break;
@@ -498,6 +525,11 @@ namespace Metoh.Game
         private void DoRevive(Vector3 pos)
         {
             if (_reviveTarget == null) { DoSweep(pos); return; }
+            // Claim on COMMIT. Re-asserting your own claim always succeeds, so running this every
+            // frame is what holds the job while the bot is on it and releases it a few seconds after
+            // it stops — no explicit release, so getting grabbed mid-rescue frees the body for someone
+            // else. Losing the race means another bot got there first: go be the torch instead.
+            if (!TeamBlackboard.ClaimRevive(_reviveTarget.ObjectId, _self.ObjectId)) { DoOverwatch(pos); return; }
             SetTorch(true);
             float d2 = BotPerception.Flat2(_reviveTarget.transform.position, pos);
             if (d2 <= WorkReach * WorkReach)
@@ -516,6 +548,9 @@ namespace Metoh.Game
         private void DoOverwatch(Vector3 pos)
         {
             if (_reviveTarget == null) { DoSweep(pos); return; }
+            // One overwatch slot, claimed on commit like the rescue itself. A third body arriving has
+            // nothing useful to add and everything to lose, so it goes back to sweeping.
+            if (!TeamBlackboard.ClaimOverwatch(_reviveTarget.ObjectId, _self.ObjectId)) { DoSweep(pos); return; }
             // Stand off the body and keep the light where the threat is believed to be: a held beam
             // dazzles, which locks roar and grab for the length of the rescue.
             Vector3 body = _reviveTarget.transform.position;
@@ -546,6 +581,8 @@ namespace Metoh.Game
         private void DoRecover(Vector3 pos)
         {
             if (_pileTarget == null) { DoSweep(pos); return; }
+            // Claim on commit — two bots must not cross the map for one bag. See DoRevive.
+            if (!TeamBlackboard.ClaimPile(_pileTarget.ObjectId, _self.ObjectId)) { DoSweep(pos); return; }
             SetTorch(true);
             Vector3 at = _pileTarget.transform.position;
             float d2 = BotPerception.Flat2(at, pos);

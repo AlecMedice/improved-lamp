@@ -262,7 +262,18 @@ namespace Metoh.Game
         public void TargetTeleport(FishNet.Connection.NetworkConnection conn, Vector3 pos, float yawRad)
         {
             _sim = NewSimState(pos, IsYeti);
+            // Carry the REPLICATED resources across, both of them.
+            //
+            // Stamina always did this; battery did not, and NewSimState hands back a full 100. So from
+            // night 2 the local sim believed it had a fresh battery while the server still held night
+            // one's drained value — and ServerVitals clamps battery to only ever decrease, so the
+            // client's 100 could never be pushed back up. Your own HUD (which reads the sim) showed a
+            // full torch; FlashOn.Value (which the server gates on `battery > 0`) said the light was
+            // OFF to every other client, to the Yeti's torch-sight range, and to Sam's battery scan.
+            // Battery is meant to persist across nights within a match — ResetMatchState is the only
+            // place it refills — so the sim has to inherit it here, not invent it.
             _sim.Stamina = Stamina.Value;
+            _sim.Battery = Battery.Value;
             _yaw = yawRad;
             _pitch = 0f;
             transform.position = new Vector3(pos.x, (float)_sim.FeetY, pos.z);
@@ -1164,6 +1175,12 @@ namespace Metoh.Game
         {
             _isBot = true;
             _sim = NewSimState(transform.position, IsYeti);
+            // Same rule the human paths follow (TargetTeleport): the sim inherits the replicated
+            // resources rather than minting fresh ones, so a bot re-placed between nights carries its
+            // drained battery and stamina into the new one. At match start ResetMatchState has already
+            // put both back to full, so this reads 100 there and the two paths agree.
+            _sim.Stamina = Stamina.Value;
+            _sim.Battery = Battery.Value;
             _yaw = SimYawFromTransform();
 
             // The player prefab's NetworkTransform is CLIENT-authoritative (humans own and drive their
@@ -1330,8 +1347,10 @@ namespace Metoh.Game
         {
             if (!_isBot) return;
             float stamina = _sim != null ? (float)_sim.Stamina : Stamina.Value;
+            float battery = _sim != null ? (float)_sim.Battery : Battery.Value;
             _sim = NewSimState(pos, IsYeti);
             _sim.Stamina = stamina;
+            _sim.Battery = battery; // travelling is not a recharge either — see TargetTeleport
             _yaw = yawRad;
             transform.position = new Vector3(pos.x, (float)_sim.FeetY, pos.z);
             ApplyBodyYaw();
@@ -1572,6 +1591,11 @@ namespace Metoh.Game
                 // moon's blue almost unchanged — the warmth of the beam is what separates "lit by me"
                 // from "lit by the sky". That separation is the whole navigational value of the torch.
                 _flashlight.color = MeshUtil.Rgb(0xffe9c4);
+                // A cookie, so the pool is a mottled patch with a ragged edge instead of a perfect
+                // disc — see ProcTex.TorchCookie for why this is the highest-value light in the game
+                // to break up. Everyone's torch gets it: it costs one shared texture and it is how a
+                // teammate's beam reads as a beam from across the valley.
+                _flashlight.cookie = ProcTex.TorchCookie;
                 // ONLY the owner's torch casts shadows, and only on the expensive tier. A shadow-casting
                 // spot per searcher is five extra shadow maps rendered every frame on a machine whose
                 // whole performance story is integrated graphics — and you cannot see the shadows a

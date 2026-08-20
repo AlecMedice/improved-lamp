@@ -31,7 +31,12 @@ namespace Metoh.Game
             // object that renders magenta. Bailing out on null at least keeps a missing file from
             // taking the torch with it; a compile failure is a Console error, not something detectable
             // from here (the same trap UNITY_NOTES flags for Metoh/Snowpack).
-            if (shader == null) return null;
+            if (shader == null)
+            {
+                BootReport.MissingShader("Metoh/TorchBeam",
+                    "torches light the ground with no visible shaft, and beams carry no motes");
+                return null;
+            }
 
             float length = lightRange * VisibleFraction;
             float radius = length * Mathf.Tan(spotAngleDeg * 0.5f * Mathf.Deg2Rad);

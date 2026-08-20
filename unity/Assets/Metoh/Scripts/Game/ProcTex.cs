@@ -88,6 +88,85 @@ namespace Metoh.Game
                     + Fbm(x, y, 256, 4, 2, 0.5f) * 0.16f);              // panel warp
 
         /// <summary>
+        /// The searcher's headtorch, as a spot-light cookie.
+        ///
+        /// WHY. The torch is the single most-looked-at light in the game — a searcher spends the whole
+        /// night reading the valley through it — and it projects a perfect mathematical disc. Real
+        /// hand-and-head torches never do: a reflector has facets, the lens picks up frost and grease
+        /// within minutes at this altitude, and the pool that lands on the ground is a soft, mottled,
+        /// slightly off-round patch with a ragged edge. A geometrically perfect circle sliding over
+        /// snow is one of the loudest remaining "this is a game" tells left in the frame, and it is
+        /// loudest precisely where the player is looking.
+        ///
+        /// It also earns its keep in gameplay. [legibility] made the terrain readable by giving it a
+        /// value range; the torch pool is what a searcher reads that range *through*, and a flat disc
+        /// carries no information about the surface it is falling on. Break-up in the beam makes the
+        /// ground's own relief legible where the two interact.
+        ///
+        /// The shape is deliberately gentle. The light already has a real angular falloff
+        /// (`innerSpotAngle` 38 inside `spotAngle` 62) and a cookie MULTIPLIES that, so an aggressive
+        /// edge here would darken the rim twice and shrink the usable pool — a stealth nerf to the
+        /// searchers' main tool dressed up as an art change. The core therefore stays at full
+        /// brightness and everything this does happens in the outer third.
+        ///
+        /// Clamp wrapping is not optional: URP packs cookies into an atlas, and a Repeat cookie bleeds
+        /// its opposite edge into its neighbours' tiles.
+        /// </summary>
+        private static Texture2D _torchCookie;
+        public static Texture2D TorchCookie
+        {
+            get
+            {
+                if (_torchCookie != null) return _torchCookie;
+                const int size = 256;
+                _torchCookie = new Texture2D(size, size, TextureFormat.RGBA32, true, false)
+                {
+                    name = "TorchCookie",
+                    wrapMode = TextureWrapMode.Clamp,
+                    filterMode = FilterMode.Bilinear,
+                    anisoLevel = 2,
+                };
+
+                var px = new Color32[size * size];
+                float c = (size - 1) * 0.5f;
+                for (int y = 0; y < size; y++)
+                {
+                    for (int x = 0; x < size; x++)
+                    {
+                        float dx = (x - c) / c, dy = (y - c) / c;
+                        float d = Mathf.Sqrt(dx * dx + dy * dy);
+
+                        // Base pool: flat out to 0.55, then eased to nothing by the border. The last
+                        // few texels are forced to zero — an atlased cookie that is still lit at its
+                        // own edge shows the tile as a hard square in the light.
+                        float v = 1f - Mathf.SmoothStep(0.55f, 1.0f, d);
+
+                        // Reflector facets: a slow angular ripple, so the pool is faintly polygonal
+                        // rather than round. Weighted outward, because the centre of a beam is the one
+                        // part a reflector actually collimates cleanly.
+                        float ang = Mathf.Atan2(dy, dx);
+                        v *= 1f + 0.06f * Mathf.Sin(ang * 7f) * Mathf.SmoothStep(0.2f, 0.9f, d);
+
+                        // Frost and grease on the lens: low-frequency mottle across the whole pool,
+                        // plus a finer layer. Both are subtle — this is a dirty lens, not a gobo.
+                        float grime = Fbm(x, y, size, 3, 3, 0.55f) * 0.7f + Fbm(x, y, size, 9, 2, 0.5f) * 0.3f;
+                        v *= 0.90f + 0.10f * grime;
+
+                        // A single dim halo outside the main pool — the spill every real torch throws
+                        // past its own cone edge. It is what stops the beam looking like a cut-out.
+                        v += 0.05f * (1f - Mathf.SmoothStep(0.6f, 1.0f, d));
+
+                        byte b = (byte)Mathf.Clamp(Mathf.RoundToInt(Mathf.Clamp01(v) * 255f), 0, 255);
+                        px[y * size + x] = new Color32(b, b, b, b);
+                    }
+                }
+                _torchCookie.SetPixels32(px);
+                _torchCookie.Apply(true, true);
+                return _torchCookie;
+            }
+        }
+
+        /// <summary>
         /// A soft round dot — the sprite every particle in the game is drawn with (snow, breath,
         /// spindrift, motes in the torch beam).
         ///
