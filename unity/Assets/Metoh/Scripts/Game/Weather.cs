@@ -295,7 +295,11 @@ namespace Metoh.Game
             emission.rateOverTime = HPQuality.HighDetail ? 55f : 24f;
 
             var shape = ps.shape;
-            shape.shapeType = ParticleSystemShapeType.Cone;
+            // ConeVOLUME, not Cone. A plain Cone emits from its aperture DISC and ignores `length`
+            // entirely, so every mote spawned in a flat sheet right at the lens and drifted from there
+            // — the beam had a haze of dust stuck to its mouth and nothing along its throw, which is
+            // the opposite of what lit air looks like. ConeVolume is the shape that reads `length`.
+            shape.shapeType = ParticleSystemShapeType.ConeVolume;
             shape.angle = Mathf.Atan2(radius, length) * Mathf.Rad2Deg;
             shape.radius = 0.05f;
             shape.length = length;
@@ -348,22 +352,14 @@ namespace Metoh.Game
         /// <summary>
         /// Put a URP material into alpha-blended transparent mode from code.
         ///
-        /// URP does not derive its blend state from the shader alone — the _Surface/_Blend floats,
-        /// the blend factors, ZWrite, the render queue AND the _SURFACE_TYPE_TRANSPARENT keyword all
-        /// have to agree. Setting only some of them is the usual way a runtime-built transparent
-        /// material comes out opaque, which for snow means every flake renders as a solid white square.
+        /// The implementation moved to <see cref="MeshUtil.MakeTransparent"/>. It was discovered here
+        /// — a snowflake rendering as a solid white square is what surfaced it — but the campfire had
+        /// the identical bug and did not have this fix, so its smoke shipped as black boxes. One copy
+        /// now, which is the only thing that stops the third call site repeating it.
         /// </summary>
         private static void SetTransparent(Material m)
         {
-            m.SetFloat("_Surface", 1f);
-            m.SetFloat("_Blend", 0f);
-            m.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
-            m.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-            m.SetFloat("_ZWrite", 0f);
-            m.SetFloat("_AlphaClip", 0f);
-            m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
-            m.DisableKeyword("_ALPHATEST_ON");
-            m.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+            MeshUtil.MakeTransparent(m, additive: false);
         }
 
         /// <summary>
@@ -395,24 +391,11 @@ namespace Metoh.Game
         /// </summary>
         private static void SetSoftParticles(Material m)
         {
-            // Fade over the last 0.75 m of approach to whatever is behind. Short on purpose: a long
-            // fade dims flakes that are merely near a wall, which thins the snow out indoors and in
-            // the crevasse throats — precisely where the near field is doing the most work.
-            const float softNear = 0f, softFar = 0.75f;
-            m.SetFloat("_SoftParticlesEnabled", 1f);
-            m.SetFloat("_SoftParticlesNearFadeDistance", softNear);
-            m.SetFloat("_SoftParticlesFarFadeDistance", softFar);
-            m.SetVector("_SoftParticleFadeParams", new Vector4(softNear, 1f / Mathf.Max(0.0001f, softFar - softNear), 0f, 0f));
-            m.EnableKeyword("_SOFTPARTICLES_ON");
-
-            // Fully gone at 0.3 m, full strength by 0.9 m — inside arm's reach, so nothing a player is
-            // actually looking at is ever touched by this.
-            const float camNear = 0.3f, camFar = 0.9f;
-            m.SetFloat("_CameraFadingEnabled", 1f);
-            m.SetFloat("_CameraNearFadeDistance", camNear);
-            m.SetFloat("_CameraFarFadeDistance", camFar);
-            m.SetVector("_CameraFadeParams", new Vector4(camNear, 1f / Mathf.Max(0.0001f, camFar - camNear), 0f, 0f));
-            m.EnableKeyword("_FADING_ON");
+            // Implementation shared with the campfire — see MeshUtil.SetSoftParticles. The 0.75 m fade
+            // is short on purpose FOR SNOW: a long fade dims flakes that are merely near a wall, which
+            // thins the snowfall out in the crevasse throats and against the hut, precisely where the
+            // near field is doing the most work. Smoke asks for a much longer one.
+            MeshUtil.SetSoftParticles(m, softFar: 0.75f, camNear: 0.3f, camFar: 0.9f);
         }
     }
 }

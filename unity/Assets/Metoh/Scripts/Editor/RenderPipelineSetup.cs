@@ -12,14 +12,24 @@
 // A menu command fixes that class of problem properly. It is idempotent, it reports what it changed,
 // and it can be re-run after any Unity upgrade or project re-clone.
 //
-// **AND IT HAS NEVER BEEN RUN.** Checked against the live project on 2026-08-15: both `PC_RPAsset`
-// and `Mobile_RPAsset` still read `m_ColorGradingMode: 0` (LDR) and `m_ShadowDistance: 50`, and the
-// SSAO on `PC_Renderer` is the URP template's own — `Intensity 0.4`, `Falloff 100`, `AfterOpaque 0`,
-// `Downsample 0` — not the values TuneSsao writes. So the LDR-grading problem this file's header
-// describes is still live, and the AO is both untuned for snow and running on the expensive path.
-// Writing the script turned a documentation problem into a one-click problem; it did not turn it
-// into a solved one. **Run Metoh → Configure Render Pipeline.** If a future reader finds this
-// paragraph still accurate, the answer is still the same one click.
+// **IT HAS NOW BEEN RUN — do not re-litigate this from the old note.** On 2026-08-15 this header
+// said it never had been, and that was true then: both pipeline assets read `m_ColorGradingMode: 0`
+// (LDR) and `m_ShadowDistance: 50`, and `PC_Renderer` carried the URP template's own SSAO settings
+// rather than TuneSsao's. Re-checked against the live project on 2026-09-01 and all of it has since
+// landed: `PC_RPAsset` is `m_ColorGradingMode: 1` (HDR), `m_ShadowDistance: 55`,
+// `m_RequireDepthTexture: 1`, `m_SupportsHDR: 1`, and `PC_Renderer`'s SSAO reads `Intensity 0.55`,
+// `Falloff 40`, `AfterOpaque 1`, `Downsample 1` — TuneSsao's values exactly.
+//
+// Two things follow, and both are load-bearing. The grading pass (ACES, split toning, bloom
+// threshold) is actually running in HDR rather than being crushed to LDR — so a look complaint is now
+// a look problem, not a configuration problem, and should be debugged as one. And the DEPTH TEXTURE
+// is on, which is what lets `Metoh/TorchBeam` soft-fade against the scene and what the campfire's
+// soft particles need; if it ever goes off, both fail silently rather than erroring.
+//
+// The command stays idempotent and worth re-running after a Unity upgrade or a project re-clone.
+// **The settings live on assets outside version control, so nothing here prevents them drifting
+// back** — which is exactly how the state above got out of step in the first place. Verify against
+// the live `.asset` files rather than trusting this comment.
 //
 // AMBIENT OCCLUSION IS THE POINT. AO is the effect that visually GROUNDS things: contact shadow in
 // the crease where a trunk meets snow, under a ledge, inside a crevasse mouth. Without it every prop

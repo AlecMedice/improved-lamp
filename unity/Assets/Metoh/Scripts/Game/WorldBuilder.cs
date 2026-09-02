@@ -414,13 +414,37 @@ namespace Metoh.Game
 
         private void BuildTerrain()
         {
-            // Render resolution (collision samples the analytic height, not this mesh, so this is
-            // purely a look/cost trade and can move freely). Raised from 120: at 120 a quad spans
-            // ~6.7 m, which is too coarse to hold a ridgeline — every crest came out as a soft blob
-            // and the horizon silhouette was visibly faceted. 192 puts a vertex every ~4.2 m for
-            // ~37k vertices in ONE mesh, which is nothing to draw; the real cost is the one-off
-            // GetHeight sweep at build/reseed time, and that is analytic and cheap.
-            int segs = 192;
+            // Render resolution. Collision samples the ANALYTIC height (Terrain.GetHeight), never
+            // this mesh, so the two agree only as far as the mesh can resolve the function — and that
+            // gap is not cosmetic. It is how far you sink into the ground.
+            //
+            // **THIS IS WHY YOU WALKED UNDER THE SNOW COMING BACK INTO CAMP.** A triangle is a flat
+            // chord across a curved surface. Over a CONVEX crest the chord sits below the true
+            // surface and your feet float a little, which nobody notices. Over a CONCAVE dip the
+            // chord sits ABOVE it — and since your feet are clamped to the true surface, the rendered
+            // snow closes over your boots.
+            //
+            // The pathological case is not the hills. It is `Terrain.MakeTerrain`'s base-camp
+            // flattening: a smoothstep that ramps the whole terrain height to zero across the 12 m
+            // annulus from BaseCampRadius (16 m) out to 28 m. That is the sharpest curvature anywhere
+            // in the world, it is a ring centred exactly on the RV, and at 192 segments a quad spanned
+            // 4.17 m — three quads to resolve the entire ramp. Measured against the sim: **0.52 m of
+            // sink at the camp ring on the shipping seed** (1.07 m on seed 999), against 0.10 m worst
+            // anywhere on the open map. Walking off a hill toward the camper is exactly the path that
+            // crosses it, which is how this was reported.
+            //
+            // Chord error falls with the SQUARE of the spacing, so the fix is resolution — and it has
+            // to be resolution rather than a gentler ramp, because the sim is parity-locked
+            // ([parity-lock]) and the flattening curve cannot be softened from this side. 512 puts a
+            // vertex every 1.56 m: camp-ring sink drops to 0.097 m and the open map to 0.027 m, i.e.
+            // from "wading" to "boots slightly buried", which is what standing on snow should look like.
+            //
+            // Cost is a one-off at build/reseed and it is small: 263k verts in ONE mesh (12 MB, one
+            // draw call — nothing to render), and the analytic sweep measures 34 ms against 9 ms at
+            // 192. The normal/tangent recalculation below is the larger half; it is still a one-off,
+            // and [startup] logs the stage, so a regression here shows up as a number rather than as a
+            // mystery. Do not lower this to buy startup time without re-measuring the sink.
+            int segs = 512;
             float size = (float)Sim.World.Size;
             float half = size / 2f;
             var verts = new Vector3[(segs + 1) * (segs + 1)];
@@ -730,7 +754,9 @@ namespace Metoh.Game
             Mesh drift = MeshUtil.Cone(0.95f, 0.42f, 7);                        // wind-piled snow mound
             Mesh scree = MeshUtil.TaperedCylinder(0.5f, 0.34f, 0.42f, 5);       // shattered rock
             Mesh pole = MeshUtil.TaperedCylinder(0.055f, 0.045f, 2.3f, 5);
-            Mesh flag = MeshUtil.UnitCube();
+            // A cloth sheet, not a box. See MeshUtil.FlagSheet and Shaders/Flag.shader — these used to
+            // be solid UnitCubes of flat colour, which is a brick nailed to a stick.
+            Mesh flag = MeshUtil.FlagSheet(8, 2);
 
             var driftC = NewCombineBuckets(cells);
             var screeC = NewCombineBuckets(cells);
@@ -772,7 +798,12 @@ namespace Metoh.Game
                     {
                         float t = 0.45f + f * 0.14f; // strung up the top half of the pole
                         var fpos = pos + Vector3.up * (2.3f * (float)s * t);
-                        flagC[f][cell].Add(CI(flag, fpos, rotQ, new Vector3(0.13f, 0.10f, 0.02f) * (float)s));
+                        // Each flag is yawed a little off its neighbour so the five do not stack into
+                        // one flat plane — a bundle of lung-ta on a pole never hangs square.
+                        var fq = rotQ * Quaternion.Euler(0f, f * 17f - 34f, 0f);
+                        // The sheet flies OUT from the pole (hoist at x=0), so no centring offset: the
+                        // flag starts where the cube used to be centred and streams away from it.
+                        flagC[f][cell].Add(CI(flag, fpos, fq, new Vector3(0.30f, 0.16f, 1f) * (float)s));
                     }
                 }
                 else if (kind < (y >= ScreeBiasHeight ? 0.35 : 0.75)) driftC[cell].Add(CI(drift, pos - Vector3.up * 0.06f, rotQ, scale));
@@ -783,7 +814,7 @@ namespace Metoh.Game
             var screeMat = MeshUtil.Surface(ScreeCol, 0.10f, ProcTex.RockNormal, 1.0f, 1.6f);
             var poleMat = MeshUtil.Surface(MeshUtil.Rgb(0x6b5b47), 0.14f, ProcTex.BarkNormal, 0.8f, 1.2f);
             var flagMats = new Material[FlagCols.Length];
-            for (int f = 0; f < FlagCols.Length; f++) flagMats[f] = MeshUtil.Lit(MeshUtil.Rgb(FlagCols[f]));
+            for (int f = 0; f < FlagCols.Length; f++) flagMats[f] = FlagMaterial(FlagCols[f], 0.16f);
 
             for (int c = 0; c < cells; c++)
             {
@@ -793,6 +824,29 @@ namespace Metoh.Game
                 for (int f = 0; f < FlagCols.Length; f++)
                     TrackUndergrowth(NewCombinedGo($"Flags{f}_{c}", flagC[f][c], flagMats[f]));
             }
+        }
+
+        /// <summary>
+        /// A wind-driven flag material (Shaders/Flag.shader).
+        ///
+        /// Falls back to a flat lit colour if the shader is missing, rather than to magenta — a flag
+        /// that has stopped moving is a small loss, and a field of magenta rectangles is not. Same
+        /// rule as the sky and the snowpack, and BootReport says so out loud rather than letting the
+        /// world quietly look wrong ([feedback]).
+        /// </summary>
+        private static Material FlagMaterial(int hex, float emission)
+        {
+            var c = MeshUtil.Rgb(hex);
+            var shader = Shader.Find("Metoh/Flag");
+            if (shader == null)
+            {
+                BootReport.MissingShader("Metoh/Flag", "prayer and marker flags hang dead still");
+                return MeshUtil.Lit(c);
+            }
+            var m = new Material(shader);
+            m.SetColor("_BaseColor", c);
+            m.SetFloat("_Emission", emission);
+            return m;
         }
 
         /// <summary>Lung-ta colours, in the traditional order (sky, air, fire, water, earth).</summary>
@@ -1131,6 +1185,47 @@ namespace Metoh.Game
             AddBox(root, "Hut", new Vector3(0, 1.5f, 0), new Vector3(6.6f, 2.5f, 2.3f), MeshUtil.Rgb(0x8a7a62));
             AddBox(root, "Sill", new Vector3(0, 1.0f, 0), new Vector3(6.65f, 0.35f, 2.32f), MeshUtil.Rgb(0x5f513f));
 
+            // --- cladding ---------------------------------------------------------
+            //
+            // **THIS IS THE "MADE IN THE 80s" FIX.** The hut was a normal-mapped box, and a normal map
+            // cannot save a box: it varies how a surface catches light, but the surface is still four
+            // flat planes meeting at hard right angles with nothing on them. At night that reads as an
+            // untextured primitive, because the only thing a torch beam has to find is a flat wall.
+            //
+            // Real boards are the fix, and the reason is geometric rather than decorative: each one
+            // stands a couple of centimetres proud of its neighbours, so a raking torch throws a hard
+            // vertical shadow off every seam. Sixty of those turn one flat plane into a corrugated
+            // surface whose lighting changes as you walk past it. That is the difference between a
+            // wall and a rectangle, and it is invisible in a screenshot lit from the front.
+            //
+            // ONE welded mesh and ONE renderer for the whole building (MeshUtil.MeshGroup), so the
+            // cost is a few hundred triangles, not sixty draw calls.
+            var plankMat = MeshUtil.Surface(MeshUtil.Rgb(0x7d6d55), 0.12f, ProcTex.BarkNormal, 1.0f, 0.55f);
+            var clad = NewMeshGo("Cladding", HutCladding(), plankMat);
+            clad.transform.SetParent(root.transform, false);
+
+            // --- drifted snow at the footings --------------------------------------
+            // A building whose walls meet flat ground in a clean line reads as PLACED on the world
+            // rather than standing in it — the same "hovering" tell SSAO went in to fix on props, and
+            // AO alone cannot fix it here because the gap is real geometry, not just shading. Snow
+            // banks against anything that has stood through a night, and this camp has stood through
+            // many. Hashed lumps, so the drift is uneven the way wind-piled snow is.
+            var footSnow = MeshUtil.Surface(MeshUtil.Rgb(0xe4ecf2), 0.34f, ProcTex.SnowNormal, 0.85f, 1.1f,
+                                            ProcTex.SnowDetailNormal, 6f);
+            for (int i = 0; i < 9; i++)
+            {
+                float t = (i + 0.5f) / 9f;
+                float h = MeshUtil.Hash01(i * 43 + 5);
+                for (int side = -1; side <= 1; side += 2)
+                {
+                    var bank = NewMeshGo("Footing", MeshUtil.Blob(0.62f + h * 0.22f, 0.30f + h * 0.14f, 0.52f,
+                                                                  5, 8, 700 + i * 3 + side, 0.26f), footSnow);
+                    bank.transform.SetParent(root.transform, false);
+                    bank.transform.localPosition = new Vector3(Mathf.Lerp(-3.5f, 3.5f, t), 0.05f,
+                                                               side * (1.28f + h * 0.14f));
+                }
+            }
+
             // A PITCHED roof, replacing the flat slab that used to sit on top. Nobody builds a flat
             // roof where it snows, and more to the point the camp is the one silhouette every player
             // navigates home by — a plain rectangle reads as a placeholder from the moment you can
@@ -1251,6 +1346,173 @@ namespace Metoh.Game
             lamp.color = MeshUtil.Rgb(0xffb866);
             lamp.range = 16f;
             lamp.intensity = 2.2f;
+        }
+
+        /// <summary>
+        /// The evidence duffel's canvas, welded into one mesh and centred on the bag's middle.
+        ///
+        /// A duffel is a CYLINDER with flat circular ends, not an ellipsoid — that shape is the whole
+        /// reason the thing reads as a bag rather than as a boulder, and it is what the old two-blob
+        /// version could not make. Lathed along +Y and laid on its side by the caller's frame: the
+        /// profile below runs end to end, staying near-constant through the middle (a stuffed bag is
+        /// straight-sided) and closing sharply at the ends into a flat face.
+        /// </summary>
+        private static Mesh DuffelBag()
+        {
+            var g = new MeshUtil.MeshGroup();
+            // Profile in (along, radius). Slight belly: a full bag bulges in the middle and sags.
+            var prof = new[]
+            {
+                new Vector2(-0.72f, 0.185f),
+                new Vector2(-0.66f, 0.275f),   // end face closes fast — this is the flat circular end
+                new Vector2(-0.40f, 0.310f),
+                new Vector2(-0.10f, 0.325f),   // belly
+                new Vector2( 0.22f, 0.318f),
+                new Vector2( 0.52f, 0.295f),
+                new Vector2( 0.66f, 0.265f),
+                new Vector2( 0.72f, 0.175f),
+            };
+            // Rotate the lathe onto its side (+Y becomes +X) and squash it slightly flat, because a
+            // bag resting on the ground spreads under its own weight rather than staying round.
+            g.Add(MeshUtil.Lathe(prof, 14, 4021, 0.045f, 1f, 0.92f),
+                  Vector3.zero, new Vector3(0f, 0f, -90f), new Vector3(1f, 1f, 0.86f));
+            // Contents pushing out through the canvas. Hashed, and the single cheapest thing that
+            // separates "a full bag" from "an inflatable".
+            for (int i = 0; i < 4; i++)
+            {
+                float h = MeshUtil.Hash01(4100 + i * 31);
+                g.Add(MeshUtil.Blob(0.15f + h * 0.06f, 0.11f + h * 0.05f, 0.13f, 5, 8, 4110 + i, 0.20f),
+                      new Vector3(Mathf.Lerp(-0.45f, 0.45f, (i + 0.5f) / 4f),
+                                  0.14f + h * 0.06f,
+                                  (MeshUtil.Hash01(4200 + i * 17) - 0.5f) * 0.22f));
+            }
+            return g.Build();
+        }
+
+        /// <summary>
+        /// The duffel's webbing — zip line, two carry handles, shoulder strap — welded into one mesh
+        /// in the same frame as <see cref="DuffelBag"/>.
+        /// </summary>
+        private static Mesh DuffelWebbing()
+        {
+            var g = new MeshUtil.MeshGroup();
+            // Zip, running the length along the top. Proud of the canvas so it casts its own line.
+            g.Add(MeshUtil.MetricBox(new Vector3(1.24f, 0.030f, 0.055f)), new Vector3(0f, 0.300f, 0f));
+            // Two carry handles: a post either side and a bar over the top, the loop you'd actually
+            // grab. Placed inboard, where a duffel's handles are stitched.
+            foreach (float hx in new[] { -0.26f, 0.26f })
+            {
+                foreach (float sz in new[] { -1f, 1f })
+                    g.Add(MeshUtil.MetricBox(new Vector3(0.055f, 0.16f, 0.028f)),
+                          new Vector3(hx, 0.315f, sz * 0.115f));
+                g.Add(MeshUtil.MetricBox(new Vector3(0.055f, 0.028f, 0.25f)), new Vector3(hx, 0.395f, 0f));
+            }
+            // Shoulder strap, slung over the near side and hanging off the end.
+            g.Add(MeshUtil.MetricBox(new Vector3(1.06f, 0.026f, 0.075f)),
+                  new Vector3(-0.05f, 0.205f, 0.255f), new Vector3(0f, 0f, 7f));
+            g.Add(MeshUtil.MetricBox(new Vector3(0.075f, 0.30f, 0.026f)),
+                  new Vector3(-0.62f, 0.06f, 0.20f), new Vector3(18f, 0f, 0f));
+            return g.Build();
+        }
+
+        /// <summary>
+        /// Ribs and rivet lines for the snowcat's hull, welded into one mesh in the hull's frame.
+        /// Sized against the Body box (3.5 x 1.25 x 2.0 at y 0.85) — move that and these float.
+        /// </summary>
+        private static Mesh HullPlating()
+        {
+            var g = new MeshUtil.MeshGroup();
+            const float halfZ = 1.0f, bodyY = 0.85f;
+
+            // Vertical ribs down both flanks.
+            for (int i = 0; i < 6; i++)
+            {
+                float x = Mathf.Lerp(-1.55f, 1.55f, i / 5f);
+                for (int side = -1; side <= 1; side += 2)
+                    g.Add(MeshUtil.MetricBox(new Vector3(0.10f, 1.20f, 0.05f)),
+                          new Vector3(x, bodyY, side * (halfZ + 0.025f)));
+            }
+            // A horizontal belt rail tying them, and a lip along the top edge.
+            for (int side = -1; side <= 1; side += 2)
+            {
+                g.Add(MeshUtil.MetricBox(new Vector3(3.52f, 0.11f, 0.07f)),
+                      new Vector3(0f, bodyY + 0.30f, side * (halfZ + 0.035f)));
+                g.Add(MeshUtil.MetricBox(new Vector3(3.54f, 0.09f, 0.16f)),
+                      new Vector3(0f, bodyY + 0.62f, side * (halfZ - 0.02f)));
+                // Rivets along the belt. Tiny, and entirely a lighting effect — each one is a specular
+                // dot that travels as a torch sweeps past, which is what a riveted panel does.
+                for (int r = 0; r < 12; r++)
+                {
+                    float x = Mathf.Lerp(-1.68f, 1.68f, r / 11f);
+                    g.Add(MeshUtil.Blob(0.030f, 0.030f, 0.022f, 4, 5, 811 + r, 0f),
+                          new Vector3(x, bodyY + 0.30f, side * (halfZ + 0.075f)));
+                }
+            }
+            return g.Build();
+        }
+
+        /// <summary>
+        /// Board-by-board cladding for the basecamp hut, welded into one mesh in the hut's local
+        /// frame. See the call site for why a normal-mapped box was never going to be enough.
+        ///
+        /// The hut body is 6.6 x 2.5 x 2.3 centred at y 1.5, and that box is a REAL COLLIDER in the
+        /// parity-locked sim — so the boards stand only 3 cm proud. That is deliberately tiny: it is
+        /// enough to throw a shadow line off every seam under a raking torch, which is the entire
+        /// point, and far too little to be felt as a collision mismatch.
+        ///
+        /// Board depth and width are hashed per index ([rng-lockstep], never an RNG draw), so the wall
+        /// has the slight unevenness of sawn timber rather than the machined regularity that would
+        /// read as a texture. Corner posts cap the vertical edges, which is where a box most obviously
+        /// looks like a box.
+        /// </summary>
+        private static Mesh HutCladding()
+        {
+            var g = new MeshUtil.MeshGroup();
+            const float halfX = 3.30f, halfZ = 1.15f;
+            const float yLo = 0.30f, yHi = 2.72f;             // inside the body, under the eaves
+            const float boardH = yHi - yLo, midY = (yLo + yHi) * 0.5f;
+            const float pitch = 0.285f, gap = 0.028f;
+
+            // Long walls (front and back): boards run across X.
+            int nx = Mathf.RoundToInt(6.6f / pitch);
+            for (int i = 0; i < nx; i++)
+            {
+                float x = -halfX + (i + 0.5f) * (6.6f / nx);
+                float w = (6.6f / nx) - gap;
+                for (int side = -1; side <= 1; side += 2)
+                {
+                    float proud = 0.018f + MeshUtil.Hash01(i * 91 + side * 7) * 0.014f;
+                    g.Add(MeshUtil.MetricBox(new Vector3(w, boardH, proud)),
+                          new Vector3(x, midY, side * (halfZ + proud * 0.5f)));
+                }
+            }
+
+            // End walls: boards run across Z.
+            int nz = Mathf.RoundToInt(2.3f / pitch);
+            for (int i = 0; i < nz; i++)
+            {
+                float z = -halfZ + (i + 0.5f) * (2.3f / nz);
+                float w = (2.3f / nz) - gap;
+                for (int side = -1; side <= 1; side += 2)
+                {
+                    float proud = 0.018f + MeshUtil.Hash01(i * 57 + side * 11 + 3) * 0.014f;
+                    g.Add(MeshUtil.MetricBox(new Vector3(proud, boardH, w)),
+                          new Vector3(side * (halfX + proud * 0.5f), midY, z));
+                }
+            }
+
+            // Corner posts, and a top and bottom rail tying the boards. The rails are what stop the
+            // cladding reading as loose planks leaning on a wall — real board-and-batten is framed.
+            foreach (float sx in new[] { -1f, 1f })
+                foreach (float sz in new[] { -1f, 1f })
+                    g.Add(MeshUtil.MetricBox(new Vector3(0.16f, boardH + 0.10f, 0.16f)),
+                          new Vector3(sx * (halfX + 0.02f), midY, sz * (halfZ + 0.02f)));
+            foreach (float sz in new[] { -1f, 1f })
+                foreach (float y in new[] { yLo + 0.09f, yHi - 0.09f })
+                    g.Add(MeshUtil.MetricBox(new Vector3(6.68f, 0.13f, 0.05f)),
+                          new Vector3(0f, y, sz * (halfZ + 0.045f)));
+
+            return g.Build();
         }
 
         /// <summary>
@@ -1495,6 +1757,17 @@ namespace Metoh.Game
             AddBoxTo(hull, "SideGlass", new Vector3(0.85f, 1.95f, 0.93f), new Vector3(1.35f, 0.55f, 0.06f), glass);
             AddBoxTo(hull, "Bonnet", new Vector3(-1.35f, 1.35f, 0f), new Vector3(1.1f, 0.35f, 1.8f), rust);
 
+            // Panel structure: ribs and rivet lines down both flanks, welded into one mesh.
+            //
+            // Same argument as the hut's cladding, and it applies harder to steel. MetalNormal gives
+            // the surface dents and scratches, but the SHAPE is still three flat planes meeting at
+            // right angles — and a vehicle is the one object a player has a lifetime of reference for,
+            // so "box with a metal texture" is obvious in a way a box with a rock texture is not. Ribs
+            // catch a torch as a row of hard highlights; rivets stipple the space between them. This
+            // is what makes it read as fabricated rather than extruded.
+            var plate = NewMeshGo("Plating", HullPlating(), rust);
+            plate.transform.SetParent(hull.transform, false);
+
             // Tracks. Half-sunk, so only the top run shows — which is what sells "buried" without
             // needing to deform the terrain under it.
             for (int s = -1; s <= 1; s += 2)
@@ -1575,21 +1848,24 @@ namespace Metoh.Game
             // the ends — the shape of a propane tank, not of a canvas holdall with things in it. This
             // is the object every searcher walks up to and stares at while the deposit hold runs, so
             // it gets looked at closer than almost anything else in the world.
+            // THE BAG IS STILL THE EVIDENCE STORE. It is what the deposit hold runs against, it is what
+            // every searcher walks up to and stares at while the bar fills, and it stays a duffel —
+            // canvas, slumped, obviously carried up here by hand. What it stops being is two
+            // ellipsoids: a duffel has flat circular ENDS, a zip running its length, webbing handles
+            // and lumps where the contents push out, and every one of those is a hard edge that a
+            // torch finds. Welded into one mesh, so a much better bag costs one renderer instead of two.
             var canvasMat = MeshUtil.Surface(MeshUtil.Rgb(0xb8552f), 0.28f, ProcTex.FabricNormal, 0.8f, 2.5f);
-            var body = NewMeshGo("Bag", MeshUtil.Blob(0.72f, 0.30f, 0.34f, 7, 12, 4021, 0.16f), canvasMat);
+            var body = NewMeshGo("Bag", DuffelBag(), canvasMat);
             body.transform.SetParent(root.transform, false);
             body.transform.localPosition = new Vector3(0f, 0.32f, 0f);
 
-            // A slumped end, because a full bag does not hold a symmetrical shape.
-            var endLump = NewMeshGo("BagEnd", MeshUtil.Blob(0.26f, 0.24f, 0.28f, 6, 10, 4022, 0.20f), canvasMat);
-            endLump.transform.SetParent(root.transform, false);
-            endLump.transform.localPosition = new Vector3(0.52f, 0.24f, 0.04f);
-
+            // Webbing: the zip line, two carry handles and the shoulder strap, welded together — one
+            // more renderer for the whole harness.
             var webbing = MeshUtil.Surface(MeshUtil.Rgb(0x3a3026), 0.14f, ProcTex.FabricNormal, 0.6f, 6f);
-            var strap = NewMeshGo("Strap", MeshUtil.Limb(0.05f, 0.05f, 1.34f, 6, 6, 4023, 0.05f), webbing);
-            strap.transform.SetParent(root.transform, false);
-            strap.transform.localPosition = new Vector3(-0.67f, 0.50f, 0f);
-            strap.transform.localRotation = Quaternion.Euler(0f, 0f, -90f);
+            var harness = NewMeshGo("BagWebbing", DuffelWebbing(), webbing);
+            harness.transform.SetParent(root.transform, false);
+            harness.transform.localPosition = new Vector3(0f, 0.32f, 0f);
+
 
             // A warm work lamp over it — the "safe place" beacon.
             var lamp = new GameObject("DuffelLamp").AddComponent<Light>();
@@ -1683,7 +1959,7 @@ namespace Metoh.Game
                 {
                     float h01 = MeshUtil.Hash01(caveIndex * 977 + t * 37);
                     float len = 0.55f + h01 * 1.5f;
-                    var spike = NewMeshGo("Icicle", MeshUtil.Limb(0.02f, 0.11f, len, 5, 5, caveIndex * 50 + t, 0.12f), ice);
+                    var spike = NewMeshGo("Icicle", MeshUtil.Limb(0.02f, 0.11f, len, 5, 5, caveIndex * 50 + t, 0.12f, capScale: 0f), ice);
                     spike.transform.SetParent(root.transform, false);
                     spike.transform.localPosition = new Vector3(
                         Mathf.Lerp(-3.3f, 3.3f, (t + 0.5f) / teeth), 3.25f - len, 1.75f + h01 * 0.5f);
@@ -1749,7 +2025,7 @@ namespace Metoh.Game
                     float len = 0.4f + MeshUtil.Hash01(caveIndex * 97 + i) * 1.3f;
                     float across = (MeshUtil.Hash01(caveIndex * 53 + i * 7) - 0.5f) * 3.6f * (1f - depth * 0.2f);
                     var spike = NewMeshGo("ThroatIcicle",
-                        MeshUtil.Limb(0.015f, 0.075f, len, 5, 5, caveIndex * 80 + i, 0.14f), ice);
+                        MeshUtil.Limb(0.015f, 0.075f, len, 5, 5, caveIndex * 80 + i, 0.14f, capScale: 0f), ice);
                     spike.transform.SetParent(root.transform, false);
                     spike.transform.localPosition = new Vector3(across, 3.05f - len - depth * 0.25f, 0.5f - depth);
                 }
@@ -1799,15 +2075,15 @@ namespace Metoh.Game
                 mastMesh = MeshUtil.TaperedCylinder(0.075f, 0.05f, height, 5);
                 _mastMeshes[height] = mastMesh;
             }
-            if (_mastFlagMesh == null) _mastFlagMesh = MeshUtil.UnitCube();
+            // Cloth, and a few more segments than the trail flags get: a mast flag is 55 cm and four
+            // times closer to the eye when you are standing under it, so its ripple has to resolve.
+            if (_mastFlagMesh == null) _mastFlagMesh = MeshUtil.FlagSheet(10, 3);
             if (_mastFlagMats == null)
             {
                 _mastFlagMats = new Material[FlagCols.Length];
-                for (int i = 0; i < FlagCols.Length; i++)
-                {
-                    var c = MeshUtil.Rgb(FlagCols[i]);
-                    _mastFlagMats[i] = MeshUtil.Emissive(c, c, 0.35f);
-                }
+                // Slightly brighter self-lift than the trail flags. A marker mast exists to be found
+                // from across the valley, so it is the one flag allowed to insist a little.
+                for (int i = 0; i < FlagCols.Length; i++) _mastFlagMats[i] = FlagMaterial(FlagCols[i], 0.30f);
             }
 
             var mast = NewMeshGo("MarkerMast", mastMesh, _mastMat);
@@ -1822,7 +2098,9 @@ namespace Metoh.Game
                 flag.transform.SetParent(parent, false);
                 flag.transform.localPosition = localPos + Vector3.up * (height * (0.94f - f * 0.10f));
                 flag.transform.localRotation = Quaternion.Euler(0f, f * 26f, 0f);
-                flag.transform.localScale = new Vector3(0.55f, 0.36f, 0.03f);
+                // Z is 1: the sheet has no thickness to scale, and squashing it to 0.03 as the old box
+                // needed would flatten the ripple the shader displaces along the normal.
+                flag.transform.localScale = new Vector3(0.62f, 0.38f, 1f);
             }
         }
 
@@ -2257,13 +2535,16 @@ namespace Metoh.Game
         {
             // Additive and unlit: fire EMITS, so it must not be shaded by the scene, and overlapping
             // tongues have to accumulate rather than occlude each other.
-            var flameMat = new Material(Shader.Find("Universal Render Pipeline/Particles/Unlit"));
-            flameMat.SetFloat("_Surface", 1f);                 // transparent
-            flameMat.SetFloat("_Blend", 1f);                   // additive
-            flameMat.SetFloat("_ZWrite", 0f);
-            flameMat.renderQueue = 3000;
-            flameMat.SetTexture("_BaseMap", ProcTex.SoftDot);
-            flameMat.mainTexture = ProcTex.SoftDot;
+            //
+            // Built through MeshUtil.ParticleMaterial, which is the ONLY thing that actually puts a
+            // URP material into a transparent blend at runtime. This used to set `_Surface`/`_Blend`
+            // and the render queue by hand and nothing else, which leaves the real blend state opaque
+            // — see that method for the full explanation. Both this and the smoke below rendered as
+            // hard opaque quads because of it.
+            var flameMat = MeshUtil.ParticleMaterial(ProcTex.SoftDot, additive: true);
+            // Short fade: flame tongues are small and sit right on the logs, so a long one would eat
+            // the base of the fire — which is the brightest, most important part of it.
+            MeshUtil.SetSoftParticles(flameMat, softFar: 0.35f, camNear: 0.15f, camFar: 0.45f);
 
             // FLAME ------------------------------------------------------------------
             var flameGo = new GameObject("Flame");
@@ -2346,13 +2627,15 @@ namespace Metoh.Game
             // SMOKE -------------------------------------------------------------------
             // Alpha-blended, NOT additive: smoke occludes. Sharing the additive material would make
             // the column glow, which is the single most common way a fire effect goes wrong.
-            var smokeMat = new Material(Shader.Find("Universal Render Pipeline/Particles/Unlit"));
-            smokeMat.SetFloat("_Surface", 1f);
-            smokeMat.SetFloat("_Blend", 0f);   // alpha
-            smokeMat.SetFloat("_ZWrite", 0f);
-            smokeMat.renderQueue = 3000;
-            smokeMat.SetTexture("_BaseMap", ProcTex.SoftDot);
-            smokeMat.mainTexture = ProcTex.SoftDot;
+            //
+            // **This is the one the owner actually saw** — "the fire smoke is boxes of black". With
+            // the blend state left opaque, every smoke quad drew its dark start colour as a flat
+            // square with the soft-dot alpha ignored entirely, and with ZWrite still on they occluded
+            // each other into a stack of hard-edged boxes.
+            var smokeMat = MeshUtil.ParticleMaterial(ProcTex.SoftDot, additive: false);
+            // A long fade, because a smoke puff is metres across: the fade has to be wider than the
+            // intersection it is hiding or the hard line just moves rather than going away.
+            MeshUtil.SetSoftParticles(smokeMat, softFar: 2.2f, camNear: 0.4f, camFar: 1.4f);
 
             var smokeGo = new GameObject("Smoke");
             smokeGo.transform.SetParent(parent, false);

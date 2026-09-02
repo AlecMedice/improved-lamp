@@ -27,6 +27,11 @@ Read `docs/` for the full picture — every file there is current, nothing is a 
   it is the current bug backlog. It also records why *"the first load after a rebuild looks broken"*
   (neon-blue trees, black tiles) was **async shader compilation**, not an art or asset bug — the
   editor now waits for variants instead of drawing placeholders.
+- `Sept_Start.md` — **start here if you are new to the project.** A 2026-09-01 orientation written
+  for an agent picking this up cold: the repo-vs-live-project gap and how to prove work compiles, what
+  the two codebases are and how the parity lock constrains them, where the open work lives, the
+  standing "nothing has run a frame since 2026-08-08" caveat, and what the 2026-09-01 character/camp
+  overhaul changed. It duplicates this file deliberately — it is the long form.
 - `Aug_14.md` — the 2026-08-14 day log: the CPU-brain rewrite (belief + utility, replacing two
   priority ladders) and two graphics passes (camp/trails, then lookout/tree-sway/ice-caverns).
   Read it for **what is untested and what is still open** — none of that day's work has run a frame,

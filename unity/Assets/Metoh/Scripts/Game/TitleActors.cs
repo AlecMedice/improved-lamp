@@ -27,7 +27,7 @@ namespace Metoh.Game
         private static Transform _yetiHolder;
         private static readonly List<ICharacterBody> _searchers = new List<ICharacterBody>();
         private static readonly List<Transform> _searcherHolders = new List<Transform>();
-        private static Material _fur, _eye, _gear;
+        private static Material _fur, _hide, _eye, _gear;
         private static readonly List<Material> _cloth = new List<Material>();
         private static TorchBeam _beam;
 
@@ -47,18 +47,26 @@ namespace Metoh.Game
 
             _root = new GameObject("TitleActors").transform;
 
-            _fur = MeshUtil.Surface(MeshUtil.Rgb(0x2a2018), 0.08f, ProcTex.FurNormal, 1.15f, 2.2f);
+            // Same recipe HPPlayer builds the live Yeti from, and it has to STAY the same recipe — the
+            // title card is the first and longest look anybody gets at the creature, so a title Yeti
+            // that does not match the one in the match is worse than no title Yeti.
+            _fur = MeshUtil.Surface(MeshUtil.Rgb(0xd8d2c4), 0.10f, ProcTex.FurNormal, 1.35f, 2.2f);
+            _hide = MeshUtil.Surface(MeshUtil.Rgb(0x2b2622), 0.30f, ProcTex.RockNormal, 0.55f, 9f);
             _eye = MeshUtil.Emissive(Color.black, MeshUtil.Rgb(0xffcc55), 3.5f);
             _gear = MeshUtil.Surface(MeshUtil.Rgb(0x3a3630), 0.16f, ProcTex.FabricNormal, 0.7f, 3.5f);
 
             _yetiHolder = new GameObject("Yeti").transform;
             _yetiHolder.SetParent(_root, false);
-            _yeti = CharacterFactory.BuildYeti(_yetiHolder, _fur, _eye, 1337);
+            _yeti = CharacterFactory.BuildYeti(_yetiHolder, _fur, _hide, _eye, 1337);
             Weather.AttachBreath(_yeti.HeadAnchor, true);
 
             // Three of the five specialty colours, so the team reads as a team of individuals rather
-            // than as a colour swatch. Same palette HPPlayer deals from.
+            // than as a colour swatch. Same palette HPPlayer deals from — and the matching ids, so
+            // the three around the fire carry Wren's rope, Eli's camera and Mara's sample case. The
+            // kit is the part of a searcher that reads at title-shot distance, so a title card built
+            // from three identical figures in three tints is throwing away the best look at it.
             int[] colors = { 0x8ac28a, 0xc2b27a, 0x7a9ac2 };
+            string[] specialties = { "tracking", "photo", "analysis" };
             for (int i = 0; i < SearcherCount; i++)
             {
                 var holder = new GameObject("Searcher" + i).transform;
@@ -71,6 +79,7 @@ namespace Metoh.Game
                 // Redundant on the generated body (its cloth material was built this colour), but it is
                 // the only way an imported model would ever get it.
                 a.SetTint(MeshUtil.Rgb(colors[i]));
+                a.SetSpecialty(specialties[i]);
                 Weather.AttachBreath(a.HeadAnchor, false);
                 _searchers.Add(a);
                 _searcherHolders.Add(holder);
@@ -91,7 +100,7 @@ namespace Metoh.Game
                     l.intensity = 14f;
                     l.color = MeshUtil.Rgb(0xffe9c4);
                     l.shadows = LightShadows.None; // a menu backdrop does not need a shadow map
-                    _beam = TorchBeam.Build(lightGo.transform, l.range, l.spotAngle);
+                    _beam = TorchBeam.Build(lightGo.transform, l.range, l.spotAngle, l.innerSpotAngle);
                     _beam?.SetOn(true);
                 }
             }
@@ -115,11 +124,12 @@ namespace Metoh.Game
             // out of the world builder. A player who backs out to the menu and reconnects repeatedly
             // would otherwise accumulate a set every time.
             if (_fur != null) Object.Destroy(_fur);
+            if (_hide != null) Object.Destroy(_hide);
             if (_eye != null) Object.Destroy(_eye);
             if (_gear != null) Object.Destroy(_gear);
             foreach (var m in _cloth) if (m != null) Object.Destroy(m);
             _cloth.Clear();
-            _fur = _eye = _gear = null;
+            _fur = _hide = _eye = _gear = null;
 
             if (_root != null) Object.Destroy(_root.gameObject);
             _root = null;

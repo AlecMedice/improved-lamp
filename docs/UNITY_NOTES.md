@@ -687,6 +687,203 @@ to fix everywhere else.
 > material, and a searcher has only two, so the extra parts cost per-renderer culling rather than draw
 > calls. The smallest pieces (pack lid, straps, cuffs) are gated on `HPQuality.HighDetail`.
 
+### The searcher rebuild, part two, 2026-08-19 — "literally like stick people"
+
+Owner report on the jointed searchers, and it was two bugs rather than a styling miss. Both had been
+sitting in plain sight since the bodies pass, both were the kind that read as a deliberate choice in
+source, and **both applied to the Yeti as well**.
+
+- **`MeshUtil.Limb` tapered to a POINT at both ends, not to a round cap.** It spent a fixed 18% *of
+  the length* closing the radius to exactly zero, so every limb segment was a spindle. Points have no
+  volume to overlap with, so every elbow and every knee in the game pinched to a single vertex — a
+  leg bent 72 degrees showed daylight straight through the joint. The header of `Avatar.cs` and the
+  doc comment on `Limb` itself had *both* been describing round caps that overlap through the range
+  of motion the whole time. **Only the code disagreed with them**, which is why nine months of
+  reading the file never caught it. Caps are now hemispheres sized from the RADIUS and added BEYOND
+  the joint-to-joint span: an upper arm reaches 7.6 cm past the elbow and the forearm 7.6 cm back up
+  through it, so 15 cm of material overlaps at the joint no matter how far it bends. `length` still
+  means joint-to-joint, so no skeleton number and no anchor moved.
+- **Every limb's taper ran backwards.** `PartDown` flips a limb 180 degrees about X so it hangs from
+  its joint, which lands `Limb`'s FIRST radius at the proximal end — but the parameters were named
+  `radiusBottom`/`radiusTop`, describing the mesh *before* the flip. Every one of the eight limb
+  segments in the game passed the smaller number first, so sleeves were 12 cm across at the shoulder
+  and 14 at the elbow, thighs 16 at the hip and 21 at the knee, and calves fatter at the ankle than
+  at the knee. **A limb at its thinnest exactly where it meets the body is the "stick" read**, and it
+  cost nothing to have and nothing to fix. Renamed `radiusStart`/`radiusEnd` with the flip spelled
+  out on the primitive, which is the only place that stops it recurring.
+
+`capScale: 0` restores the pointed profile exactly, and the cave icicles ask for it by name — a spike
+is the one thing in the project that genuinely wants to taper to nothing. Everything else (logs, the
+exhaust stack, guy lines) is better rounded and now is.
+
+**The bulk is deliberate and it is in the limbs, not the ribcage** (owner call). The chest stayed at
+~41 cm; sleeves went to 19 cm at the shoulder and legs to 20 cm at the hip, which is roughly the
+0.47 sleeve-to-torso ratio a down parka actually has against 0.29 before. The one coupling worth
+knowing: **the parka's hip band was widened to 0.200 to cover the thigh tops**, and the hip joints sit
+at +/-9 cm. Narrow one without the other and the legs poke out through the coat. There is a comment
+on the trunk profile saying so.
+
+Joint mass on top of the caps: a **knee pad**, deliberately NOT gated on `HighDetail` because the knee
+is the most-bent joint on the figure and the one the old spindles failed at worst — it is carrying the
+fix, not decorating it. The elbow patch, wrist cuff and boot cuff stay gated as before.
+
+### The specialty kit (`Avatar.SetSpecialty`, `ICharacterBody`) — traits you can see
+
+Second owner ask in the same session: the five should carry gear matching their specialty. They now
+do — Theo's headphone cans and boom mic, Eli's chest camera and lens, Wren's rope coil and marker
+flags, Sam's rolled litter and med pouch, Mara's hard sample case and vial bandolier.
+
+**Why geometry and not just the parka colour.** The colour tells you two figures are different
+people; it does not tell you *which* person, because at this game's range and light level a specialty
+hue is a dark shape next to another dark shape. A silhouette prop survives that — a boom sticking up
+off a pack reads as Theo through fog, at night, in monochrome. "Who is that across the valley" is a
+tactical question here (walk over for the revive, or keep filming), so it earns a signal that works
+at the distance the question gets asked. Same [legibility] argument, one more level down.
+
+Three things about the implementation that are not obvious and should not be undone:
+
+- **It is LAZY, and it has to be.** The specialty is dealt *after* the body is built — the same fact
+  that already forces `SetTint` to be re-checked every frame rather than read once in `BuildVisuals`.
+  So a kit cannot be part of `BuildSearcher`, and building all five to show one would cost five times
+  the geometry per searcher. `SetSpecialty` builds on **change** and tears the previous kit down
+  first; it is a string compare on every other frame. Kit meshes/renderers/joints are tracked in
+  their own lists precisely so a re-deal drops only the kit.
+- **`Part` now stamps `r.enabled = _visible`.** The owner's own body is hidden in first person, so
+  without this their kit would pop into their own view the instant the deal landed — a renderer
+  created after a `SetVisible(false)` does not inherit it.
+- **The four kit materials are `static`, shared by every searcher, and never destroyed.** SRP Batcher
+  keys on material; five private copies of "dark instrument casing" is five batches where one does.
+  Each getter re-tests for null so a scene reload rebuilds them ([materials]'s leak rule is about
+  per-instance materials, not a fixed four).
+
+It rides the [import] seam properly: `SetSpecialty` is on `ICharacterBody`, and `ModelBody` **no-ops
+it on purpose** — bolting lathed props onto a rig this code has never seen would put them in the
+wrong place. A model author who wants per-specialty gear hooks it through `CharacterAnchors`.
+`TitleActors` now deals `tracking`/`photo`/`analysis` to the three around the fire, so the title card
+shows the kit off before you are wearing any of it.
+
+> Cost: ~35 renderers per searcher before the kit (up from ~30), 5–7 more with it. Still two body
+> materials plus the four shared kit ones.
+>
+> **Verified: compiles.** Headless `SetUpScene` on `Metoh_port` — 0 `error CS`, 0 shader errors, 0
+> exceptions, and the `Mountain scene wired` line present (the check f691d2b added after a rebuild was
+> once seen to exit early with a clean error count). The limb profiles were checked numerically for
+> monotonic y and the joint overlap quoted above. **NOT verified: it has not run a frame in Play
+> mode** — same standing caveat as every pass since [materials]. What to look at first: the thigh/parka
+> coupling above from a low angle, whether the boom and flag rods clip the pack when the torso leans
+> on a sprint, and whether the camera lens glint is too bright at night (it is the only emissive thing
+> on a searcher).
+
+### The character + camp overhaul, 2026-09-01 — "in no way shape or form the abominable snowman"
+
+A single owner session drove this, in escalating detail: the Yeti looked like *"a crazy person
+running through a forest"*, then *"a muppet running around"*, then *"circles/spheres for hands"* and
+*"in no way shape or form the abominable snowman"*; the searchers *"all look terrible — we need some
+actual people, hair, something that attaches them to their benefits"*; the flashlight put *"a halo
+around the whole screen"*; *"I still go under snow walking back to the camper from a hill"*; the camp
+*"looks like it was made in the 80s"*; and *"the fire smoke is boxes of black"*.
+
+Seven reports, and only two of them turned out to be taste. **Five were bugs**, which is the reusable
+lesson: a report phrased as an aesthetic complaint is still worth diagnosing as a defect first.
+
+**The Yeti (`Avatar.BuildYeti`, `Tick`).** Four separate causes, all of which had to go together:
+
+- It was **`0x2a2018`, dark brown** — a Sasquatch colour left over from Hollow Pines that the
+  Himalayan re-theme never touched. Now dirty ivory (`0xd8d2c4`) with a dark bare-hide muzzle, hands
+  and feet, because no real pale animal is uniformly pale and the dark extremities are what keep the
+  silhouette legible against snow. **This is a difficulty change too** — the Yeti is genuinely harder
+  to pick out at range now. If it proves too strong, darken toward `0xa89e91`; do not go back to brown.
+- It **walked upright with human counter-swinging arms**, which is a person running no matter what
+  fur is on it. There is now a `quad` blend: past a jog the torso pitches to 58°, the hips drop 0.20 m,
+  the knees fold 50° to compensate, the arms counter-rotate to vertical so they reach the ground, the
+  limbs re-phase from diagonal couplets into a bound, and the bob changes from two dips per cycle to
+  one. **58° is derived, not styled** — it is what puts the shoulder where a 1.52 m arm hanging
+  vertically touches the ground. Change it and re-derive, or the hands float.
+- It had **a neck**. A visible gap between skull and yoke is one of the strongest "human" signals
+  there is; a trapezius hump now fills it and is the highest point on the body.
+- **Hands and feet were single ellipsoids.** On a knuckle-walker those are the leading edge of the
+  animal at ground level. Both are now built parts, welded into one mesh each.
+
+Also: stride now LENGTHENS with speed (2.9→5.4 m) instead of the cycle just spinning faster, which is
+most of what makes a big animal look heavy — at the old fixed 3.4 m it was 2.2 cycles/sec, a flail.
+
+**The searchers.** The old head was a closed hood shell with a dark gear-coloured blob for a face, on
+the defensible reasoning that a hooded face at night is shadow anyway and a bad procedural face is
+worse than none. It produced five identical faceless figures. **A shadow where a face goes is not
+neutral — it states that nobody is in there.** So: real heads (cranium, brow, nose, jaw, ears, eyes)
+in per-character skin tones, hair per character, and the hood pushed DOWN onto the back where a hood
+lives when you need to hear. Skin/hair key off the SPECIALTY, not the variant hash, because the
+specialty *is* the character — "analysis" is Mara Okonkwo and nobody else, and identity has to be
+stable where build variation is not. Gloves and boots became built parts for the same reason the
+Yeti's hands did.
+
+**`MeshUtil.MeshGroup` is what made all of the above affordable.** Renderers are the expensive unit
+here, not triangles. A hand with four fingers and a thumb, a boot with a sole and a toe cap, a head of
+hair, sixty cladding boards — each welds into ONE mesh on ONE renderer, so the detailed version costs
+what the ellipsoid it replaced did. Anything built from more than about three lathes should use it.
+
+**[torch-halo] The flashlight halo was geometry doing exactly what it was told.** The beam cone's apex
+is at the holder's hand and their camera is ~0.5 m behind it — so the camera sits essentially AT the
+apex of a 62° cone, `Cull Off` draws the inside, and every pixel adds light. The existing `edge`/
+`along` fades could not help because both are computed in the cone's own UV space and evaluate to
+their BRIGHTEST values exactly where the surface covers the most screen. **A cone is only a valid
+stand-in for scattering air when seen from the side.** Three fades fix it: an axis fade (the actual
+cure), a world-distance near fade, and a depth soft-fade that also removes the hard line where the
+cone cuts the snow. The blend and `_Intensity` are deliberately unchanged, so every new term can only
+make the beam dimmer — the right risk profile for a fix that cannot be play-tested from here.
+
+**[terrain-sink] Walking under the snow was a measurable mesh-resolution bug, not a collision bug.**
+Collision samples the analytic `Terrain.GetHeight`; the rendered mesh is a piecewise-linear chord
+across it. Over a CONCAVE dip the chord sits ABOVE the true surface and the snow closes over your
+boots. The pathological case is not the hills — it is the base-camp flattening smoothstep, which ramps
+the whole terrain height to zero across a 12 m annulus centred on the RV, the sharpest curvature in
+the world, resolved by three quads at the old 192 segments. **Measured against the sim: 0.52 m of sink
+at the camp ring on the shipping seed, 1.07 m on seed 999, against 0.10 m worst on the open map.**
+Chord error falls with the square of spacing, and the sim is parity-locked so the curve cannot be
+softened from the Unity side — hence 512 segments (1.56 m): 0.097 m at camp, 0.027 m open. Cost is a
+one-off 34 ms sweep against 9 ms, and 263k verts in one mesh. **If you ever lower this to buy startup
+time, re-measure the sink first.**
+
+**[particle-blend] "The fire smoke is boxes of black" — and this one had already been solved once.**
+URP does not derive blend state from the shader: `new Material(shader)` starts opaque, and the
+`_Surface`/`_Blend` floats that look like they select transparency are only inputs to the material
+*editor's* validation step. Nothing applies them at runtime. So the campfire's smoke drew as opaque
+quads with the soft-dot alpha ignored and ZWrite still on — hard black boxes stacking on each other.
+`Weather` had hit the identical bug on snowflakes, diagnosed it correctly and written a private fix;
+the fire never got it. **One bug, two call sites, one of them fixed.** The implementation now lives in
+`MeshUtil.ParticleMaterial`/`MakeTransparent`, with `SetSoftParticles` alongside it — build every
+runtime transparent material through those, and note that soft-fade distance has to scale with the
+particle (0.75 m for a flake, 2.2 m for a smoke puff).
+
+**The camp.** `AddBox` already normal-maps its timber, so "made in the 80s" was about SHAPE, not
+texture: flat planes meeting at right angles, which a normal map cannot rescue because the only thing
+a torch has to find is a flat wall. The hut now has board-by-board cladding (3 cm proud — the body box
+is a real sim collider, so that is the whole budget, and it is enough to throw a shadow line off every
+seam), corner posts, rails, and snow banked at the footings so it stands IN the ground. The snowcat
+got hull ribs and rivet lines on the same argument. The evidence duffel became a real duffel — flat
+circular ends, zip, handles, contents pushing through the canvas — and **stays a bag**: a hard case was
+tried alongside it and removed at the owner's call.
+
+**[flags] The flags now have wind, and it agrees with the trees.** Every flag was `MeshUtil.UnitCube()`
+scaled flat — a solid box of unlit colour, motionless. They are welded into per-chunk combined meshes,
+so there is no transform left to animate and no way to give each one a GameObject without trading one
+draw call for hundreds; and cloth ripples ALONG itself rather than moving rigidly. That makes it a
+vertex-shader problem. `Shaders/Flag.shader` + `MeshUtil.FlagSheet`: `uv.x` is 0 at the hoist and 1 at
+the fly, every displacement scales by `uv.x²` so the lashed edge never moves, and the gust term is
+deliberately the SAME travelling-wave shape as `Sway.hlsl`'s. **Keep `_WindDir` equal to TreeSway's** —
+flags and trees are the two things advertising the wind, and if they disagree about when it is gusting
+neither reads as weather.
+
+> **Verified: compiles.** Three headless `SetUpScene` runs on `Metoh_port` across the pass, the last
+> with everything in — 0 `error CS`, 0 shader errors (the new `Metoh/Flag` included), and the
+> `Mountain scene wired` line present each time. The terrain sink numbers above are measured against
+> the real `Metoh.Sim` height function, not estimated. **NOT verified: none of it has run a frame in
+> Play mode** — same standing caveat as every pass since [materials]. What to look at first: whether
+> the Yeti's hands actually reach the ground at full charge (the 58°/1.52 m coupling), whether the
+> torch beam is now too faint from the holder's own view (raise `_AxisFloor`, currently 0.16), whether
+> the ivory Yeti is too well camouflaged at range, and whether the flag ripple amplitude reads at trail
+> scale — the prayer flags are 13 cm and the shader is tuned by eye at mast scale.
+
 ## [snow-glitter] Ice glitter, the saturation clobber, and asserted HDR — the 2026-08-08 graphics pass
 
 Three changes landed in the same commit that introduced [import]'s `ICharacterBody` seam. Compiled

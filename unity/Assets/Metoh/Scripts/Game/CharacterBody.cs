@@ -64,6 +64,14 @@ namespace Metoh.Game
         /// </summary>
         void SetTint(Color bodyColor);
 
+        /// <summary>
+        /// Push the searcher's specialty id ("photo", "sound", ...; "" for none or for the Yeti).
+        /// Called on a change, for the same reason SetTint is: the specialty is dealt after the body
+        /// exists. The procedural body answers by building that character's kit; an imported model is
+        /// free to ignore it, or to show gear its own author authored.
+        /// </summary>
+        void SetSpecialty(string specialtyId);
+
         /// <summary>Release generated meshes and GameObjects. Meshes are native objects the GC never collects.</summary>
         void Dispose();
     }
@@ -248,6 +256,15 @@ namespace Metoh.Game
         }
 
         /// <summary>
+        /// No-op, deliberately. The procedural body answers this by generating a kit; an imported
+        /// model already carries whatever gear its author modelled, and bolting lathed props onto a
+        /// rigged mesh would put them in the wrong place on a rig this code has never seen. If a
+        /// model author does want per-specialty gear, the hook is CharacterAnchors — parent the props
+        /// under named child objects and toggle them here.
+        /// </summary>
+        public void SetSpecialty(string specialtyId) { }
+
+        /// <summary>
         /// Nothing here was generated, so nothing here has to be released by hand — the meshes and
         /// materials belong to the imported asset and outlive the instance.
         /// </summary>
@@ -299,10 +316,16 @@ namespace Metoh.Game
                    ?? (ICharacterBody)Avatar.BuildSearcher(parent, cloth, gear, variant);
         }
 
-        public static ICharacterBody BuildYeti(Transform parent, Material fur, Material eye, int variant)
+        /// <summary>
+        /// Build the Yeti. <paramref name="hide"/> is bare skin — muzzle, hands, feet — and it is not
+        /// optional decoration: a white animal rendered entirely in white fur has no dark anchor
+        /// anywhere in its silhouette against snow. Procedural body only, like the searcher's
+        /// materials; an imported model brings its own.
+        /// </summary>
+        public static ICharacterBody BuildYeti(Transform parent, Material fur, Material hide, Material eye, int variant)
         {
             return ModelBody.TryBuild(Prefab("Yeti"), parent)
-                   ?? (ICharacterBody)Avatar.BuildYeti(parent, fur, eye, variant);
+                   ?? (ICharacterBody)Avatar.BuildYeti(parent, fur, hide, eye, variant);
         }
 
         /// <summary>Editor convenience: forget the lookup so a newly added prefab is seen without a restart.</summary>

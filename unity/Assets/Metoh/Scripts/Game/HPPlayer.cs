@@ -135,7 +135,7 @@ namespace Metoh.Game
 
         // --- Visuals ---
         private Transform _visualRoot;
-        private Material _bodyMat, _gearMat, _eyeMat;
+        private Material _bodyMat, _gearMat, _eyeMat, _hideMat;
         private Light _flashlight;
         private Renderer _recDot;
         private Material _recMat;
@@ -1544,12 +1544,33 @@ namespace Metoh.Game
 
             if (IsYeti)
             {
-                _baseBodyColor = MeshUtil.Rgb(0x2a2018);
-                // Matted fur, not painted plastic. Low smoothness so it stays a light SINK — the Yeti
-                // reading as a silhouette that swallows the torch is half of what makes it scary.
-                _bodyMat = MeshUtil.Surface(_baseBodyColor, 0.08f, ProcTex.FurNormal, 1.15f, 2.2f);
+                // **THE YETI IS NOT BROWN ANY MORE.** This was 0x2a2018 — a dark Sasquatch, left over
+                // from Hollow Pines and never touched by the Himalayan re-theme, which is a large part
+                // of the owner's *"in no way shape or form the abominable snowman"*. A yeti is the
+                // thing the snow is named after; a dark brown ape in a snowfield is a different
+                // cryptid, and the one this project deliberately moved away from.
+                //
+                // Dirty ivory, not white. Real "white" animals never are — a polar bear is cream to
+                // yellow against snow, because snow is the brightest surface in nature and nothing
+                // organic beats it. Sitting a little under and a little warm of the snowpack albedo
+                // (0xc9d6e2) is what makes the animal read as a body ON snow rather than a hole in it.
+                //
+                // The old comment argued for a dark silhouette that "swallows the torch". That legibility
+                // job now belongs to the HIDE below — bare skin at the muzzle, hands and feet, which is
+                // where every real pale animal carries its dark values — plus the deep shadow the brow
+                // and the shag throw. Trade to watch in play: against open snowpack at distance this is
+                // now genuinely harder to pick out, which is thematically correct and is a real
+                // difficulty change. If it proves too strong, darken toward 0xa89e91 rather than going
+                // back to brown.
+                _baseBodyColor = MeshUtil.Rgb(0xd8d2c4);
+                // Matted, snow-caked fur — not painted plastic, and not fresh powder either. Low
+                // smoothness keeps it dull so it never highlights like plastic; the normal map at this
+                // strength is what makes a torch beam break up across the coat instead of flattening it.
+                _bodyMat = MeshUtil.Surface(_baseBodyColor, 0.10f, ProcTex.FurNormal, 1.35f, 2.2f);
+                // Bare hide: muzzle, hands, feet. Dark, slightly glossy — wet skin, not fur.
+                _hideMat = MeshUtil.Surface(MeshUtil.Rgb(0x2b2622), 0.30f, ProcTex.RockNormal, 0.55f, 9f);
                 _eyeMat = MeshUtil.Emissive(Color.black, MeshUtil.Rgb(0xffcc55), 3.5f);
-                _avatar = CharacterFactory.BuildYeti(_visualRoot, _bodyMat, _eyeMat, variant);
+                _avatar = CharacterFactory.BuildYeti(_visualRoot, _bodyMat, _hideMat, _eyeMat, variant);
             }
             else
             {
@@ -1565,6 +1586,9 @@ namespace Metoh.Game
                 // An imported model does not use _bodyMat, so the colour has to be pushed through the
                 // body rather than baked into the material it may not be wearing.
                 _avatar.SetTint(_baseBodyColor);
+                // Same deal for the kit: usually "" at this point, because the specialty has not been
+                // dealt yet. The re-check in the per-frame path below is what actually builds it.
+                _avatar.SetSpecialty(Specialty.Value ?? "");
 
                 // The torch rides the HAND now, not a point floating at eye height. A remote searcher's
                 // beam therefore swings with their arm and sweeps as they walk, which is most of how
@@ -1608,7 +1632,8 @@ namespace Metoh.Game
                 // The beam itself, as geometry. A spot light with nothing in the air is invisible until
                 // it lands on something, so in open snowfield a searcher's torch simply had no presence
                 // in the frame — you saw a lit patch of ground with no shaft connecting it to a person.
-                _beam = TorchBeam.Build(lightGo.transform, _flashlight.range, _flashlight.spotAngle);
+                _beam = TorchBeam.Build(lightGo.transform, _flashlight.range,
+                                        _flashlight.spotAngle, _flashlight.innerSpotAngle);
 
                 // REC light — a red bead above a filming searcher's head (like the web rec light).
                 // Parented to the HEAD so it rides the gait instead of hovering at a fixed point the
@@ -1649,7 +1674,8 @@ namespace Metoh.Game
             if (_bodyMat != null) Destroy(_bodyMat);
             if (_gearMat != null) Destroy(_gearMat);
             if (_eyeMat != null) Destroy(_eyeMat);
-            _bodyMat = _gearMat = _eyeMat = null;
+            if (_hideMat != null) Destroy(_hideMat);
+            _bodyMat = _gearMat = _eyeMat = _hideMat = null;
             // The torch has to go by HAND, before the root does. The owner's has been REPARENTED to the
             // camera by this point, so it is no longer under the visual root — dropping the root alone
             // left a live spot light floating in the scene, still lighting the snow from nowhere.
@@ -1741,6 +1767,10 @@ namespace Metoh.Game
                     _baseBodyColor = dealt;
                     _avatar.SetTint(dealt);
                 }
+                // And the kit that goes with the colour. SetSpecialty is a no-op once the id matches,
+                // so this costs a string compare on the frames it is not doing anything — which is
+                // all of them after the deal lands.
+                _avatar.SetSpecialty(Specialty.Value);
             }
 
             UpdateAvatar();

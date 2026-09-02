@@ -350,23 +350,80 @@ namespace Metoh.Game
         /// join as a hard disc edge that swings independently of the limb — which reads as a doll made
         /// of parts. Round caps overlap into each other through the full range of motion instead, so an
         /// elbow stays a continuous mass without any skinning.
+        ///
+        /// **THIS IS WHAT THE FIRST VERSION GOT WRONG, and it is worth understanding before touching
+        /// it.** That version spent a fixed 18% OF THE LENGTH at each end tapering the radius to
+        /// exactly zero — a spindle, not a capsule. Points have no volume to overlap with, so every
+        /// joint in every body pinched to a single vertex: a knee bent 72 degrees showed daylight
+        /// through the leg, and the owner's report was "they're literally like stick people". The
+        /// doc comment above was already describing the intent correctly; only the code disagreed.
+        ///
+        /// So the caps are hemispheres sized from the RADIUS and added BEYOND the span, not carved out
+        /// of it. Two consequences, both wanted:
+        ///
+        /// - The mesh runs from <c>-radiusStart*capScale</c> to <c>length + radiusEnd*capScale</c>, so
+        ///   a segment bulges PAST its own joint at both ends. That overlap is exactly what makes an
+        ///   elbow read as continuous while it bends.
+        /// - <paramref name="length"/> stays honest as the joint-to-joint distance, so the skeleton
+        ///   numbers in Avatar.cs still mean what they say and no anchor moves.
+        ///
+        /// <paramref name="capScale"/> of 0 restores the old taper-to-a-point, which is not a
+        /// compatibility shim — it is what an ICICLE wants, and the cave spikes ask for it by name.
+        ///
+        /// NOTE ON ORIENTATION, because it caused a second bug. This builds along +Y, but limbs hang
+        /// DOWN from their joint, so Avatar.PartDown flips the mesh 180 degrees about X. After that
+        /// flip <paramref name="radiusStart"/> lands at the PROXIMAL joint (shoulder, hip) and
+        /// <paramref name="radiusEnd"/> at the DISTAL one (elbow, knee). The parameters used to be
+        /// called radiusBottom/radiusTop, which described the mesh before the flip and therefore meant
+        /// the opposite of what every caller assumed: all eight limb segments in the game were built
+        /// thin at the shoulder and fat at the elbow. Start = at the joint, End = away from it.
         /// </summary>
-        public static Mesh Limb(float radiusBottom, float radiusTop, float length,
-                                int rings, int segments, int variant, float jag = 0.04f)
+        public static Mesh Limb(float radiusStart, float radiusEnd, float length,
+                                int rings, int segments, int variant, float jag = 0.04f,
+                                float capScale = 1f)
         {
             rings = Mathf.Max(rings, 5);
-            var profile = new Vector2[rings];
-            const float cap = 0.18f; // fraction of the length each rounded end occupies
+
+            // Pointed: the original profile, kept for spikes. Taper happens INSIDE the length.
+            if (capScale <= 0f)
+            {
+                var pointed = new Vector2[rings];
+                const float cap = 0.18f; // fraction of the length each tapered end occupies
+                for (int r = 0; r < rings; r++)
+                {
+                    float t = r / (float)(rings - 1);
+                    float rad = Mathf.Lerp(radiusStart, radiusEnd, t);
+                    if (t < cap) rad *= Mathf.Sin(t / cap * Mathf.PI * 0.5f);
+                    else if (t > 1f - cap) rad *= Mathf.Sin((1f - t) / cap * Mathf.PI * 0.5f);
+                    pointed[r] = new Vector2(t * length, rad);
+                }
+                return Lathe(pointed, segments, variant, jag);
+            }
+
+            // Rounded. Three rings per cap sample the quarter-circle at 0/30/60 degrees; the core's own
+            // end ring is the 90 the quarter closes on, so the cap meets the shaft tangentially with no
+            // extra ring and no crease.
+            const int capRings = 3;
+            float capS = radiusStart * capScale, capE = radiusEnd * capScale;
+            var profile = new Vector2[capRings + rings + capRings];
+            int k = 0;
+
+            for (int r = 0; r < capRings; r++)
+            {
+                float ang = r / (float)capRings * Mathf.PI * 0.5f;
+                profile[k++] = new Vector2(-capS * Mathf.Cos(ang), radiusStart * Mathf.Sin(ang));
+            }
             for (int r = 0; r < rings; r++)
             {
                 float t = r / (float)(rings - 1);
-                float rad = Mathf.Lerp(radiusBottom, radiusTop, t);
-                // Quarter-sine shoulders at both ends: full radius through the middle, closing to a
-                // point at the tips.
-                if (t < cap) rad *= Mathf.Sin(t / cap * Mathf.PI * 0.5f);
-                else if (t > 1f - cap) rad *= Mathf.Sin((1f - t) / cap * Mathf.PI * 0.5f);
-                profile[r] = new Vector2(t * length, rad);
+                profile[k++] = new Vector2(t * length, Mathf.Lerp(radiusStart, radiusEnd, t));
             }
+            for (int r = capRings - 1; r >= 0; r--)
+            {
+                float ang = r / (float)capRings * Mathf.PI * 0.5f;
+                profile[k++] = new Vector2(length + capE * Mathf.Cos(ang), radiusEnd * Mathf.Sin(ang));
+            }
+
             return Lathe(profile, segments, variant, jag);
         }
 
@@ -799,6 +856,227 @@ namespace Metoh.Game
             }
             m.SetFloat("_WindStrength", strength);
             return m;
+        }
+
+        /// <summary>
+        /// Destroy a generated object from either play mode or the editor. Unity throws on
+        /// <c>Destroy</c> outside play mode, and the headless scene rebuild ([workflow]) runs there.
+        /// </summary>
+        public static void Kill(Object o)
+        {
+            if (o == null) return;
+            if (Application.isPlaying) Object.Destroy(o);
+            else Object.DestroyImmediate(o);
+        }
+
+        /// <summary>
+        /// Accumulate several generated meshes and weld them into ONE.
+        ///
+        /// WHY THIS EXISTS. A hand with fingers, a boot with a sole and a toe box, a head of hair —
+        /// each is five to a dozen small lathes, and giving every piece its own GameObject would take a
+        /// searcher past a hundred renderers. **Renderers are the expensive unit here, not triangles:**
+        /// every one is a culling entry and a candidate draw call, and [perf] is written about a machine
+        /// with integrated graphics. Welding them means a hand with four fingers and a thumb costs
+        /// exactly what the single ellipsoid it replaces did.
+        ///
+        /// Parts are posed in the finished part's local space, combined once at build time, and the
+        /// sources destroyed here — they are native objects the GC never collects, and they must never
+        /// reach a caller's tracking list, because nothing else would ever release them ([materials]'s
+        /// leak rule).
+        ///
+        /// Everything <see cref="Lathe"/> produces carries position, normal, UV and tangent, which is
+        /// what lets CombineMeshes weld them without dropping an attribute. That matters more than it
+        /// looks: a combined mesh missing tangents renders FLAT under the normal maps [materials] is
+        /// built on, and it does it silently, with no error anywhere.
+        /// </summary>
+        public sealed class MeshGroup
+        {
+            private readonly System.Collections.Generic.List<CombineInstance> _parts =
+                new System.Collections.Generic.List<CombineInstance>();
+
+            public MeshGroup Add(Mesh m, Vector3 pos) { return Add(m, pos, Vector3.zero, Vector3.one); }
+
+            public MeshGroup Add(Mesh m, Vector3 pos, Vector3 euler) { return Add(m, pos, euler, Vector3.one); }
+
+            public MeshGroup Add(Mesh m, Vector3 pos, Vector3 euler, Vector3 scale)
+            {
+                if (m == null) return this;
+                _parts.Add(new CombineInstance
+                {
+                    mesh = m,
+                    transform = Matrix4x4.TRS(pos, Quaternion.Euler(euler), scale),
+                });
+                return this;
+            }
+
+            /// <summary>Weld and hand back the result. The group is spent afterwards.</summary>
+            public Mesh Build()
+            {
+                var mesh = new Mesh();
+                // 16-bit indices are ample for a hand, but the failure mode when a part group does run
+                // past 65k verts is a silently truncated mesh rather than an error, so don't gamble.
+                mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+                mesh.CombineMeshes(_parts.ToArray(), true, true);
+                for (int i = 0; i < _parts.Count; i++) Kill(_parts[i].mesh);
+                _parts.Clear();
+                mesh.RecalculateBounds();
+                return mesh;
+            }
+        }
+
+        /// <summary>
+        /// Build a URP particle material that is actually transparent.
+        ///
+        /// **READ THIS BEFORE BUILDING ANY TRANSPARENT MATERIAL FROM CODE.** URP does NOT derive its
+        /// blend state from the shader alone. `new Material(shader)` starts from the shader's DEFAULT
+        /// property values, which are opaque — `_SrcBlend` One, `_DstBlend` Zero, `_ZWrite` on — and
+        /// the `_Surface`/`_Blend` floats that look like they select transparency are only inputs to
+        /// the material EDITOR's validation step. Nothing applies them at runtime. So a material set
+        /// up with `_Surface = 1` and nothing else renders fully opaque, with depth writes on, and a
+        /// soft-dot particle texture becomes a hard SQUARE of flat colour.
+        ///
+        /// That is not hypothetical: it shipped in the campfire. The owner's report was *"the fire
+        /// smoke is boxes of black"* — which is exactly this, the smoke's dark start colour drawn as
+        /// opaque quads. `Weather` had already hit the same bug on snowflakes, diagnosed it correctly,
+        /// and written a private fix; the fire never got it. **One bug, two call sites, one of them
+        /// fixed — so the fix now lives in one place that both use.** Anything else transparent built
+        /// at runtime should come through here too.
+        ///
+        /// <paramref name="additive"/> selects the blend: additive for things that EMIT (flame,
+        /// sparks, the torch's motes) and alpha for things that OCCLUDE (smoke, snow). Getting that
+        /// backwards is the other classic fire bug — additive smoke glows instead of blocking, which
+        /// stops it reading as matter.
+        /// </summary>
+        public static Material ParticleMaterial(Texture2D tex, bool additive)
+        {
+            var shader = Shader.Find("Universal Render Pipeline/Particles/Unlit")
+                      ?? Shader.Find("Universal Render Pipeline/Unlit")
+                      ?? Shader.Find("Sprites/Default");
+            var m = new Material(shader);
+            if (tex != null)
+            {
+                m.SetTexture("_BaseMap", tex);
+                m.mainTexture = tex;
+            }
+            MakeTransparent(m, additive);
+            return m;
+        }
+
+        /// <summary>
+        /// Put an existing URP material into transparent mode. Every one of these has to agree — the
+        /// _Surface/_Blend floats, the two blend factors, ZWrite, the render queue, the RenderType tag
+        /// AND the _SURFACE_TYPE_TRANSPARENT keyword. Setting a subset is the usual way a
+        /// runtime-built transparent material comes out opaque. See <see cref="ParticleMaterial"/>.
+        /// </summary>
+        public static void MakeTransparent(Material m, bool additive)
+        {
+            m.SetOverrideTag("RenderType", "Transparent");
+            m.SetFloat("_Surface", 1f);
+            m.SetFloat("_Blend", additive ? 1f : 0f);
+            m.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            m.SetFloat("_DstBlend", (float)(additive
+                ? UnityEngine.Rendering.BlendMode.One
+                : UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha));
+            m.SetFloat("_ZWrite", 0f);
+            m.SetFloat("_AlphaClip", 0f);
+            m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            m.DisableKeyword("_ALPHATEST_ON");
+            m.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        }
+
+        /// <summary>
+        /// A flag: a thin sheet in the XY plane, hoist edge on the Y axis at x=0, flying out to +X.
+        ///
+        /// **The UVs are the contract with Metoh/Flag** and the mesh is useless without them: u runs 0
+        /// at the lashed edge to 1 at the free edge, and the shader scales every displacement by u so
+        /// the hoist stays welded to its pole. v runs top to bottom and is currently unused, but it is
+        /// there so a future shader can hang the corners.
+        ///
+        /// Segmented along its length, because a ripple is a wave and a wave needs vertices to exist
+        /// at all — the single quad this replaces could only ever tilt. Eight columns is enough for
+        /// two visible crests without being able to alias into one.
+        ///
+        /// Unit-sized (1 x 1) on purpose: both call sites scale it, and the shader works off UVs, so a
+        /// 13 cm prayer flag and a 55 cm marker flag share one mesh and one set of instructions.
+        /// </summary>
+        public static Mesh FlagSheet(int cols = 8, int rows = 2)
+        {
+            cols = Mathf.Max(cols, 2);
+            rows = Mathf.Max(rows, 1);
+            var verts = new Vector3[(cols + 1) * (rows + 1)];
+            var uvs = new Vector2[verts.Length];
+            var norms = new Vector3[verts.Length];
+            for (int r = 0; r <= rows; r++)
+            {
+                for (int c = 0; c <= cols; c++)
+                {
+                    int i = r * (cols + 1) + c;
+                    float u = c / (float)cols, v = r / (float)rows;
+                    verts[i] = new Vector3(u, 0.5f - v, 0f);
+                    uvs[i] = new Vector2(u, v);
+                    norms[i] = Vector3.back;
+                }
+            }
+            var tris = new int[cols * rows * 6];
+            int t = 0;
+            for (int r = 0; r < rows; r++)
+            {
+                for (int c = 0; c < cols; c++)
+                {
+                    int i0 = r * (cols + 1) + c, i1 = i0 + 1;
+                    int i2 = i0 + cols + 1, i3 = i2 + 1;
+                    tris[t++] = i0; tris[t++] = i2; tris[t++] = i1;
+                    tris[t++] = i1; tris[t++] = i2; tris[t++] = i3;
+                }
+            }
+            var mesh = new Mesh();
+            mesh.vertices = verts;
+            mesh.uv = uvs;
+            mesh.normals = norms;   // set by hand: a flat sheet's normals are known, and RecalculateNormals
+            mesh.triangles = tris;  // on a zero-thickness sheet is a coin flip on sign
+            mesh.RecalculateTangents();
+            mesh.RecalculateBounds();
+            // Bounds have to survive the shader pushing vertices off the sheet, or a rippling flag gets
+            // frustum-culled early and pops at the screen edge. Grown generously; it costs nothing.
+            var b = mesh.bounds;
+            b.Expand(new Vector3(0.4f, 0.4f, 0.6f));
+            mesh.bounds = b;
+            return mesh;
+        }
+
+        /// <summary>
+        /// Soft particles plus a near-camera fade, on a URP particle material.
+        ///
+        /// A billboard is a flat quad, so where it passes through the ground, a trunk or a wall the
+        /// depth test slices it and it terminates in a hard straight line across its own face. On
+        /// smoke, whose puffs are metres across and sit directly on top of a fire that is sitting on
+        /// the ground, that line runs through nearly every particle — so the column reads as a stack
+        /// of intersecting cards rather than as smoke. Fading against scene depth is what removes it.
+        ///
+        /// The camera fade does the same job at the other end: a particle the near plane clips through
+        /// flashes as a half-quad, which is most of what "walking through smoke looks broken" is.
+        ///
+        /// <paramref name="softFar"/> is the fade distance in metres and wants to scale with the
+        /// particle: 0.75 for a snowflake, but a two-metre smoke puff needs metres or the fade is
+        /// narrower than the intersection it is hiding.
+        /// </summary>
+        public static void SetSoftParticles(Material m, float softFar = 0.75f,
+                                            float camNear = 0.3f, float camFar = 0.9f)
+        {
+            const float softNear = 0f;
+            m.SetFloat("_SoftParticlesEnabled", 1f);
+            m.SetFloat("_SoftParticlesNearFadeDistance", softNear);
+            m.SetFloat("_SoftParticlesFarFadeDistance", softFar);
+            m.SetVector("_SoftParticleFadeParams",
+                new Vector4(softNear, 1f / Mathf.Max(0.0001f, softFar - softNear), 0f, 0f));
+            m.EnableKeyword("_SOFTPARTICLES_ON");
+
+            m.SetFloat("_CameraFadingEnabled", 1f);
+            m.SetFloat("_CameraNearFadeDistance", camNear);
+            m.SetFloat("_CameraFarFadeDistance", camFar);
+            m.SetVector("_CameraFadeParams",
+                new Vector4(camNear, 1f / Mathf.Max(0.0001f, camFar - camNear), 0f, 0f));
+            m.EnableKeyword("_FADING_ON");
         }
 
         /// <summary>URP Lit material with a flat base colour. Kept for props that genuinely want no
